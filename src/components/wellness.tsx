@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from '@tanstack/react-router';
-import { Mail, Phone, MessageCircle, ArrowUpRight } from 'lucide-react';
+import { Mail, Phone, MessageCircle } from 'lucide-react';
 import { getCountdown } from '@/lib/countdown';
 export function Brand({ className = 'w-[180px]' }: { className?: string }) {
   return <img className={`brand-logo ${className}`} src="/images/healthy-ways-logo.webp" alt="Healthy Ways SA — Organic Natural Wellness" width={720} height={480} />;
@@ -16,12 +15,12 @@ export function Countdown() {
     const interval = window.setInterval(update, 250);
     return () => window.clearInterval(interval);
   }, []);
-  if (countdown?.finished) return <p className="section-title my-8">A new chapter has arrived.</p>;
+  if (countdown?.finished) return <div className="my-8 reveal"><p className="section-title mb-2">We’re live. Welcome to a new chapter.</p><p className="text-xs text-muted-foreground mb-0">The new Healthy Ways SA experience has arrived.</p></div>;
   return <div className="countdown" role="timer" aria-label="Time until midnight 15 October 2026, Johannesburg time">{(['days', 'hours', 'minutes', 'seconds'] as const).map(unit => <div className="countdown-unit" key={unit}><span className="countdown-number" key={countdown?.[unit]}>{countdown ? String(countdown[unit]).padStart(2, '0') : '—'}</span><span className="countdown-label">{unit}</span></div>)}</div>;
 }
 export function ContactActions() {
   return <div className="flex flex-wrap items-center justify-center gap-x-7 gap-y-4"><a className="contact-link" href="https://wa.me/27796871118" target="_blank" rel="noreferrer"><MessageCircle size={15} strokeWidth={1.5} /> WhatsApp</a><a className="contact-link" href="tel:+27796871118"><Phone size={15} strokeWidth={1.5} /> Call us</a><a className="contact-link" href="mailto:info@healtywayssa.co.za"><Mail size={15} strokeWidth={1.5} /> Email us</a></div>;
 }
-export function Footer({ launch = false }: { launch?: boolean }) {
-  return <footer className="border-t border-border bg-background"><div className="footer-inner"><span>© 2026 Healthy Ways SA. Naturally, with care.</span>{launch ? <Link className="contact-link" to="/preview">A glimpse of what’s growing <ArrowUpRight size={14} /></Link> : <Link className="contact-link" to="/">Launching 15 October 2026 <ArrowUpRight size={14} /></Link>}<span>Rooted in nature. Made for your wellbeing.</span></div></footer>;
+export function Footer() {
+  return <footer className="border-t border-border bg-background"><div className="footer-inner"><span>© 2026 Healthy Ways SA. Naturally, with care.</span><span>Rooted in nature. Made for your wellbeing.</span></div></footer>;
 }

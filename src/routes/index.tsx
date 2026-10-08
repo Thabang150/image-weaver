@@ -19,7 +19,7 @@ const leaves = [
 function Index() {
   return <><main className="botanical-scene launch-hero">
     <BotanicalImage /><div className="ambient-glow" style={{ top: '10%', left: '20%' }} aria-hidden />
-    {leaves.map(({ size, t, d: delay, ...pos }, i) => <Leaf key={i} aria-hidden className="floating-leaf" size={size} strokeWidth={1} style={{ ...pos, '--t': t, '--d': delay } as CSSProperties} />)}
+    {leaves.map(({ size, t, d: delay, ...pos }, i) => <Leaf key={i} aria-hidden className="floating-leaf" size={size} strokeWidth={1} style={{ ...pos, ['--t' as string]: t, ['--d' as string]: delay } as CSSProperties} />)}
     <div className="logo-enter"><Brand className="w-[245px] sm:w-[270px] mb-6" /></div>
     <div className="flex items-center gap-3 mb-2 reveal" style={d(300)}><span className="w-8 border-t border-gold/50" /><span className="eyebrow">Established care · A new chapter</span><span className="w-8 border-t border-gold/50" /></div>
     <h1 className="launch-heading reveal" style={d(450)}>Natural wellness,<br className="hidden sm:block" /> <em>beautifully renewed.</em></h1>

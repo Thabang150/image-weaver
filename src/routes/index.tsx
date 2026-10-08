@@ -1,24 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Countdown } from "../components/Countdown";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
 function Index() {
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
+    <div className="flex flex-col min-h-screen items-center justify-center p-4 bg-stone-50 text-stone-900">
+      <img 
+        src="/images/healthy-ways-logo.webp" 
+        alt="Healthy Ways Logo" 
+        className="w-48 mb-8"
       />
+      <h1 className="text-3xl font-serif mb-8">Coming Soon</h1>
+      <Countdown targetDate="2026-10-15T00:00:00+02:00" />
+      <div className="mt-12 w-full max-w-4xl">
+        <img 
+          src="/images/botanical-hero.webp" 
+          alt="Botanical Hero" 
+          className="w-full h-auto rounded-lg shadow-xl"
+        />
+      </div>
     </div>
   );
 }

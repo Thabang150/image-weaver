@@ -1,30 +1,19 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Countdown } from "../components/Countdown";
-
-export const Route = createFileRoute("/preview")({
-  component: Preview,
+import { createFileRoute, Link } from '@tanstack/react-router';
+import { useState } from 'react';
+import { ArrowRight, Leaf, Menu, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Brand, BotanicalImage, ContactActions, Footer } from '@/components/wellness';
+export const Route = createFileRoute('/preview')({
+  head: () => ({ meta: [
+    { title: 'Healthy Ways SA — Empower Your Health Naturally' },
+    { name: 'description', content: 'Meet Healthy Ways SA, a family-run South African natural wellness and supplements company. A new chapter in organic natural wellness.' },
+    { property: 'og:title', content: 'Healthy Ways SA — Empower Your Health Naturally' },
+    { property: 'og:description', content: 'Thoughtful natural wellness, personal care and a healthier, more balanced lifestyle.' },
+    { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' },
+  ] }), component: Preview,
 });
-
 function Preview() {
-  return (
-    <div className="flex flex-col min-h-screen items-center justify-center p-4 bg-stone-100 text-stone-900">
-      <div className="bg-yellow-200 px-4 py-1 rounded-full text-xs font-bold mb-4 uppercase tracking-wider">
-        Preview Mode
-      </div>
-      <img 
-        src="/images/healthy-ways-logo.webp" 
-        alt="Healthy Ways Logo" 
-        className="w-48 mb-8"
-      />
-      <h1 className="text-3xl font-serif mb-8">Internal Preview</h1>
-      <Countdown targetDate="2026-10-15T00:00:00+02:00" />
-      <div className="mt-12 w-full max-w-4xl">
-        <img 
-          src="/images/botanical-hero.webp" 
-          alt="Botanical Hero" 
-          className="w-full h-auto rounded-lg shadow-xl opacity-75"
-        />
-      </div>
-    </div>
-  );
+  const [menuOpen, setMenuOpen] = useState(false);
+  const nav = <>{['Home', 'About', 'Shop', 'Wellness', 'Contact'].map(item => <a key={item} href={`#${item.toLowerCase()}`} onClick={() => setMenuOpen(false)}>{item}</a>)}</>;
+  return <><div className="bg-primary text-primary-foreground text-center text-[10px] px-5 py-2.5">A natural new chapter · Launching 15 October 2026</div><header className="bg-background"><div className="preview-header"><Link to="/preview" aria-label="Healthy Ways SA home"><Brand className="w-[150px] sm:w-[165px]" /></Link><nav aria-label="Main navigation" className="site-nav hidden md:flex items-center gap-8">{nav}</nav><div className="flex gap-2 items-center"><Button asChild className="wellness-button hidden sm:inline-flex"><a href="#shop">Shop Now <ArrowRight /></a></Button><Button variant="ghost" size="icon" className="md:hidden" aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X /> : <Menu />}</Button></div>{menuOpen && <nav aria-label="Mobile navigation" className="site-nav md:hidden flex flex-wrap gap-6 w-full border-t border-border py-4">{nav}</nav>}</div></header><main><section id="home" className="botanical-scene preview-hero"><BotanicalImage /><span className="eyebrow">Healthy Ways SA · Organic Natural Wellness</span><h1 className="preview-heading">Empower Your Health<br /><em>Naturally.</em></h1><p className="launch-copy mb-8">Discover natural wellness products thoughtfully created to support a healthier, more balanced lifestyle.</p><Button asChild className="wellness-button"><a href="#shop">Explore Our Wellness Range <ArrowRight /></a></Button><div className="mt-10 flex items-center gap-2 text-muted-foreground text-[10px]"><Leaf size={14} strokeWidth={1.4} /> Rooted in nature. Guided by care.</div></section><section id="about" className="content-section grid md:grid-cols-2 gap-8 md:gap-20 items-center"><div><span className="eyebrow">Welcome to Healthy Ways SA</span><h2 className="section-title mt-4 mb-0">Natural wellness.<br /><em>Personal by nature.</em></h2></div><div className="text-sm text-muted-foreground leading-7"><p>For around a decade, Healthy Ways SA has been part of South Africa’s natural wellness community.</p><p className="mb-0">Run by the owner and his sister, our business is rooted in a simple philosophy: a personal approach to wellbeing, a connection to nature, and care in everything we do.</p></div></section><section id="wellness" className="bg-secondary"><div className="content-section text-center max-w-3xl"><Leaf size={26} strokeWidth={1.2} className="mx-auto mb-5 text-gold" /><span className="eyebrow">Our philosophy</span><h2 className="section-title mt-4">A little closer to nature.<br />A little closer to yourself.</h2><p className="text-sm text-muted-foreground leading-7 max-w-lg mx-auto mb-0">Wellness is personal. We believe in keeping it thoughtful, approachable and grounded in nature — with room for the everyday choices that matter to you.</p></div></section><section id="shop" className="content-section text-center"><span className="eyebrow">The wellness range</span><h2 className="section-title mt-4">Good things are growing.</h2><p className="text-sm text-muted-foreground leading-7 max-w-lg mx-auto mb-7">Our new online wellness range will be ready to explore on 15 October 2026. In the meantime, we’re here for your product enquiries.</p><Button asChild variant="outline" className="wellness-button"><a href="https://wa.me/27796871118" target="_blank" rel="noreferrer">Enquire on WhatsApp <ArrowRight /></a></Button></section><section id="contact" className="border-t border-border"><div className="content-section text-center py-14"><span className="eyebrow">Let’s connect</span><h2 className="section-title mt-4">A personal touch, always.</h2><ContactActions /><div className="mt-6 flex justify-center flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground"><a href="tel:+27796871118">079 687 1118</a><a href="mailto:info@healtywayssa.co.za">info@healtywayssa.co.za</a></div></div></section></main><Footer /></>;
 }

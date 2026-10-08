@@ -11,8 +11,10 @@ export const Countdown = ({ targetDate }: CountdownProps) => {
     minutes: number;
     seconds: number;
   } | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
     const target = new Date(targetDate).getTime();
 
     const updateCountdown = () => {
@@ -37,25 +39,25 @@ export const Countdown = ({ targetDate }: CountdownProps) => {
     return () => clearInterval(timer);
   }, [targetDate]);
 
-  if (!timeLeft) return null;
+  if (!isMounted || !timeLeft) return <div className="h-16" />; // Prevent hydration mismatch
 
   return (
     <div className="flex gap-4 text-center">
-      <div>
-        <div className="text-4xl font-bold">{timeLeft.days}</div>
-        <div className="text-sm uppercase">Days</div>
+      <div className="flex flex-col">
+        <span className="text-4xl font-bold tabular-nums">{timeLeft.days}</span>
+        <span className="text-xs uppercase text-stone-500">Days</span>
       </div>
-      <div>
-        <div className="text-4xl font-bold">{timeLeft.hours}</div>
-        <div className="text-sm uppercase">Hours</div>
+      <div className="flex flex-col">
+        <span className="text-4xl font-bold tabular-nums">{timeLeft.hours}</span>
+        <span className="text-xs uppercase text-stone-500">Hours</span>
       </div>
-      <div>
-        <div className="text-4xl font-bold">{timeLeft.minutes}</div>
-        <div className="text-sm uppercase">Minutes</div>
+      <div className="flex flex-col">
+        <span className="text-4xl font-bold tabular-nums">{timeLeft.minutes}</span>
+        <span className="text-xs uppercase text-stone-500">Min</span>
       </div>
-      <div>
-        <div className="text-4xl font-bold">{timeLeft.seconds}</div>
-        <div className="text-sm uppercase">Seconds</div>
+      <div className="flex flex-col">
+        <span className="text-4xl font-bold tabular-nums">{timeLeft.seconds}</span>
+        <span className="text-xs uppercase text-stone-500">Sec</span>
       </div>
     </div>
   );

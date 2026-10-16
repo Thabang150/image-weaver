@@ -5,9 +5,9 @@ import { Brand, BotanicalImage, Countdown, Footer } from '@/components/wellness'
 export const Route = createFileRoute('/')({
   head: () => ({ meta: [
     { title: 'Healthy Ways SA — A Natural New Chapter' },
-    { name: 'description', content: 'A new Healthy Ways SA online wellness experience launches on 15 October 2026. Organic natural wellness, rooted in care.' },
+    { name: 'description', content: 'A new Healthy Ways SA online wellness experience launches on 1 November 2026. Organic natural wellness, rooted in care.' },
     { property: 'og:title', content: 'Healthy Ways SA — A Natural New Chapter' },
-    { property: 'og:description', content: 'A new Healthy Ways SA online experience arrives 15 October 2026.' },
+    { property: 'og:description', content: 'A new Healthy Ways SA online experience arrives 1 November 2026.' },
     { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' },
   ] }), component: Index,
 });
@@ -25,7 +25,7 @@ function Index() {
     <h1 className="launch-heading reveal" style={d(450)}>Natural wellness,<br className="hidden sm:block" /> <em>beautifully renewed.</em></h1>
     <p className="launch-copy reveal" style={d(600)}>A new Healthy Ways SA online experience is almost here — the same trusted, personal care you know, now a little closer to home.</p>
     <div className="reveal w-full flex justify-center" style={d(750)}><Countdown /></div>
-    <div className="reveal" style={d(900)}><span className="eyebrow">Launching</span><p className="launch-date"><time dateTime="2026-10-15T00:00:00+02:00">15 OCTOBER 2026</time><span className="block text-[10px] text-muted-foreground mt-2">Midnight · South Africa</span></p></div>
+    <div className="reveal" style={d(900)}><span className="eyebrow">Launching</span><p className="launch-date"><time dateTime="2026-11-01T00:00:00+02:00">1 NOVEMBER 2026</time><span className="block text-[10px] text-muted-foreground mt-2">Midnight · South Africa</span></p></div>
     <div className="flex items-center gap-2 mt-4 text-[10px] text-muted-foreground reveal" style={d(1050)}><Leaf size={13} strokeWidth={1.3} /> Organic Natural Wellness</div>
   </main>
   <section className="enquiry" aria-labelledby="enquiry-title">

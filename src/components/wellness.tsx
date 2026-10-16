@@ -16,7 +16,7 @@ export function Countdown() {
     return () => window.clearInterval(interval);
   }, []);
   if (countdown?.finished) return <div className="my-8 reveal"><p className="section-title mb-2">We’re live. Welcome to a new chapter.</p><p className="text-xs text-muted-foreground mb-0">The new Healthy Ways SA experience is now live.</p></div>;
-  return <div className="countdown" role="timer" aria-label="Time until midnight 15 October 2026, Johannesburg time">{(['days', 'hours', 'minutes', 'seconds'] as const).map(unit => <div className="countdown-unit" key={unit}><span className="countdown-value">{countdown?.[unit] ?? 0}</span><span className="countdown-label">{unit}</span></div>)}</div>;
+  return <div className="countdown" role="timer" aria-label="Time until midnight 1 November 2026, Johannesburg time">{(['days', 'hours', 'minutes', 'seconds'] as const).map(unit => <div className="countdown-unit" key={unit}><span className="countdown-value">{countdown?.[unit] ?? 0}</span><span className="countdown-label">{unit}</span></div>)}</div>;
 }
 export function ContactActions() {
   return <div className="flex flex-wrap items-center justify-center gap-x-7 gap-y-4"><a className="contact-link" href="https://wa.me/27796871118" target="_blank" rel="noreferrer"><MessageCircle size={15} strokeWidth={1.8} /> WhatsApp</a><a className="contact-link" href="mailto:hello@healthywayssa.co.za"><Mail size={14} strokeWidth={1.8} /> Email</a><a className="contact-link" href="tel:+27796871118"><Phone size={14} strokeWidth={1.8} /> Call</a></div>;

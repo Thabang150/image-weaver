@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { CartAddButton } from "@/components/storefront/cart";
 import { ApiHttpError, ApiResponseError } from "@/lib/api/client";
 import { catalogueApi, type PublicProduct } from "@/lib/api/catalogue";
 import { formatZarCents } from "@/lib/money";
@@ -237,7 +238,10 @@ function ProductListing({
                     </p>
                   ) : null}
                 </CardContent>
-                <CardFooter>
+                <CardFooter className="product-card-actions">
+                  <CartAddButton productId={product.id} quantity={1}>
+                    Add to cart
+                  </CartAddButton>
                   <Button
                     variant="outline"
                     className="w-full"
@@ -353,6 +357,11 @@ function ProductDetail({
               {productQuery.data.product.packaging.unit}
             </p>
           ) : null}
+          <div className="product-detail-actions">
+            <CartAddButton productId={productQuery.data.product.id} quantity={1}>
+              Add to cart
+            </CartAddButton>
+          </div>
           <p className="product-detail-note">
             <Leaf aria-hidden="true" size={16} />
             Product information is provided as published in the catalogue.

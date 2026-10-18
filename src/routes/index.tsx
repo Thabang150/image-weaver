@@ -3,6 +3,7 @@ import { Leaf, Mail, MessageCircle, Phone } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { Brand, BotanicalImage, Countdown, Footer } from "@/components/wellness";
+import { CartTrigger } from "@/components/storefront/cart";
 import { Catalogue } from "@/components/storefront/catalogue";
 
 const productSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -45,6 +46,9 @@ export function LaunchExperience() {
   return (
     <>
       <main className="botanical-scene launch-hero">
+        <div className="launch-header-actions">
+          <CartTrigger />
+        </div>
         <BotanicalImage />
         <div className="ambient-glow" style={{ top: "10%", left: "20%" }} aria-hidden />
         {leaves.map(({ size, t, d: delay, ...pos }, i) => (

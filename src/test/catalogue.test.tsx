@@ -299,9 +299,10 @@ describe("public catalogue", () => {
       "href",
       "tel:+27796871118",
     );
-    expect(screen.getByRole("link", { name: "Explore the catalogue" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Explore the development preview" })).toHaveAttribute(
       "href",
-      "#catalogue",
+      "/preview",
     );
+    expect(screen.queryByRole("button", { name: /open cart/i })).not.toBeInTheDocument();
   });
 });

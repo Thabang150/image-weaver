@@ -189,4 +189,20 @@ export function createCartApi(client: CartApiClient) {
   };
 }
 
-export const cartApi = createCartApi(createConfiguredApiClient());
+let configuredCartApi: ReturnType<typeof createCartApi> | undefined;
+
+function getConfiguredCartApi() {
+  if (!configuredCartApi) {
+    configuredCartApi = createCartApi(createConfiguredApiClient());
+  }
+  return configuredCartApi;
+}
+
+export const cartApi = {
+  getCart: () => getConfiguredCartApi().getCart(),
+  addItem: (productId: string, quantity = 1) => getConfiguredCartApi().addItem(productId, quantity),
+  updateItem: (productId: string, quantity: number) =>
+    getConfiguredCartApi().updateItem(productId, quantity),
+  removeItem: (productId: string) => getConfiguredCartApi().removeItem(productId),
+  clearCart: () => getConfiguredCartApi().clearCart(),
+};

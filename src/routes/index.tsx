@@ -3,16 +3,8 @@ import { Leaf, Mail, MessageCircle, Phone } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { Brand, BotanicalImage, Countdown, Footer } from "@/components/wellness";
-import { CartTrigger } from "@/components/storefront/cart";
-import { Catalogue } from "@/components/storefront/catalogue";
-
-const productSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export const Route = createFileRoute("/")({
-  validateSearch: (search: Record<string, unknown>) => {
-    const product = search["product"];
-    return typeof product === "string" && productSlugPattern.test(product) ? { product } : {};
-  },
   head: () => ({
     meta: [
       { title: "Healthy Ways SA — A Natural New Chapter" },
@@ -46,9 +38,6 @@ export function LaunchExperience() {
   return (
     <>
       <main className="botanical-scene launch-hero">
-        <div className="launch-header-actions">
-          <CartTrigger />
-        </div>
         <BotanicalImage />
         <div className="ambient-glow" style={{ top: "10%", left: "20%" }} aria-hidden />
         {leaves.map(({ size, t, d: delay, ...pos }, i) => (
@@ -95,8 +84,8 @@ export function LaunchExperience() {
         >
           <Leaf size={13} strokeWidth={1.3} /> Organic Natural Wellness
         </div>
-        <a className="enquiry-button primary mt-7" href="#catalogue">
-          Explore the catalogue
+        <a className="enquiry-button primary mt-7" href="/preview">
+          Explore the development preview
         </a>
       </main>
       <section className="enquiry" aria-labelledby="enquiry-title">
@@ -130,21 +119,9 @@ export function LaunchExperience() {
 }
 
 function Index() {
-  const { product } = Route.useSearch();
-  const navigate = Route.useNavigate();
-
   return (
     <>
       <LaunchExperience />
-      <Catalogue
-        selectedSlug={product}
-        onSelectProduct={(slug) => {
-          void navigate({ search: { product: slug } });
-        }}
-        onBackToCatalogue={() => {
-          void navigate({ search: {} });
-        }}
-      />
       <Footer />
     </>
   );

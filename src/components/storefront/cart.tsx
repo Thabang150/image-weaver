@@ -18,6 +18,9 @@ interface CartContextValue {
   isOpen: boolean;
   setIsOpen: (nextValue: boolean) => void;
   cart: Cart | undefined;
+  isCartLoading: boolean;
+  cartError: Error | null;
+  retryCart: () => Promise<unknown>;
   totalQuantity: number;
   isBusy: boolean;
   notice: string | null;
@@ -58,21 +61,25 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const cartQuery = useQuery({
+  const {
+    data: cart,
+    isPending: isCartLoading,
+    error: cartError,
+    refetch: retryCart,
+  } = useQuery({
     queryKey: ["cart"],
     queryFn: () => cartApi.getCart(),
     retry: false,
     staleTime: 30_000,
   });
 
-  const cart = cartQuery.data;
   const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
 
   const addItemMutation = useMutation({
     mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
       cartApi.addItem(productId, quantity),
-    onSuccess: (_, variables) => {
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
+    onSuccess: (updatedCart, variables) => {
+      queryClient.setQueryData(["cart"], updatedCart);
       setNotice(
         `Added ${variables.quantity} item${variables.quantity > 1 ? "s" : ""} to your cart.`,
       );
@@ -87,8 +94,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const updateItemMutation = useMutation({
     mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
       cartApi.updateItem(productId, quantity),
-    onSuccess: (_, variables) => {
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
+    onSuccess: (updatedCart, variables) => {
+      queryClient.setQueryData(["cart"], updatedCart);
       setNotice(`Updated quantity to ${variables.quantity}.`);
     },
     onError: (error) => {
@@ -98,8 +105,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const removeItemMutation = useMutation({
     mutationFn: ({ productId }: { productId: string }) => cartApi.removeItem(productId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
+    onSuccess: (updatedCart) => {
+      queryClient.setQueryData(["cart"], updatedCart);
       setNotice("Item removed from your cart.");
     },
     onError: (error) => {
@@ -109,8 +116,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const clearCartMutation = useMutation({
     mutationFn: () => cartApi.clearCart(),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
+    onSuccess: (updatedCart) => {
+      queryClient.setQueryData(["cart"], updatedCart);
       setNotice("Your cart has been cleared.");
     },
     onError: (error) => {
@@ -123,6 +130,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
       isOpen,
       setIsOpen,
       cart,
+      isCartLoading,
+      cartError,
+      retryCart,
       totalQuantity,
       isBusy:
         addItemMutation.isPending ||
@@ -147,12 +157,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [
       addItemMutation,
       cart,
+      cartError,
       clearCartMutation,
       isOpen,
       notice,
       removeItemMutation,
       totalQuantity,
       updateItemMutation,
+      isCartLoading,
+      retryCart,
     ],
   );
 
@@ -199,8 +212,20 @@ export function CartTrigger() {
 }
 
 export function CartSheet() {
-  const { isOpen, setIsOpen, cart, notice, setNotice, isBusy, updateItem, removeItem, clearCart } =
-    useCart();
+  const {
+    isOpen,
+    setIsOpen,
+    cart,
+    isCartLoading,
+    cartError,
+    retryCart,
+    notice,
+    setNotice,
+    isBusy,
+    updateItem,
+    removeItem,
+    clearCart,
+  } = useCart();
 
   const cartItems = cart?.items ?? [];
 
@@ -224,7 +249,18 @@ export function CartSheet() {
 
         {notice ? <p className="cart-notice">{notice}</p> : null}
 
-        {cart === undefined ? (
+        {isCartLoading ? (
+          <p className="cart-status" role="status">
+            Loading cart…
+          </p>
+        ) : cartError ? (
+          <div className="cart-error" role="alert">
+            <p>{getCartErrorMessage(cartError)}</p>
+            <Button type="button" variant="outline" onClick={() => void retryCart()}>
+              Retry cart
+            </Button>
+          </div>
+        ) : !cart ? (
           <p className="cart-status" role="status">
             Loading cart…
           </p>
@@ -259,7 +295,9 @@ export function CartSheet() {
                         className="cart-quantity-button"
                         aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
                         onClick={() =>
-                          void updateItem(item.productId, Math.max(1, item.quantity - 1))
+                          void updateItem(item.productId, Math.max(1, item.quantity - 1)).catch(
+                            () => undefined,
+                          )
                         }
                         disabled={isBusy || item.quantity <= 1}
                       >
@@ -273,7 +311,9 @@ export function CartSheet() {
                         className="cart-quantity-button"
                         aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
                         onClick={() =>
-                          void updateItem(item.productId, Math.min(99, item.quantity + 1))
+                          void updateItem(item.productId, Math.min(99, item.quantity + 1)).catch(
+                            () => undefined,
+                          )
                         }
                         disabled={isBusy || item.quantity >= 99}
                       >
@@ -294,7 +334,7 @@ export function CartSheet() {
                       variant="ghost"
                       size="icon"
                       aria-label={`Remove ${getItemLineLabel(item)} from cart`}
-                      onClick={() => void removeItem(item.productId)}
+                      onClick={() => void removeItem(item.productId).catch(() => undefined)}
                       disabled={isBusy}
                     >
                       <Trash2 aria-hidden="true" size={15} />
@@ -309,7 +349,11 @@ export function CartSheet() {
                 <span className="cart-summary-label">Merchandise subtotal</span>
                 <strong>{formatZarCents(cart.totalCents)}</strong>
               </div>
-              <Button variant="outline" onClick={() => void clearCart()} disabled={isBusy}>
+              <Button
+                variant="outline"
+                onClick={() => void clearCart().catch(() => undefined)}
+                disabled={isBusy}
+              >
                 Clear cart
               </Button>
             </div>
@@ -343,12 +387,13 @@ export function CartAddButton({
       variant="secondary"
       className="w-full"
       disabled={!cart || disabled || isBusy}
+      aria-busy={isBusy}
       onClick={() => {
         if (!cart) return;
-        void cart.addItem(productId, quantity);
+        void cart.addItem(productId, quantity).catch(() => undefined);
       }}
     >
-      {children ?? (isBusy ? "Adding…" : "Add to cart")}
+      {isBusy ? "Adding…" : (children ?? "Add to cart")}
     </Button>
   );
 }

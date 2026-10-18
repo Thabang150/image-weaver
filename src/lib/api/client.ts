@@ -280,5 +280,8 @@ export function createApiClient(options: ApiClientOptions) {
 }
 
 export function createConfiguredApiClient() {
-  return createApiClient({ baseUrl: getBackendBaseUrl() });
+  return createApiClient({
+    baseUrl: getBackendBaseUrl(),
+    fetcher: (input, init) => globalThis.fetch(input, init),
+  });
 }

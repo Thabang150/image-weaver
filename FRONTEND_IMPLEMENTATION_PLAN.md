@@ -2,7 +2,7 @@
 
 ## Scope and audit basis
 
-This document began as the Phase 1 audit. Phase 2 has since added only the generic API foundation, integer-cent formatter, focused tests, and configuration documentation; no storefront, commerce UI, delivery, or payment code has been added.
+This document began as the Phase 1 audit. Phase 2 added the generic API foundation and integer-cent formatter; later phases added the public catalogue and a backend-backed cart. The official `/` page remains the pre-launch countdown, and storefront development is isolated to `/preview`. Delivery, payment, and checkout submission remain out of scope.
 
 The repository inspected is `Thabang150/image-weaver`. Its current application is a React 19 / TanStack Start application built with Vite, not a Next.js application. Repository guidance in `AGENTS.md` says to keep TanStack Start and to retain exactly the `/` and `/preview` content routes. The current routes README also documents file-based TanStack routing and says not to use Next.js `app/` or `pages/` conventions.
 
@@ -13,7 +13,7 @@ The supplied [FRONTEND_HANDOFF.md](./FRONTEND_HANDOFF.md) is the contract source
 ### Runtime, scripts, and dependencies
 
 - `package.json` defines `dev`, `build`, `build:dev`, `preview`, `lint`, `format`, `test`, and `test:watch` scripts.
-- The runtime is Vite with the Lovable TanStack config, TanStack Start/Router, React 19, TypeScript 5, Tailwind CSS 4, and Vitest. TanStack Query is installed and a `QueryClientProvider` is mounted, but no backend query usage was found.
+- The runtime is Vite with the Lovable TanStack config, TanStack Start/Router, React 19, TypeScript 5, Tailwind CSS 4, and Vitest. TanStack Query is used for catalogue and cart requests.
 - Dependencies include Radix UI, shadcn-style component primitives, React Hook Form, Zod, and Lucide. No Next.js package, API client library, browser automation framework, or commerce-specific implementation was found.
 - `tsconfig.json` enables strict TypeScript checks, path aliases, and `noEmit`; there is no dedicated typecheck script.
 - `vite.config.ts` uses `@lovable.dev/vite-tanstack-config`, which provides the TanStack Start/Vite setup. `vitest.config.ts` runs tests in jsdom.
@@ -21,9 +21,9 @@ The supplied [FRONTEND_HANDOFF.md](./FRONTEND_HANDOFF.md) is the contract source
 
 ### Routes, screens, and components
 
-- `src/routes/index.tsx` renders a branded launch page: botanical hero image, brand, launch countdown, launch date, WhatsApp/email/phone contact actions, and footer.
-- `src/routes/preview.tsx` renders a single website-development preview/update page; it contains no navigation to catalogue or commerce screens.
-- `src/routes/__root.tsx` supplies document metadata, the shared stylesheet, not-found/error views, `QueryClientProvider`, and the route outlet.
+- `src/routes/index.tsx` renders only the branded pre-launch page: botanical hero image, brand, launch countdown, launch date, WhatsApp/email/phone contact actions, and footer. It does not mount the catalogue or cart provider.
+- `src/routes/preview.tsx` hosts the development storefront: catalogue, product detail through validated `?product=<slug>` search state, cart trigger, and cart sheet.
+- `src/routes/__root.tsx` supplies document metadata, the shared stylesheet, not-found/error views, `QueryClientProvider`, and the route outlet. Cart state is mounted by `/preview`, not the root shell.
 - `src/components/wellness.tsx` contains reusable brand and botanical `<img>` elements, a browser-hydrated countdown, contact actions, and footer. Its image sources use static `/images/...` paths under `public/`, as required by the repository guidance.
 - `src/components/ui/` contains a broad set of shadcn/Radix primitives suitable for forms, dialogs, tables, alerts, navigation, and skeleton states. `src/hooks/use-mobile.tsx` and `src/lib/utils.ts` provide existing utilities.
 - `src/styles.css` defines the Tailwind theme and the current launch/preview styling. `src/lib/countdown.ts` computes the Johannesburg launch time from the explicit offset `2026-11-01T00:00:00+02:00`.
@@ -47,9 +47,9 @@ The supplied [FRONTEND_HANDOFF.md](./FRONTEND_HANDOFF.md) is the contract source
 ## 2. Existing components and conventions worth keeping
 
 - Keep TanStack Start, file-based routes, the generated route tree, Vite, React, TypeScript, and existing build/test/lint tooling. Do not convert the repository to Next.js as part of backend integration preparation.
-- Keep the two content routes `/` and `/preview`. The preview should remain one website-foundation page with in-page/section navigation rather than accumulating separate content routes. Store views can use a small in-route view model and URL search state where shareable state is needed, without registering additional routes.
+- Keep exactly the two content routes `/` and `/preview`. `/` is reserved for the official pre-launch experience. All catalogue, product, cart, and future customer shopping flows live under `/preview`, using validated search state for product selection instead of adding routes.
 - Keep the root shell, error boundary/not-found treatment, TanStack Query provider, Tailwind theme, accessible Radix/shadcn primitives, mobile hook, and standard image tags with static `/images/...` sources.
-- Keep the launch countdown utility and tests unless the product owner explicitly changes the launch experience. If `/` transitions from a launch page to a storefront, retain the existing experience deliberately (for example, as an approved launch/announcement section) instead of deleting it incidentally.
+- Keep the launch countdown utility, contact details, and footer on `/`; storefront requests and cart failures must not gate that page.
 - Do not edit `src/routeTree.gen.ts` manually; allow the configured TanStack file-route generation to update it when routes are changed, while maintaining the two-route constraint.
 
 ## 3. Backend contract comparison: gaps and mismatches
@@ -144,19 +144,19 @@ Phase 1 established the baseline, and Phase 2 now implements the API/session fou
 ### Phase 3 — Public storefront and catalogue
 
 - **Files:** `src/routes/index.tsx`, `src/components/storefront/catalogue.tsx`, `src/lib/api/catalogue.ts`, `src/styles.css`, `src/test/catalogue.test.tsx`, and `src/test/app-routing.test.tsx`.
-- **Behavior:** adds a catalogue link and catalogue section after the preserved launch hero/contact experience on `/`. Loads public categories and products using the Phase 2 client; supports documented category filtering, page navigation, and name sorting. Product detail uses validated `?product=<slug>` search state and browser history. Runtime-checks fields used by the UI so malformed payloads become visible response errors rather than render failures. Displays only handoff-documented category/product fields and integer-cent prices. Non-JSON upstream error bodies are not shown to customers. It does not render runtime API image references because the current asset rule requires static `/images` assets and no product-image mapping is documented.
+- **Behavior:** the catalogue and product detail view run only under `/preview`. Loads public categories and products using the Phase 2 client; supports documented category filtering, page navigation, and name sorting. Product detail uses validated `/preview?product=<slug>` search state and browser history. Runtime-checks fields used by the UI so malformed payloads become visible response errors rather than render failures. Displays only handoff-documented category/product fields and integer-cent prices. Product images use validated URL references when available and accessible placeholders otherwise.
 - **Dependencies:** Phase 2 API client and documented public category/product response shapes. The nearby backend source confirms `imageReferences` is an array of trimmed strings (1–500 characters each, at most 10), stored and serialized unchanged; neither source nor handoff defines these strings as URLs, storage keys, filenames, or paths. Image support needs the canonical representation, whether remote URLs are allowed, approved host/path constraints, representative values, and an owner-approved deterministic mapping to static `/images` assets. Product imagery mapping and populated production catalogue availability remain unverified.
-- **Acceptance criteria:** no invented product records, prices, claims, stock, or shipping metadata; errors are recoverable; missing optional packaging is omitted; launch/countdown/contact content remains; `/` and `/preview` remain the only content routes; product selection supports browser Back/Forward.
+- **Acceptance criteria:** no invented product records, prices, claims, stock, or shipping metadata; errors are recoverable; missing optional packaging is omitted; `/` remains a launch-only page; `/preview` owns storefront content; exactly two routes remain; product selection supports browser Back/Forward.
 - **Commands:** `npm test`; `npx eslint src/lib/api/catalogue.ts src/components/storefront/catalogue.tsx src/routes/index.tsx src/test/catalogue.test.tsx src/test/app-routing.test.tsx`; `npx tsc --noEmit`; `npm run build`; `git diff --check`; `npx prettier --check` for changed TypeScript and documentation.
 - **Review follow-up:** runtime validation rejects malformed required response fields; non-JSON upstream error bodies are not surfaced; component tests cover malformed detail/list data and safe error display, and the route test exercises Back/Forward. `npm test` passes 40 tests across 6 files; targeted ESLint, `npx tsc --noEmit`, `npm run build`, Prettier check, and `git diff --check` pass. Full `npm run lint` was not rerun; prior Phase 3 validation recorded legacy repository-wide Prettier/CRLF errors. Direct, anonymous GET checks to the documented deployed category/product URLs each timed out after 10 seconds; production availability and frontend CORS/cookie integration remain unverified. No local `.env*` runtime configuration or process `VITE_BACKEND_BASE_URL` was present; `.env.example` supplies the documented public host.
 
 ### Phase 4 — Product detail views and cart
 
-- **Likely files:** `src/components/storefront/product-detail*`, `src/components/storefront/cart*`, `src/lib/api/products.ts`, `src/lib/api/cart.ts` (only for documented operations), `src/lib/money.ts`, `src/test/product-detail.test.tsx`, `src/test/cart.test.tsx`.
-- **Behavior:** render selected product details and backend-persisted cart state; display monetary amounts from integer cents; present stale/unavailable cart items with explicit recovery actions.
-- **Dependencies:** Phase 2 and catalogue integration; documented product detail/cart operations and stale/unavailable response shapes.
-- **Acceptance criteria:** money formatting never treats cents as whole rand; no public stock/shipping assumptions; cart contents/totals follow backend responses; stale items are not hidden or silently removed; checkout cannot proceed with invalid cart state.
-- **Commands:** `npm test -- src/test/product-detail.test.tsx src/test/cart.test.tsx`; `npm run lint`; `npm run build`; `npm run typecheck` if available.
+- **Status:** product detail and Phase 4A cart UI are implemented under `/preview`.
+- **Files:** `src/components/storefront/catalogue.tsx`, `src/components/storefront/cart.tsx`, `src/lib/api/cart.ts`, `src/lib/api/client.ts`, `src/lib/money.ts`, `src/routes/preview.tsx`, and focused catalogue/cart/routing tests.
+- **Behavior:** uses documented authenticated customer cart endpoints and CSRF-aware API requests; displays backend-derived pricing and totals; supports add, quantity update, remove, and clear; exposes recoverable loading/API error states. No guest cart or merge behavior is implemented.
+- **Acceptance criteria:** integer cents are formatted as ZAR; cart contents and totals follow backend responses; unavailable lines remain visible and removable; mutations are protected against duplicate clicks; `/` never loads cart data; checkout/order/payment/delivery submission remain deferred.
+- **Commands:** `npm test`; targeted `npx eslint` for changed files; `npx tsc --noEmit`; `npm run build`; `git diff --check`.
 
 ### Phase 5 — Authentication, customer account, and saved addresses
 

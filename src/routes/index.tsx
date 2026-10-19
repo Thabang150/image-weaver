@@ -84,9 +84,6 @@ export function LaunchExperience() {
         >
           <Leaf size={13} strokeWidth={1.3} /> Organic Natural Wellness
         </div>
-        <a className="enquiry-button primary mt-7" href="/preview">
-          Explore the development preview
-        </a>
       </main>
       <section className="enquiry" aria-labelledby="enquiry-title">
         <span className="eyebrow">Before we launch</span>

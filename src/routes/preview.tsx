@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
 import { CartProvider } from "@/components/storefront/cart";
 import { PreviewSite, type PreviewView } from "@/components/storefront/preview-site";
@@ -31,10 +32,14 @@ export const Route = createFileRoute("/preview")({
     const product = search["product"];
     const view = search["view"];
     const returnTo = search["returnTo"];
+    const token = search["token"];
+    const emailLink = search["emailLink"];
     return {
       ...(typeof product === "string" && productSlugPattern.test(product) ? { product } : {}),
       ...(isPreviewView(view) ? { view } : {}),
       ...(isPreviewReturnTarget(returnTo) ? { returnTo } : {}),
+      ...(typeof token === "string" ? { token } : {}),
+      ...(emailLink === 1 || emailLink === "1" ? { emailLink: 1 as const } : {}),
     };
   },
   head: () => ({
@@ -61,6 +66,30 @@ function Preview() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const view = search.view ?? "shop";
+  const emailLinkFallbackStartedRef = useRef(false);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (
+      url.pathname !== "/verify-email" ||
+      search.emailLink === 1 ||
+      emailLinkFallbackStartedRef.current
+    ) {
+      return;
+    }
+
+    emailLinkFallbackStartedRef.current = true;
+    const token = url.searchParams.get("token");
+    void navigate({
+      to: "/preview",
+      search: {
+        view: "verify-email",
+        emailLink: 1,
+        ...(token === null ? {} : { token }),
+      },
+      replace: true,
+    });
+  }, [navigate, search.emailLink]);
 
   function navigateTo(nextView: PreviewView, returnTo?: "cart" | "account" | "admin") {
     void navigate({
@@ -81,6 +110,15 @@ function Preview() {
         view={view}
         product={search.product}
         returnTo={search.returnTo}
+        verificationToken={search.token}
+        isEmailLink={search.emailLink === 1}
+        onClearEmailLink={() => {
+          void navigate({
+            to: "/preview",
+            search: { view: "verify-email", emailLink: 1 },
+            replace: true,
+          });
+        }}
         onNavigate={navigateTo}
         onSelectProduct={(slug) => {
           void navigate({ search: { product: slug } });

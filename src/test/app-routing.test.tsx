@@ -5,9 +5,11 @@ import {
   RouterProvider,
   rootRouteId,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { emailVerificationRewrite } from "@/lib/routing/email-verification-rewrite";
 import { routeTree } from "@/routeTree.gen";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -27,6 +29,15 @@ function createPreviewFetcher(registerResponse: unknown, registerStatus = 201) {
     if (url.pathname.endsWith("/auth/register")) {
       return jsonResponse(registerResponse, registerStatus);
     }
+    if (url.pathname.endsWith("/auth/verify-email")) {
+      return jsonResponse({ message: "Email address verified." });
+    }
+    if (url.pathname.endsWith("/auth/request-verification")) {
+      return jsonResponse(
+        { message: "If the account needs verification, instructions can be sent." },
+        202,
+      );
+    }
     if (url.pathname.endsWith("/cart")) {
       return jsonResponse({ error: "Authentication required." }, 401);
     }
@@ -41,16 +52,18 @@ function createPreviewFetcher(registerResponse: unknown, registerStatus = 201) {
   });
 }
 
-async function renderPreviewAt(initialEntry: string, fetcher: typeof fetch) {
+async function renderPreviewAt(initialEntry: string, fetcher: typeof fetch, strictMode = false) {
   vi.stubEnv("VITE_BACKEND_BASE_URL", "https://api.example.test");
   vi.stubGlobal("fetch", fetcher);
   const router = createRouter({
     routeTree,
     context: { queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
     history: createMemoryHistory({ initialEntries: [initialEntry] }),
+    rewrite: emailVerificationRewrite,
   });
   await router.load();
-  render(<RouterProvider router={router} />);
+  const app = <RouterProvider router={router} />;
+  render(strictMode ? <StrictMode>{app}</StrictMode> : app);
   return router;
 }
 
@@ -67,6 +80,7 @@ const testProduct = {
 };
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -83,6 +97,153 @@ describe("App routing", () => {
     expect(previewMatches.at(-1)?.routeId).toBe("/preview");
     expect(homeMatches.at(-1)?.routeId).not.toBe(rootRouteId);
   });
+
+  it("resolves /verify-email through /preview and clears the link token after capture", async () => {
+    const token = "v".repeat(40);
+    const fetcher = createPreviewFetcher({});
+    const router = await renderPreviewAt(`/verify-email?token=${token}`, fetcher);
+
+    expect(await screen.findByText("Email address verified.")).toBeVisible();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/preview");
+      expect(router.state.location.search).toEqual({ view: "verify-email", emailLink: 1 });
+    });
+    expect(router.history.location.href).toContain("/preview?view=verify-email");
+    expect(router.history.location.href).not.toContain(token);
+    const verificationCalls = fetcher.mock.calls.filter(([input]) =>
+      String(input).endsWith("/auth/verify-email"),
+    );
+    expect(verificationCalls).toHaveLength(1);
+    expect(JSON.parse(String(verificationCalls[0]?.[1]?.body))).toEqual({ token });
+    expect(verificationCalls[0]?.[1]?.credentials).toBe("include");
+    expect(new Headers(verificationCalls[0]?.[1]?.headers).get("X-CSRF-Token")).toBe("csrf-test");
+    fireEvent.click(screen.getByRole("button", { name: "Continue to sign in" }));
+    expect(await screen.findByRole("heading", { name: "Log in" })).toBeVisible();
+    expect(router.state.location.search).toEqual({ view: "login" });
+  }, 15000);
+
+  it("shows a missing-token state with resend controls and does not call verification", async () => {
+    const fetcher = createPreviewFetcher({});
+    const router = await renderPreviewAt("/verify-email", fetcher);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/does not include a token/i);
+    expect(screen.getByLabelText("Email")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Back to the storefront" })).toBeVisible();
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({ view: "verify-email", emailLink: 1 }),
+    );
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith("/auth/verify-email"))).toBe(
+      false,
+    );
+  }, 15000);
+
+  it("rejects malformed URL tokens without sending them to the backend", async () => {
+    const fetcher = createPreviewFetcher({});
+    await renderPreviewAt("/verify-email?token=too-short", fetcher);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/invalid or expired/i);
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith("/auth/verify-email"))).toBe(
+      false,
+    );
+  }, 15000);
+
+  it("shows the backend invalid or expired token response", async () => {
+    const token = "x".repeat(40);
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token"))
+        return jsonResponse({ csrfToken: "csrf-test" });
+      if (url.pathname.endsWith("/auth/verify-email")) {
+        return jsonResponse({ error: "Verification token is invalid or expired." }, 400);
+      }
+      if (url.pathname.endsWith("/auth/me") || url.pathname.endsWith("/cart")) {
+        return jsonResponse({ error: "Authentication required." }, 401);
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    await renderPreviewAt(`/verify-email?token=${token}`, fetcher);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/invalid or expired/i);
+    expect(screen.getByLabelText("Email")).toBeVisible();
+  }, 15000);
+
+  it("handles a CSRF rejection with only one controlled retry", async () => {
+    const token = "x".repeat(40);
+    let tokenRequests = 0;
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) {
+        tokenRequests += 1;
+        return jsonResponse({ csrfToken: `csrf-${tokenRequests}` });
+      }
+      if (url.pathname.endsWith("/auth/verify-email")) {
+        return jsonResponse({ error: "Invalid or missing CSRF token." }, 403);
+      }
+      if (url.pathname.endsWith("/auth/me") || url.pathname.endsWith("/cart")) {
+        return jsonResponse({ error: "Authentication required." }, 401);
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    await renderPreviewAt(`/verify-email?token=${token}`, fetcher);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/security token after one refresh/i);
+    const verifyCalls = fetcher.mock.calls.filter(([input]) =>
+      String(input).endsWith("/auth/verify-email"),
+    );
+    expect(verifyCalls).toHaveLength(2);
+    expect(new Headers(verifyCalls[0]?.[1]?.headers).get("X-CSRF-Token")).not.toBe(
+      new Headers(verifyCalls[1]?.[1]?.headers).get("X-CSRF-Token"),
+    );
+    const csrfCalls = fetcher.mock.calls.filter(([input]) =>
+      String(input).endsWith("/auth/csrf-token"),
+    );
+    expect(csrfCalls.length).toBeGreaterThanOrEqual(1);
+    expect(csrfCalls.length).toBeLessThanOrEqual(2);
+  }, 15000);
+
+  it("shows recoverable network and server errors for link verification", async () => {
+    const token = "x".repeat(40);
+    const networkFetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token"))
+        return jsonResponse({ csrfToken: "csrf-test" });
+      if (url.pathname.endsWith("/auth/verify-email")) throw new Error("offline");
+      if (url.pathname.endsWith("/auth/me") || url.pathname.endsWith("/cart")) {
+        return jsonResponse({ error: "Authentication required." }, 401);
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    await renderPreviewAt(`/verify-email?token=${token}`, networkFetcher);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/check your connection/i);
+    expect(screen.getByRole("button", { name: "Try verification again" })).toBeVisible();
+
+    cleanup();
+    const serverFetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token"))
+        return jsonResponse({ csrfToken: "csrf-test" });
+      if (url.pathname.endsWith("/auth/verify-email")) {
+        return jsonResponse({ error: "Unavailable." }, 503);
+      }
+      if (url.pathname.endsWith("/auth/me") || url.pathname.endsWith("/cart")) {
+        return jsonResponse({ error: "Authentication required." }, 401);
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    await renderPreviewAt(`/verify-email?token=${token}`, serverFetcher);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/temporarily unavailable/i);
+  }, 15000);
+
+  it("submits a URL token only once under React Strict Mode", async () => {
+    const token = "v".repeat(40);
+    const fetcher = createPreviewFetcher({});
+    await renderPreviewAt(`/verify-email?token=${token}`, fetcher, true);
+
+    expect(await screen.findByText("Email address verified.")).toBeVisible();
+    expect(
+      fetcher.mock.calls.filter(([input]) => String(input).endsWith("/auth/verify-email")),
+    ).toHaveLength(1);
+  }, 15000);
 
   it("keeps the official homepage independent of storefront and cart API requests", async () => {
     vi.stubEnv("VITE_BACKEND_BASE_URL", "https://api.example.test");
@@ -239,7 +400,9 @@ describe("App routing", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
 
-    expect(await screen.findByText(/no verification email was sent/i)).toBeVisible();
+    expect(
+      await screen.findByText(/no verification message was accepted by the email provider/i),
+    ).toBeVisible();
     expect(router.state.location.pathname).toBe("/preview");
     const registrationCall = fetcher.mock.calls.find(([input]) =>
       String(input).endsWith("/auth/register"),
@@ -250,6 +413,39 @@ describe("App routing", () => {
       email: "customer@example.test",
       password: "a-strong-test-password",
     });
+  }, 15000);
+
+  it("does not claim delivery when the email provider accepts registration mail", async () => {
+    const fetcher = createPreviewFetcher({
+      user: {
+        id: "user-2",
+        email: "customer@example.test",
+        emailVerified: false,
+        roles: ["customer"],
+        addresses: [],
+        createdAt: "2026-10-17T00:00:00.000Z",
+        updatedAt: "2026-10-17T00:00:00.000Z",
+      },
+      emailVerificationEmailSent: true,
+    });
+    await renderPreviewAt("/preview?view=register", fetcher);
+
+    fireEvent.change(await screen.findByLabelText("Email"), {
+      target: { value: "customer@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Password (12–128 characters)"), {
+      target: { value: "a-strong-test-password" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm password"), {
+      target: { value: "a-strong-test-password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Register" }));
+
+    expect(
+      await screen.findByText(
+        /email provider accepted the verification message; this does not confirm delivery/i,
+      ),
+    ).toBeVisible();
   }, 15000);
 
   it("does not show account creation success when the backend rejects registration", async () => {
@@ -269,6 +465,26 @@ describe("App routing", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/already exists/i);
     expect(screen.queryByText(/account created/i)).not.toBeInTheDocument();
+  }, 15000);
+
+  it("keeps the existing manual resend-verification flow working", async () => {
+    const fetcher = createPreviewFetcher({});
+    await renderPreviewAt("/preview?view=verify-email", fetcher);
+
+    fireEvent.change(await screen.findByLabelText("Email"), {
+      target: { value: "customer@example.test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Request verification" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /does not confirm that an email was delivered/i,
+    );
+    const request = fetcher.mock.calls.find(([input]) =>
+      String(input).endsWith("/auth/request-verification"),
+    );
+    expect(request?.[1]?.credentials).toBe("include");
+    expect(new Headers(request?.[1]?.headers).get("X-CSRF-Token")).toBe("csrf-test");
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ email: "customer@example.test" });
   }, 15000);
 
   it("shows backend invalid-credential errors on the login form", async () => {

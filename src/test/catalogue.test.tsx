@@ -295,9 +295,7 @@ describe("public catalogue", () => {
     ).toBeVisible();
     expect(screen.getByText(product.description)).toBeVisible();
     expect(screen.queryByText(/packaging/i)).not.toBeInTheDocument();
-    expect(fetcher.mock.calls[0]?.[0]).toBe(
-      "https://api.example.test/api/v1/products/aloe-product",
-    );
+    expect(fetcher.mock.calls[0]?.[0]).toBe("http://localhost:3000/api/v1/products/aloe-product");
 
     fireEvent.click(screen.getByRole("button", { name: "Back to catalogue" }));
     expect(onBackToCatalogue).toHaveBeenCalledOnce();

@@ -26,8 +26,8 @@ describe("API URL configuration", () => {
     expect(buildApiUrl(`${baseUrl}/api/v1`, "/api/v1/products")).toBe(`${baseUrl}/api/v1/products`);
   });
 
-  it("requires an explicit public backend URL and rejects non-HTTP configuration", () => {
-    expect(() => getBackendBaseUrl("", true)).toThrow("Set VITE_BACKEND_BASE_URL");
+  it("defaults development to the same-origin API proxy and rejects invalid configuration", () => {
+    expect(getBackendBaseUrl("", true)).toBe("/api/v1/");
     expect(() => normalizeApiBaseUrl("javascript:alert(1)")).toThrow("HTTP(S) URL");
   });
 

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdminPanel } from "@/components/storefront/admin";
 import { CartPage, CartSheet, CartTrigger } from "@/components/storefront/cart";
@@ -27,6 +27,9 @@ interface PreviewSiteProps {
   view: PreviewView;
   product: string | undefined;
   returnTo: "cart" | "account" | "admin" | undefined;
+  verificationToken: string | undefined;
+  isEmailLink: boolean;
+  onClearEmailLink: () => void;
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
   onSelectProduct: (slug: string) => void;
   onBackToCatalogue: () => void;
@@ -156,6 +159,9 @@ export function PreviewSite({
   view,
   product,
   returnTo,
+  verificationToken,
+  isEmailLink,
+  onClearEmailLink,
   onNavigate,
   onSelectProduct,
   onBackToCatalogue,
@@ -200,7 +206,14 @@ export function PreviewSite({
   } else if (view === "register") {
     content = <RegisterPage onNavigate={onNavigate} />;
   } else if (view === "verify-email") {
-    content = <VerifyEmailPage onNavigate={onNavigate} />;
+    content = (
+      <VerifyEmailPage
+        onNavigate={onNavigate}
+        verificationToken={verificationToken}
+        isEmailLink={isEmailLink}
+        onClearEmailLink={onClearEmailLink}
+      />
+    );
   } else if (view === "forgot-password") {
     content = <ForgotPasswordPage onNavigate={onNavigate} />;
   } else if (view === "reset-password") {
@@ -379,8 +392,8 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
       setFeedback({
         kind: result.emailVerificationEmailSent ? "success" : "info",
         message: result.emailVerificationEmailSent
-          ? `Account created for ${result.user.email}. The backend reports that a verification email was sent. Verify the email before signing in.`
-          : `Account created for ${result.user.email}, but the backend reports that no verification email was sent. Contact the site operator or request verification again when email delivery is available.`,
+          ? `Account created for ${result.user.email}. The backend reports that the email provider accepted the verification message; this does not confirm delivery. Verify the email before signing in.`
+          : `Account created for ${result.user.email}, but the backend reports that no verification message was accepted by the email provider. Contact the site operator or request verification again when email delivery is available.`,
       });
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Registration") });
@@ -654,11 +667,89 @@ async function refreshSession(queryClient: ReturnType<typeof useQueryClient>) {
   await queryClient.invalidateQueries({ queryKey: ["cart"] });
 }
 
-function VerifyEmailPage({ onNavigate }: { onNavigate: (view: PreviewView) => void }) {
+type EmailLinkStatus = "loading" | "success" | "invalid" | "error" | "missing";
+
+function VerifyEmailPage({
+  onNavigate,
+  verificationToken,
+  isEmailLink,
+  onClearEmailLink,
+}: {
+  onNavigate: (view: PreviewView) => void;
+  verificationToken: string | undefined;
+  isEmailLink: boolean;
+  onClearEmailLink: () => void;
+}) {
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(Boolean(isEmailLink && verificationToken));
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [linkStatus, setLinkStatus] = useState<EmailLinkStatus | null>(
+    isEmailLink ? (verificationToken ? "loading" : "missing") : null,
+  );
+  const handledEmailLinkRef = useRef<string | null>(null);
+  const capturedTokenRef = useRef<string | null>(null);
+
+  const verifyLinkToken = useCallback(async (linkToken: string) => {
+    setBusy(true);
+    setLinkStatus("loading");
+    setFeedback(null);
+    try {
+      const result = await authApi.verifyEmail(linkToken);
+      setLinkStatus("success");
+      setFeedback({ kind: "success", message: result.message });
+    } catch (error) {
+      if (error instanceof ApiHttpError && (error.status === 400 || error.status === 410)) {
+        setLinkStatus("invalid");
+        setFeedback({
+          kind: "error",
+          message:
+            "This verification link is invalid or expired. Request a new verification email and try again.",
+        });
+      } else {
+        setLinkStatus("error");
+        setFeedback({ kind: "error", message: describeAuthError(error, "Email verification") });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isEmailLink) return;
+    if (!verificationToken && capturedTokenRef.current) return;
+
+    const linkKey = verificationToken ?? "";
+    if (handledEmailLinkRef.current === linkKey) return;
+    handledEmailLinkRef.current = linkKey;
+
+    if (!verificationToken) {
+      onClearEmailLink();
+      setLinkStatus("missing");
+      setFeedback({
+        kind: "error",
+        message:
+          "This verification link does not include a token. Request another verification email or enter a token below.",
+      });
+      return;
+    }
+
+    capturedTokenRef.current = verificationToken;
+    onClearEmailLink();
+
+    if (verificationToken.length < 40 || verificationToken.length > 200) {
+      setLinkStatus("invalid");
+      setFeedback({
+        kind: "error",
+        message:
+          "This verification link is invalid or expired. Request a new verification email and try again.",
+      });
+      setBusy(false);
+      return;
+    }
+
+    void verifyLinkToken(verificationToken);
+  }, [isEmailLink, onClearEmailLink, verificationToken, verifyLinkToken]);
 
   async function submitRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -698,28 +789,58 @@ function VerifyEmailPage({ onNavigate }: { onNavigate: (view: PreviewView) => vo
     }
   }
 
+  async function retryLinkVerification() {
+    const capturedToken = capturedTokenRef.current;
+    if (!capturedToken || busy) return;
+    await verifyLinkToken(capturedToken);
+  }
+
   return (
     <FormPage
       title="Verify your email"
-      description="Use the verification token from the email. Tokens are submitted only to the backend and are not saved."
+      description="Use the verification link or token from your email. Tokens are submitted only to the backend and are not saved."
     >
       <div className="space-y-6">
-        <form className="space-y-3" onSubmit={(event) => void submitToken(event)}>
-          <label className="block space-y-1 text-sm">
-            <span>Verification token</span>
-            <input
-              className={inputClass}
-              minLength={40}
-              maxLength={200}
-              required
-              value={token}
-              onChange={(event) => setToken(event.currentTarget.value)}
-            />
-          </label>
-          <Button type="submit" disabled={busy || token.trim().length < 40}>
-            {busy ? "Verifying…" : "Verify email"}
+        {linkStatus === "loading" ? (
+          <p className="text-sm" role="status">
+            Verifying your email…
+          </p>
+        ) : null}
+        {linkStatus ? (
+          linkStatus !== "loading" ? (
+            <FeedbackMessage feedback={feedback} />
+          ) : null
+        ) : (
+          <FeedbackMessage feedback={feedback} />
+        )}
+        {linkStatus === "error" && capturedTokenRef.current ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void retryLinkVerification()}
+          >
+            {busy ? "Retrying…" : "Try verification again"}
           </Button>
-        </form>
+        ) : null}
+        {linkStatus !== "loading" && linkStatus !== "success" ? (
+          <form className="space-y-3" onSubmit={(event) => void submitToken(event)}>
+            <label className="block space-y-1 text-sm">
+              <span>Verification token</span>
+              <input
+                className={inputClass}
+                minLength={40}
+                maxLength={200}
+                required
+                value={token}
+                onChange={(event) => setToken(event.currentTarget.value)}
+              />
+            </label>
+            <Button type="submit" disabled={busy || token.trim().length < 40}>
+              {busy ? "Verifying…" : "Verify email"}
+            </Button>
+          </form>
+        ) : null}
         <div className="border-t border-border pt-5">
           <h2 className="font-medium">Request another verification email</h2>
           <form className="mt-3 space-y-3" onSubmit={(event) => void submitRequest(event)}>
@@ -739,10 +860,20 @@ function VerifyEmailPage({ onNavigate }: { onNavigate: (view: PreviewView) => vo
             </Button>
           </form>
         </div>
-        <FeedbackMessage feedback={feedback} />
-        <button className="text-sm underline" type="button" onClick={() => onNavigate("login")}>
-          Back to login
-        </button>
+        {linkStatus === "success" ? (
+          <Button type="button" onClick={() => onNavigate("login")}>
+            Continue to sign in
+          </Button>
+        ) : (
+          <div className="flex flex-wrap gap-4">
+            <button className="text-sm underline" type="button" onClick={() => onNavigate("login")}>
+              Back to login
+            </button>
+            <button className="text-sm underline" type="button" onClick={() => onNavigate("shop")}>
+              Back to the storefront
+            </button>
+          </div>
+        )}
       </div>
     </FormPage>
   );

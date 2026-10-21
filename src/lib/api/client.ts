@@ -89,9 +89,7 @@ export function getBackendBaseUrl(
   isDevelopment = import.meta.env.DEV,
 ) {
   if (!isDevelopment) return normalizeApiBaseUrl(API_PREFIX);
-  if (!configuredUrl?.trim()) {
-    throw new Error("Set VITE_BACKEND_BASE_URL before making backend requests.");
-  }
+  if (!configuredUrl?.trim()) return normalizeApiBaseUrl(API_PREFIX);
   return normalizeApiBaseUrl(configuredUrl.trim());
 }
 
@@ -337,8 +335,14 @@ export function createApiClient(options: ApiClientOptions) {
 }
 
 export function createConfiguredApiClient() {
+  const configuredBaseUrl = getBackendBaseUrl();
+  const baseUrl =
+    import.meta.env.DEV && typeof window !== "undefined"
+      ? new URL(normalizeApiBaseUrl(API_PREFIX), window.location.origin).toString()
+      : configuredBaseUrl;
+
   return createApiClient({
-    baseUrl: getBackendBaseUrl(),
+    baseUrl,
     fetcher: (input, init) => globalThis.fetch(input, init),
   });
 }

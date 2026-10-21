@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ApiHttpError, ApiResponseError } from "@/lib/api/client";
 import { adminApi, type AdminInventoryItem } from "@/lib/api/admin";
-import { authApi, type PublicUser } from "@/lib/api/auth";
+import type { PublicUser } from "@/lib/api/auth";
+import { isAdminUser } from "@/lib/auth/authorization";
 import { isAllowedProductImageUrl } from "@/lib/image-url";
 
-type LoginStep = "credentials" | "two-factor" | "enrollment" | "recovery-codes";
 type ProductStatus = AdminInventoryItem["status"];
 
 function isProductStatus(value: string): value is ProductStatus {
@@ -44,128 +44,7 @@ function parsePriceCents(value: string): number | undefined {
   return Number.isSafeInteger(cents) && cents > 0 ? cents : undefined;
 }
 
-function isAdminUser(user: PublicUser): boolean {
-  return (
-    user.emailVerified &&
-    user.roles.includes("admin") &&
-    user.email.trim().toLowerCase().endsWith("@healtywayssa.co.za")
-  );
-}
-
-export function AdminPanel() {
-  const queryClient = useQueryClient();
-  const sessionQuery = useQuery({
-    queryKey: ["admin", "session"],
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-  const [step, setStep] = useState<LoginStep>("credentials");
-  const [credentials, setCredentials] = useState({ email: "", password: "" });
-  const [factorCode, setFactorCode] = useState("");
-  const [enrollment, setEnrollment] = useState<{ secret: string } | null>(null);
-  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await authApi.login(credentials);
-      setCredentials({ email: "", password: "" });
-      if (response && "twoFactorRequired" in response && response.twoFactorRequired) {
-        setStep("two-factor");
-      } else if (
-        response &&
-        "twoFactorEnrollmentRequired" in response &&
-        response.twoFactorEnrollmentRequired
-      ) {
-        const setup = await authApi.enrollTwoFactor();
-        if (!setup || typeof setup.secret !== "string" || !setup.secret) {
-          throw new ApiResponseError(200, "Backend returned invalid two-factor enrollment data.");
-        }
-        setEnrollment({ secret: setup.secret });
-        setStep("enrollment");
-      } else if (response && "user" in response) {
-        await queryClient.invalidateQueries({ queryKey: ["admin", "session"] });
-      } else {
-        throw new ApiResponseError(200, "Backend returned an invalid sign-in response.");
-      }
-    } catch (loginError) {
-      setError(safeAdminError(loginError, "Sign-in"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleFactorSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      if (step === "two-factor") {
-        await authApi.verifyTwoFactor(factorCode);
-        await queryClient.invalidateQueries({ queryKey: ["admin", "session"] });
-      } else {
-        const result = await authApi.confirmTwoFactor(factorCode);
-        if (!result || !Array.isArray(result.recoveryCodes)) {
-          throw new ApiResponseError(200, "Backend returned invalid recovery codes.");
-        }
-        setRecoveryCodes(result.recoveryCodes);
-        setFactorCode("");
-        setStep("recovery-codes");
-        await queryClient.invalidateQueries({ queryKey: ["admin", "session"] });
-      }
-    } catch (factorError) {
-      setError(safeAdminError(factorError, "Two-factor verification"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleLogout() {
-    setBusy(true);
-    setError(null);
-    try {
-      await authApi.logout();
-      setStep("credentials");
-      setEnrollment(null);
-      setRecoveryCodes(null);
-      setFactorCode("");
-      await queryClient.invalidateQueries({ queryKey: ["admin", "session"] });
-    } catch (logoutError) {
-      setError(safeAdminError(logoutError, "Sign-out"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (sessionQuery.isPending) {
-    return (
-      <p className="catalogue-status" role="status">
-        Checking administrator session…
-      </p>
-    );
-  }
-  if (sessionQuery.isError) {
-    return (
-      <section className="admin-panel" aria-labelledby="admin-title">
-        <h2 id="admin-title">Administrator access</h2>
-        <p className="catalogue-error" role="alert">
-          {safeAdminError(sessionQuery.error, "Session check")}
-        </p>
-        <Button variant="outline" onClick={() => void sessionQuery.refetch()}>
-          Retry
-        </Button>
-      </section>
-    );
-  }
-
-  const session = sessionQuery.data;
-  const user = session?.status === "authenticated" ? session.user : undefined;
-  const authorized = Boolean(user && isAdminUser(user));
-
+export function AdminPanel({ user }: { user: PublicUser | null }) {
   return (
     <section className="admin-panel" aria-labelledby="admin-title">
       <header className="admin-panel-header">
@@ -175,115 +54,18 @@ export function AdminPanel() {
             Administrator workspace
           </h2>
         </div>
-        {user ? (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={() => void handleLogout()}
-          >
-            Sign out
-          </Button>
-        ) : null}
       </header>
-
-      {error ? (
-        <p className="admin-feedback" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      {step === "recovery-codes" && recoveryCodes ? (
-        <div className="admin-card" role="status">
-          <h3>Save your recovery codes</h3>
+      {!user ? (
+        <div className="admin-card" role="alert">
+          <h3>Administrator access denied</h3>
           <p>
-            These codes are shown once. Store them securely; they are not saved in this browser.
+            Sign in with an authorized administrator account. The backend role, verified email,
+            administrator domain and completed two-factor session are all required.
           </p>
-          <ul className="admin-recovery-codes">
-            {recoveryCodes.map((code) => (
-              <li key={code}>
-                <code>{code}</code>
-              </li>
-            ))}
-          </ul>
-          <Button
-            type="button"
-            onClick={() => {
-              setRecoveryCodes(null);
-              setEnrollment(null);
-              setStep("credentials");
-            }}
-          >
-            I have saved the codes
-          </Button>
         </div>
-      ) : !user ? (
-        step === "credentials" ? (
-          <form className="admin-form admin-card" onSubmit={(event) => void handleLogin(event)}>
-            <h3>Sign in to continue</h3>
-            <label>
-              Email address
-              <input
-                type="email"
-                autoComplete="username"
-                required
-                value={credentials.email}
-                onChange={(event) =>
-                  setCredentials({ ...credentials, email: event.currentTarget.value })
-                }
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={credentials.password}
-                onChange={(event) =>
-                  setCredentials({ ...credentials, password: event.currentTarget.value })
-                }
-              />
-            </label>
-            <Button type="submit" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
-            </Button>
-          </form>
-        ) : (
-          <form
-            className="admin-form admin-card"
-            onSubmit={(event) => void handleFactorSubmit(event)}
-          >
-            <h3>{step === "enrollment" ? "Set up two-factor authentication" : "Verify sign-in"}</h3>
-            {step === "enrollment" ? (
-              <>
-                <p>
-                  Add the following key to an authenticator app. It is only held in this page while
-                  setup is in progress.
-                </p>
-                <code className="admin-enrollment-secret">{enrollment?.secret}</code>
-              </>
-            ) : null}
-            <label>
-              {step === "enrollment"
-                ? "Six-digit authenticator code"
-                : "Authenticator or recovery code"}
-              <input
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                minLength={6}
-                maxLength={step === "enrollment" ? 6 : 32}
-                required
-                value={factorCode}
-                onChange={(event) => setFactorCode(event.currentTarget.value)}
-              />
-            </label>
-            <Button type="submit" disabled={busy}>
-              {busy ? "Verifying…" : step === "enrollment" ? "Confirm setup" : "Verify"}
-            </Button>
-          </form>
-        )
-      ) : !authorized ? (
+      ) : isAdminUser(user) ? (
+        <AdminTools />
+      ) : (
         <div className="admin-card" role="alert">
           <h3>Administrator access denied</h3>
           <p>
@@ -291,8 +73,6 @@ export function AdminPanel() {
             {` @healtywayssa.co.za `}email address. A matching email alone does not grant access.
           </p>
         </div>
-      ) : (
-        <AdminTools />
       )}
     </section>
   );

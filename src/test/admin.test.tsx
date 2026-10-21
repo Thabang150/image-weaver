@@ -42,7 +42,7 @@ function renderAdmin(user: PublicUser) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <AdminPanel />
+      <AdminPanel user={user} />
     </QueryClientProvider>,
   );
   return fetcher;

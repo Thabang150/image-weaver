@@ -1,30 +1,53 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
 
-import { AdminPanel } from "@/components/storefront/admin";
-import { CartProvider, CartSheet, CartTrigger } from "@/components/storefront/cart";
-import { Catalogue } from "@/components/storefront/catalogue";
-import { Button } from "@/components/ui/button";
-import { Footer } from "@/components/wellness";
+import { CartProvider } from "@/components/storefront/cart";
+import { PreviewSite, type PreviewView } from "@/components/storefront/preview-site";
 
 const productSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const previewViews: PreviewView[] = [
+  "shop",
+  "login",
+  "register",
+  "verify-email",
+  "account",
+  "cart",
+  "admin",
+  "forgot-password",
+  "reset-password",
+];
+
+type PreviewReturnTarget = "cart" | "account" | "admin";
+
+function isPreviewView(value: unknown): value is PreviewView {
+  return typeof value === "string" && previewViews.includes(value as PreviewView);
+}
+
+function isPreviewReturnTarget(value: unknown): value is PreviewReturnTarget {
+  return value === "cart" || value === "account" || value === "admin";
+}
 
 export const Route = createFileRoute("/preview")({
   validateSearch: (search: Record<string, unknown>) => {
     const product = search["product"];
-    return typeof product === "string" && productSlugPattern.test(product) ? { product } : {};
+    const view = search["view"];
+    const returnTo = search["returnTo"];
+    return {
+      ...(typeof product === "string" && productSlugPattern.test(product) ? { product } : {}),
+      ...(isPreviewView(view) ? { view } : {}),
+      ...(isPreviewReturnTarget(returnTo) ? { returnTo } : {}),
+    };
   },
   head: () => ({
     meta: [
-      { title: "Healthy Ways SA — Storefront Development Preview" },
+      { title: "HealthywaysSA — Storefront Preview" },
       {
         name: "description",
-        content: "Development preview of the Healthy Ways SA storefront.",
+        content: "Shop and test the HealthywaysSA customer storefront.",
       },
-      { property: "og:title", content: "Healthy Ways SA — Storefront Development Preview" },
+      { property: "og:title", content: "HealthywaysSA — Storefront Preview" },
       {
         property: "og:description",
-        content: "Explore the Healthy Ways SA storefront currently in development.",
+        content: "Shop and test the HealthywaysSA customer storefront.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -35,50 +58,37 @@ export const Route = createFileRoute("/preview")({
 });
 
 function Preview() {
-  const { product } = Route.useSearch();
+  const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const [showAdmin, setShowAdmin] = useState(false);
+  const view = search.view ?? "shop";
+
+  function navigateTo(nextView: PreviewView, returnTo?: "cart" | "account" | "admin") {
+    void navigate({
+      search:
+        nextView === "shop" && search.product
+          ? { view: nextView, product: search.product }
+          : nextView === "shop"
+            ? {}
+            : returnTo
+              ? { view: nextView, returnTo }
+              : { view: nextView },
+    });
+  }
 
   return (
     <CartProvider>
-      <main className="storefront-preview">
-        <header className="storefront-preview-header">
-          <div>
-            <span className="eyebrow">Healthy Ways SA</span>
-            <h1 className="section-title mt-3">Storefront development preview</h1>
-            <p className="launch-copy mt-3">
-              This private preview is for development while the official launch page remains at the
-              homepage.
-            </p>
-          </div>
-          <nav className="preview-actions" aria-label="Preview sections">
-            <Button
-              type="button"
-              variant={showAdmin ? "secondary" : "outline"}
-              aria-pressed={showAdmin}
-              onClick={() => setShowAdmin((visible) => !visible)}
-            >
-              {showAdmin ? "Return to storefront" : "Administrator access"}
-            </Button>
-            {!showAdmin ? <CartTrigger /> : null}
-          </nav>
-        </header>
-        {showAdmin ? (
-          <AdminPanel />
-        ) : (
-          <Catalogue
-            selectedSlug={product}
-            onSelectProduct={(slug) => {
-              void navigate({ search: { product: slug } });
-            }}
-            onBackToCatalogue={() => {
-              void navigate({ search: {} });
-            }}
-          />
-        )}
-      </main>
-      <Footer />
-      <CartSheet />
+      <PreviewSite
+        view={view}
+        product={search.product}
+        returnTo={search.returnTo}
+        onNavigate={navigateTo}
+        onSelectProduct={(slug) => {
+          void navigate({ search: { product: slug } });
+        }}
+        onBackToCatalogue={() => {
+          void navigate({ search: {} });
+        }}
+      />
     </CartProvider>
   );
 }

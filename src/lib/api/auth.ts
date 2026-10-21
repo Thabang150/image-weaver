@@ -36,6 +36,11 @@ export interface PublicUser {
 export type LoginResponse =
   { user: PublicUser } | { twoFactorRequired: true } | { twoFactorEnrollmentRequired: true };
 
+export interface RegistrationResult {
+  user: PublicUser;
+  emailVerificationEmailSent: boolean;
+}
+
 export type SessionState =
   { status: "unauthenticated" } | { status: "authenticated"; user: PublicUser };
 
@@ -125,6 +130,109 @@ export function createAuthApi(client: AuthApiClient) {
       return invalidAuthResponse();
     },
 
+    async register(input: {
+      email: string;
+      password: string;
+      displayName?: string;
+      phoneNumber?: string;
+    }): Promise<RegistrationResult> {
+      const response = await client.request<unknown>("/auth/register", {
+        method: "POST",
+        json: input,
+      });
+      if (
+        !isRecord(response) ||
+        !isPublicUser(response["user"]) ||
+        typeof response["emailVerificationEmailSent"] !== "boolean"
+      ) {
+        return invalidAuthResponse();
+      }
+      return {
+        user: response["user"],
+        emailVerificationEmailSent: response["emailVerificationEmailSent"],
+      };
+    },
+
+    async requestVerification(email: string): Promise<{ message: string }> {
+      const response = await client.request<unknown>("/auth/request-verification", {
+        method: "POST",
+        json: { email },
+      });
+      if (!isRecord(response) || typeof response["message"] !== "string") {
+        return invalidAuthResponse();
+      }
+      return { message: response["message"] };
+    },
+
+    async verifyEmail(token: string): Promise<{ message: string }> {
+      const response = await client.request<unknown>("/auth/verify-email", {
+        method: "POST",
+        json: { token },
+      });
+      if (!isRecord(response) || typeof response["message"] !== "string") {
+        return invalidAuthResponse();
+      }
+      return { message: response["message"] };
+    },
+
+    async forgotPassword(email: string): Promise<{ message: string }> {
+      const response = await client.request<unknown>("/auth/forgot-password", {
+        method: "POST",
+        json: { email },
+      });
+      if (!isRecord(response) || typeof response["message"] !== "string") {
+        return invalidAuthResponse();
+      }
+      return { message: response["message"] };
+    },
+
+    async resetPassword(token: string, password: string): Promise<{ message: string }> {
+      const response = await client.request<unknown>("/auth/reset-password", {
+        method: "POST",
+        json: { token, password },
+      });
+      if (!isRecord(response) || typeof response["message"] !== "string") {
+        return invalidAuthResponse();
+      }
+      return { message: response["message"] };
+    },
+
+    async updateProfile(input: { displayName?: string; phoneNumber?: string }) {
+      const response = await client.request<unknown>("/users/me", {
+        method: "PATCH",
+        json: input,
+      });
+      if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
+      return response["user"];
+    },
+
+    async addAddress(input: Omit<PublicAddress, "id">) {
+      const response = await client.request<unknown>("/users/me/addresses", {
+        method: "POST",
+        json: input,
+      });
+      if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
+      return response["user"];
+    },
+
+    async updateAddress(addressId: string, input: Partial<Omit<PublicAddress, "id">>) {
+      const response = await client.request<unknown>(
+        `/users/me/addresses/${encodeURIComponent(addressId)}`,
+        { method: "PATCH", json: input },
+      );
+      if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
+      return response["user"];
+    },
+
+    async deleteAddress(addressId: string) {
+      const response = await client.request<unknown>(
+        `/users/me/addresses/${encodeURIComponent(addressId)}`,
+        { method: "DELETE" },
+      );
+      if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
+      return response["user"];
+    },
+
     logout() {
       return client.request<void>("/auth/logout", {
         method: "POST",
@@ -192,6 +300,19 @@ export const authApi = {
   getSession: () => getConfiguredAuthApi().getSession(),
   login: (credentials: { email: string; password: string }) =>
     getConfiguredAuthApi().login(credentials),
+  register: (input: Parameters<ReturnType<typeof createAuthApi>["register"]>[0]) =>
+    getConfiguredAuthApi().register(input),
+  requestVerification: (email: string) => getConfiguredAuthApi().requestVerification(email),
+  verifyEmail: (token: string) => getConfiguredAuthApi().verifyEmail(token),
+  forgotPassword: (email: string) => getConfiguredAuthApi().forgotPassword(email),
+  resetPassword: (token: string, password: string) =>
+    getConfiguredAuthApi().resetPassword(token, password),
+  updateProfile: (input: { displayName?: string; phoneNumber?: string }) =>
+    getConfiguredAuthApi().updateProfile(input),
+  addAddress: (input: Omit<PublicAddress, "id">) => getConfiguredAuthApi().addAddress(input),
+  updateAddress: (addressId: string, input: Partial<Omit<PublicAddress, "id">>) =>
+    getConfiguredAuthApi().updateAddress(addressId, input),
+  deleteAddress: (addressId: string) => getConfiguredAuthApi().deleteAddress(addressId),
   logout: () => getConfiguredAuthApi().logout(),
   verifyTwoFactor: (code: string) => getConfiguredAuthApi().verifyTwoFactor(code),
   confirmTwoFactor: (code: string) => getConfiguredAuthApi().confirmTwoFactor(code),

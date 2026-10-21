@@ -113,4 +113,74 @@ describe("session foundation", () => {
       "https://api.example.test/api/v1/auth/2fa/confirm",
     ]);
   });
+
+  it("uses the documented registration and email verification contracts", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/register")) {
+        return jsonResponse({ user, emailVerificationEmailSent: false }, 201);
+      }
+      if (url.pathname.endsWith("/auth/request-verification")) {
+        return jsonResponse(
+          { message: "If the account needs verification, instructions can be sent." },
+          202,
+        );
+      }
+      if (url.pathname.endsWith("/auth/verify-email")) {
+        return jsonResponse({ message: "Email address verified." });
+      }
+      if (url.pathname.endsWith("/auth/forgot-password")) {
+        return jsonResponse(
+          { message: "If the account exists, reset instructions can be sent." },
+          202,
+        );
+      }
+      return jsonResponse({ message: "Password reset successfully. Sign in again to continue." });
+    });
+    const auth = createAuthApi(
+      createApiClient({
+        baseUrl: "https://api.example.test",
+        csrfTokenProvider: vi.fn().mockResolvedValue("csrf-test-token"),
+        fetcher,
+      }),
+    );
+
+    await expect(
+      auth.register({ email: user.email, password: "a-strong-test-password" }),
+    ).resolves.toEqual({ user, emailVerificationEmailSent: false });
+    await expect(auth.requestVerification(user.email)).resolves.toHaveProperty("message");
+    await expect(auth.verifyEmail("v".repeat(40))).resolves.toEqual({
+      message: "Email address verified.",
+    });
+    await expect(auth.forgotPassword(user.email)).resolves.toHaveProperty("message");
+    await expect(
+      auth.resetPassword("r".repeat(40), "another-strong-test-password"),
+    ).resolves.toHaveProperty("message");
+
+    const requests = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(requests).toHaveLength(5);
+    for (const [, init] of requests) {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("X-CSRF-Token")).toBe("csrf-test-token");
+      expect(init?.credentials).toBe("include");
+    }
+    expect(JSON.parse(String(requests[0]?.[1]?.body))).toEqual({
+      email: user.email,
+      password: "a-strong-test-password",
+    });
+  });
+
+  it("rejects registration responses without the backend email-delivery outcome", async () => {
+    const auth = createAuthApi(
+      createApiClient({
+        baseUrl: "https://api.example.test",
+        csrfTokenProvider: vi.fn().mockResolvedValue("csrf-test-token"),
+        fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ user })),
+      }),
+    );
+
+    await expect(
+      auth.register({ email: user.email, password: "a-strong-test-password" }),
+    ).rejects.toMatchObject({ name: "ApiResponseError" });
+  });
 });

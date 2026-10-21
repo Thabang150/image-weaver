@@ -211,7 +211,7 @@ export function CartTrigger() {
   );
 }
 
-export function CartSheet() {
+export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
   const {
     isOpen,
     setIsOpen,
@@ -256,6 +256,19 @@ export function CartSheet() {
         ) : cartError ? (
           <div className="cart-error" role="alert">
             <p>{getCartErrorMessage(cartError)}</p>
+            {cartError instanceof ApiHttpError && cartError.status === 401 && onSignIn ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsOpen(false);
+                  setNotice(null);
+                  onSignIn();
+                }}
+              >
+                Sign in to use your cart
+              </Button>
+            ) : null}
             <Button type="button" variant="outline" onClick={() => void retryCart()}>
               Retry cart
             </Button>
@@ -364,6 +377,153 @@ export function CartSheet() {
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+export function CartPage({
+  onContinueShopping,
+  onSignIn,
+}: {
+  onContinueShopping: () => void;
+  onSignIn: () => void;
+}) {
+  const {
+    cart,
+    isCartLoading,
+    cartError,
+    retryCart,
+    notice,
+    isBusy,
+    updateItem,
+    removeItem,
+    clearCart,
+  } = useCart();
+
+  return (
+    <section className="catalogue-section" aria-labelledby="cart-page-title">
+      <header className="catalogue-header">
+        <span className="eyebrow">Your selections</span>
+        <h1 id="cart-page-title" className="section-title mt-3">
+          Your cart
+        </h1>
+      </header>
+      {notice ? (
+        <p className="cart-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
+      {isCartLoading ? (
+        <p className="catalogue-status" role="status">
+          Loading cart…
+        </p>
+      ) : cartError ? (
+        <div className="catalogue-error" role="alert">
+          <p>{getCartErrorMessage(cartError)}</p>
+          {cartError instanceof ApiHttpError && cartError.status === 401 ? (
+            <Button type="button" variant="outline" onClick={onSignIn}>
+              Sign in to use your cart
+            </Button>
+          ) : null}
+          <Button type="button" variant="outline" onClick={() => void retryCart()}>
+            Retry cart
+          </Button>
+          <Button type="button" variant="outline" onClick={onContinueShopping}>
+            Continue shopping
+          </Button>
+        </div>
+      ) : !cart || cart.items.length === 0 ? (
+        <div className="cart-empty" role="status">
+          <ShoppingBag aria-hidden="true" size={22} />
+          <p>Your cart is empty.</p>
+          <Button type="button" variant="outline" onClick={onContinueShopping}>
+            Continue shopping
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="cart-list" aria-live="polite">
+            {cart.items.map((item) => (
+              <div className="cart-item" key={item.productId}>
+                <div className="cart-item-copy">
+                  <span className="cart-item-name">{getItemLineLabel(item)}</span>
+                  {item.available && item.unitPriceCents !== null ? (
+                    <span className="cart-item-price">{formatZarCents(item.unitPriceCents)}</span>
+                  ) : (
+                    <span className="cart-item-price cart-item-unavailable">
+                      Unavailable — remove this item to continue
+                    </span>
+                  )}
+                </div>
+                <div className="cart-item-controls">
+                  <div className="cart-quantity-row">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
+                      disabled={isBusy || !item.available || item.quantity <= 1}
+                      onClick={() =>
+                        void updateItem(item.productId, item.quantity - 1).catch(() => undefined)
+                      }
+                    >
+                      <Minus aria-hidden="true" size={14} />
+                    </Button>
+                    <span aria-live="polite">{item.quantity}</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
+                      disabled={isBusy || !item.available || item.quantity >= 99}
+                      onClick={() =>
+                        void updateItem(item.productId, item.quantity + 1).catch(() => undefined)
+                      }
+                    >
+                      <Plus aria-hidden="true" size={14} />
+                    </Button>
+                  </div>
+                  {item.available && item.lineSubtotalCents !== null ? (
+                    <span className="cart-subtotal">{formatZarCents(item.lineSubtotalCents)}</span>
+                  ) : (
+                    <span className="cart-subtotal cart-item-unavailable">—</span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${getItemLineLabel(item)} from cart`}
+                    disabled={isBusy}
+                    onClick={() => void removeItem(item.productId).catch(() => undefined)}
+                  >
+                    <Trash2 aria-hidden="true" size={15} />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="cart-summary">
+            <div>
+              <span className="cart-summary-label">Merchandise subtotal</span>
+              <strong>{formatZarCents(cart.totalCents)}</strong>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isBusy}
+              onClick={() => void clearCart().catch(() => undefined)}
+            >
+              Clear cart
+            </Button>
+          </div>
+          <p className="cart-checkout-disabled" role="note">
+            Checkout is coming next. No order or payment will be submitted from this cart.
+          </p>
+          <Button type="button" variant="outline" onClick={onContinueShopping}>
+            Continue shopping
+          </Button>
+        </>
+      )}
+    </section>
   );
 }
 

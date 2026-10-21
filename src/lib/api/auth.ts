@@ -1,4 +1,9 @@
-import { ApiHttpError, ApiResponseError, type createApiClient } from "./client";
+import {
+  ApiHttpError,
+  ApiResponseError,
+  createConfiguredApiClient,
+  type createApiClient,
+} from "./client";
 
 export interface PublicAddress {
   id: string;
@@ -36,15 +41,56 @@ export type SessionState =
 
 export type AuthApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPublicAddress(value: unknown): value is PublicAddress {
+  return (
+    isRecord(value) &&
+    typeof value["id"] === "string" &&
+    typeof value["label"] === "string" &&
+    typeof value["recipientName"] === "string" &&
+    typeof value["phoneNumber"] === "string" &&
+    typeof value["addressLine1"] === "string" &&
+    (value["addressLine2"] === undefined || typeof value["addressLine2"] === "string") &&
+    typeof value["city"] === "string" &&
+    typeof value["province"] === "string" &&
+    typeof value["postalCode"] === "string" &&
+    typeof value["country"] === "string" &&
+    (value["deliveryInstructions"] === undefined ||
+      typeof value["deliveryInstructions"] === "string")
+  );
+}
+
+function isPublicUser(value: unknown): value is PublicUser {
+  return (
+    isRecord(value) &&
+    typeof value["id"] === "string" &&
+    typeof value["email"] === "string" &&
+    (value["displayName"] === undefined || typeof value["displayName"] === "string") &&
+    (value["phoneNumber"] === undefined || typeof value["phoneNumber"] === "string") &&
+    typeof value["emailVerified"] === "boolean" &&
+    Array.isArray(value["roles"]) &&
+    value["roles"].every((role) => role === "customer" || role === "admin") &&
+    Array.isArray(value["addresses"]) &&
+    value["addresses"].every(isPublicAddress) &&
+    typeof value["createdAt"] === "string" &&
+    typeof value["updatedAt"] === "string"
+  );
+}
+
+function invalidAuthResponse(): never {
+  throw new ApiResponseError(200, "Backend returned an invalid authentication response.");
+}
+
 export function createAuthApi(client: AuthApiClient) {
   return {
     async getSession(): Promise<SessionState> {
       try {
-        const response = await client.request<{ user: PublicUser }>("/auth/me");
-        if (!response || !response.user) {
-          throw new ApiResponseError(200, "Backend returned no current user.");
-        }
-        return { status: "authenticated", user: response.user };
+        const response = await client.request<unknown>("/auth/me");
+        if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
+        return { status: "authenticated", user: response["user"] };
       } catch (error) {
         if (error instanceof ApiHttpError && error.status === 401) {
           return { status: "unauthenticated" };
@@ -53,12 +99,30 @@ export function createAuthApi(client: AuthApiClient) {
       }
     },
 
-    login(credentials: { email: string; password: string }) {
-      return client.request<LoginResponse>("/auth/login", {
+    async login(credentials: { email: string; password: string }): Promise<LoginResponse> {
+      const response = await client.request<unknown>("/auth/login", {
         method: "POST",
         json: credentials,
         regeneratesSession: true,
       });
+      if (
+        isRecord(response) &&
+        response["twoFactorRequired"] === true &&
+        Object.keys(response).length === 1
+      ) {
+        return { twoFactorRequired: true };
+      }
+      if (
+        isRecord(response) &&
+        response["twoFactorEnrollmentRequired"] === true &&
+        Object.keys(response).length === 1
+      ) {
+        return { twoFactorEnrollmentRequired: true };
+      }
+      if (isRecord(response) && isPublicUser(response["user"])) {
+        return { user: response["user"] };
+      }
+      return invalidAuthResponse();
     },
 
     logout() {
@@ -68,23 +132,68 @@ export function createAuthApi(client: AuthApiClient) {
       });
     },
 
-    verifyTwoFactor(code: string) {
-      return client.request<{ user: PublicUser }>("/auth/2fa/verify", {
+    async verifyTwoFactor(code: string) {
+      const response = await client.request<unknown>("/auth/2fa/verify", {
         method: "POST",
         json: { code },
         regeneratesSession: true,
       });
+      if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
+      return { user: response["user"] };
     },
 
-    confirmTwoFactor(code: string) {
-      return client.request<{
-        twoFactorEnabled: true;
-        recoveryCodes: string[];
-      }>("/auth/2fa/confirm", {
+    async confirmTwoFactor(code: string) {
+      const response = await client.request<unknown>("/auth/2fa/confirm", {
         method: "POST",
         json: { code },
         regeneratesSession: true,
       });
+      if (
+        !isRecord(response) ||
+        response["twoFactorEnabled"] !== true ||
+        !Array.isArray(response["recoveryCodes"]) ||
+        !response["recoveryCodes"].every((entry) => typeof entry === "string")
+      ) {
+        return invalidAuthResponse();
+      }
+      return {
+        twoFactorEnabled: true as const,
+        recoveryCodes: response["recoveryCodes"].filter(
+          (entry): entry is string => typeof entry === "string",
+        ),
+      };
+    },
+
+    async enrollTwoFactor() {
+      const response = await client.request<unknown>("/auth/2fa/enroll", {
+        method: "POST",
+        json: {},
+      });
+      if (
+        !isRecord(response) ||
+        typeof response["secret"] !== "string" ||
+        typeof response["provisioningUri"] !== "string"
+      ) {
+        return invalidAuthResponse();
+      }
+      return { secret: response["secret"], provisioningUri: response["provisioningUri"] };
     },
   };
 }
+
+let configuredAuthApi: ReturnType<typeof createAuthApi> | undefined;
+
+function getConfiguredAuthApi() {
+  configuredAuthApi ??= createAuthApi(createConfiguredApiClient());
+  return configuredAuthApi;
+}
+
+export const authApi = {
+  getSession: () => getConfiguredAuthApi().getSession(),
+  login: (credentials: { email: string; password: string }) =>
+    getConfiguredAuthApi().login(credentials),
+  logout: () => getConfiguredAuthApi().logout(),
+  verifyTwoFactor: (code: string) => getConfiguredAuthApi().verifyTwoFactor(code),
+  confirmTwoFactor: (code: string) => getConfiguredAuthApi().confirmTwoFactor(code),
+  enrollTwoFactor: () => getConfiguredAuthApi().enrollTwoFactor(),
+};

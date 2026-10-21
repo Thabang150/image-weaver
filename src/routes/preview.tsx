@@ -1,7 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 
+import { AdminPanel } from "@/components/storefront/admin";
 import { CartProvider, CartSheet, CartTrigger } from "@/components/storefront/cart";
 import { Catalogue } from "@/components/storefront/catalogue";
+import { Button } from "@/components/ui/button";
 import { Footer } from "@/components/wellness";
 
 const productSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -34,6 +37,7 @@ export const Route = createFileRoute("/preview")({
 function Preview() {
   const { product } = Route.useSearch();
   const navigate = Route.useNavigate();
+  const [showAdmin, setShowAdmin] = useState(false);
 
   return (
     <CartProvider>
@@ -47,17 +51,31 @@ function Preview() {
               homepage.
             </p>
           </div>
-          <CartTrigger />
+          <nav className="preview-actions" aria-label="Preview sections">
+            <Button
+              type="button"
+              variant={showAdmin ? "secondary" : "outline"}
+              aria-pressed={showAdmin}
+              onClick={() => setShowAdmin((visible) => !visible)}
+            >
+              {showAdmin ? "Return to storefront" : "Administrator access"}
+            </Button>
+            {!showAdmin ? <CartTrigger /> : null}
+          </nav>
         </header>
-        <Catalogue
-          selectedSlug={product}
-          onSelectProduct={(slug) => {
-            void navigate({ search: { product: slug } });
-          }}
-          onBackToCatalogue={() => {
-            void navigate({ search: {} });
-          }}
-        />
+        {showAdmin ? (
+          <AdminPanel />
+        ) : (
+          <Catalogue
+            selectedSlug={product}
+            onSelectProduct={(slug) => {
+              void navigate({ search: { product: slug } });
+            }}
+            onBackToCatalogue={() => {
+              void navigate({ search: {} });
+            }}
+          />
+        )}
       </main>
       <Footer />
       <CartSheet />

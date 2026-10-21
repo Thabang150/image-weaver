@@ -22,6 +22,10 @@ export interface PublicProduct {
   };
   priceCents: number;
   imageReferences: string[];
+  shortDescription?: string;
+  productForm?: "capsules";
+  isMockData?: boolean;
+  requiresConfirmation?: string[];
   packaging?: {
     amount: number;
     unit: string;
@@ -106,6 +110,12 @@ function isPublicProduct(value: unknown): value is PublicProduct {
     typeof category["id"] === "string" &&
     typeof category["name"] === "string" &&
     typeof category["slug"] === "string" &&
+    (value["shortDescription"] === undefined || typeof value["shortDescription"] === "string") &&
+    (value["productForm"] === undefined || value["productForm"] === "capsules") &&
+    (value["isMockData"] === undefined || typeof value["isMockData"] === "boolean") &&
+    (value["requiresConfirmation"] === undefined ||
+      (Array.isArray(value["requiresConfirmation"]) &&
+        value["requiresConfirmation"].every((entry) => typeof entry === "string"))) &&
     (packaging === undefined ||
       (isRecord(packaging) &&
         typeof packaging["amount"] === "number" &&
@@ -156,14 +166,30 @@ export function createCatalogueApi(client: CatalogueApiClient) {
       return parseCategories(await client.request<unknown>("/categories"));
     },
 
-    async getProducts(options: { page: number; categoryId?: string }) {
+    async getProducts(options: {
+      page: number;
+      limit?: number;
+      q?: string;
+      categoryId?: string;
+      minPriceCents?: number;
+      maxPriceCents?: number;
+      sortBy?: "createdAt" | "name" | "priceCents";
+      sortOrder?: "asc" | "desc";
+    }) {
       const query = new URLSearchParams({
         page: String(options.page),
-        limit: "20",
-        sortBy: "name",
-        sortOrder: "asc",
+        limit: String(options.limit ?? 20),
+        sortBy: options.sortBy ?? "name",
+        sortOrder: options.sortOrder ?? "asc",
       });
+      if (options.q) query.set("q", options.q);
       if (options.categoryId) query.set("categoryId", options.categoryId);
+      if (options.minPriceCents !== undefined) {
+        query.set("minPriceCents", String(options.minPriceCents));
+      }
+      if (options.maxPriceCents !== undefined) {
+        query.set("maxPriceCents", String(options.maxPriceCents));
+      }
 
       return parseProductList(await client.request<unknown>(`/products?${query.toString()}`));
     },
@@ -180,7 +206,7 @@ function getCatalogueApi() {
 
 export const catalogueApi = {
   getCategories: () => getCatalogueApi().getCategories(),
-  getProducts: (options: { page: number; categoryId?: string }) =>
+  getProducts: (options: Parameters<ReturnType<typeof createCatalogueApi>["getProducts"]>[0]) =>
     getCatalogueApi().getProducts(options),
   getProductBySlug: (slug: string) => getCatalogueApi().getProductBySlug(slug),
 };

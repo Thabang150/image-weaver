@@ -59,6 +59,28 @@ describe("session foundation", () => {
     });
   });
 
+  it("rejects malformed session users rather than trusting their role fields", async () => {
+    const auth = createAuthApi(
+      createApiClient({
+        baseUrl: "https://api.example.test",
+        csrfTokenProvider: vi.fn(),
+        fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+          jsonResponse({
+            user: {
+              ...user,
+              roles: "admin",
+            },
+          }),
+        ),
+      }),
+    );
+
+    await expect(auth.getSession()).rejects.toMatchObject({
+      name: "ApiResponseError",
+      message: "Backend returned an invalid authentication response.",
+    });
+  });
+
   it("refreshes CSRF after login, logout, and 2FA session transitions", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

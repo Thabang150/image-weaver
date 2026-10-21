@@ -217,6 +217,70 @@ describe("public catalogue", () => {
     });
   });
 
+  it("applies documented search, integer-cent price filters, and sorting", async () => {
+    const fetcher = installApi((url) =>
+      url.pathname.endsWith("/categories")
+        ? jsonResponse({ categories: [category] })
+        : jsonResponse(productList),
+    );
+    renderCatalogue();
+    await screen.findByText(product.name);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search products" }), {
+      target: { value: " aloe " },
+    });
+    fireEvent.change(screen.getByLabelText("Minimum price (ZAR)"), {
+      target: { value: "15.50" },
+    });
+    fireEvent.change(screen.getByLabelText("Maximum price (ZAR)"), {
+      target: { value: "30" },
+    });
+    fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "priceCents" } });
+    fireEvent.change(screen.getByLabelText("Sort order"), { target: { value: "desc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    await waitFor(() => {
+      const request = fetcher.mock.calls
+        .map(([input]) => new URL(String(input)))
+        .find(
+          (url) =>
+            url.pathname.endsWith("/products") &&
+            url.searchParams.get("q") === "aloe" &&
+            url.searchParams.has("minPriceCents"),
+        );
+      expect(request?.searchParams.get("minPriceCents")).toBe("1550");
+      expect(request?.searchParams.get("maxPriceCents")).toBe("3000");
+      expect(request?.searchParams.get("sortBy")).toBe("priceCents");
+      expect(request?.searchParams.get("sortOrder")).toBe("desc");
+      expect(request?.searchParams.get("page")).toBe("1");
+    });
+  });
+
+  it("rejects malformed price filters without sending another request", async () => {
+    const fetcher = installApi((url) =>
+      url.pathname.endsWith("/categories")
+        ? jsonResponse({ categories: [category] })
+        : jsonResponse(productList),
+    );
+    renderCatalogue();
+    await screen.findByText(product.name);
+    const productRequestsBeforeSubmit = fetcher.mock.calls.filter(([input]) =>
+      String(input).includes("/products?"),
+    ).length;
+
+    fireEvent.change(screen.getByLabelText("Minimum price (ZAR)"), {
+      target: { value: "15.999" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Enter prices with up to two decimal places.",
+    );
+    expect(
+      fetcher.mock.calls.filter(([input]) => String(input).includes("/products?")),
+    ).toHaveLength(productRequestsBeforeSubmit);
+  });
+
   it("loads product detail by slug and omits absent optional packaging", async () => {
     const fetcher = installApi(() => jsonResponse({ product }));
     const { onBackToCatalogue } = renderCatalogue(product.slug);
@@ -245,6 +309,29 @@ describe("public catalogue", () => {
     renderCatalogue(product.slug);
 
     expect(await screen.findByText("120 ml")).toBeVisible();
+  });
+
+  it("renders only approved image URLs and replaces failed gallery images accessibly", async () => {
+    vi.stubEnv("VITE_PRODUCT_IMAGE_ALLOWED_HOSTS", "images.example.test");
+    const productWithImages = {
+      ...product,
+      imageReferences: [
+        "https://images.example.test/aloe-front.jpg",
+        "https://unapproved.example.test/aloe-side.jpg",
+        "https://images.example.test/aloe-side.jpg",
+      ],
+    };
+    installApi(() => jsonResponse({ product: productWithImages }));
+    renderCatalogue(product.slug);
+
+    const images = await screen.findAllByRole("img", { name: /Aloe product image \d/ });
+    expect(images).toHaveLength(2);
+    fireEvent.error(images[0]!);
+
+    expect(
+      await screen.findByRole("img", { name: "Aloe product image 1 unavailable" }),
+    ).toBeVisible();
+    expect(screen.getByRole("img", { name: "Aloe product image 2" })).toBeVisible();
   });
 
   it("rejects malformed packaging values instead of displaying them", async () => {

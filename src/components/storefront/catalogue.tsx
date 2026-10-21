@@ -7,29 +7,15 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { CartAddButton } from "@/components/storefront/cart";
 import { ApiHttpError, ApiResponseError } from "@/lib/api/client";
 import { catalogueApi, type PublicProduct } from "@/lib/api/catalogue";
+import { getAllowedProductImageUrls } from "@/lib/image-url";
 import { formatZarCents } from "@/lib/money";
 
 function getPrimaryImageUrl(product: PublicProduct): string | undefined {
-  const urls = product.imageReferences.filter((value) => {
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === "https:" && parsed.hostname.length > 0;
-    } catch {
-      return false;
-    }
-  });
-  return urls[0];
+  return getAllowedProductImageUrls(product.imageReferences)[0];
 }
 
 function getProductGallery(product: PublicProduct): string[] {
-  return product.imageReferences.filter((value) => {
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === "https:" && parsed.hostname.length > 0;
-    } catch {
-      return false;
-    }
-  });
+  return getAllowedProductImageUrls(product.imageReferences);
 }
 
 function ProductImage({
@@ -67,10 +53,55 @@ function ProductImage({
   );
 }
 
+function ProductGalleryImage({
+  productName,
+  imageUrl,
+  index,
+}: {
+  productName: string;
+  imageUrl: string;
+  index: number;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  if (hasError) {
+    return (
+      <div
+        className="product-image-placeholder product-detail-image"
+        role="img"
+        aria-label={`${productName} image ${index + 1} unavailable`}
+      >
+        <span>Image unavailable</span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={imageUrl}
+      alt={`${productName} image ${index + 1}`}
+      className="product-detail-image"
+      loading="lazy"
+      onError={() => setHasError(true)}
+    />
+  );
+}
+
 interface CatalogueProps {
   selectedSlug?: string | undefined;
   onSelectProduct: (slug: string) => void;
   onBackToCatalogue: () => void;
+}
+
+type ProductSortField = "createdAt" | "name" | "priceCents";
+type ProductSortOrder = "asc" | "desc";
+
+function isProductSortField(value: string): value is ProductSortField {
+  return value === "createdAt" || value === "name" || value === "priceCents";
+}
+
+function isProductSortOrder(value: string): value is ProductSortOrder {
+  return value === "asc" || value === "desc";
 }
 
 function getErrorMessage(error: Error): string {
@@ -97,6 +128,19 @@ function getErrorMessage(error: Error): string {
 export function Catalogue({ selectedSlug, onSelectProduct, onBackToCatalogue }: CatalogueProps) {
   const [categoryId, setCategoryId] = useState<string>();
   const [page, setPage] = useState(1);
+  const [filters, setFilters] = useState<{
+    q: string;
+    minPrice: string;
+    maxPrice: string;
+    sortBy: ProductSortField;
+    sortOrder: ProductSortOrder;
+  }>({
+    q: "",
+    minPrice: "",
+    maxPrice: "",
+    sortBy: "name",
+    sortOrder: "asc",
+  });
 
   return (
     <section id="catalogue" className="catalogue-section" aria-labelledby="catalogue-title">
@@ -106,8 +150,13 @@ export function Catalogue({ selectedSlug, onSelectProduct, onBackToCatalogue }: 
         <ProductListing
           categoryId={categoryId}
           page={page}
+          filters={filters}
           onCategoryChange={(nextCategoryId) => {
             setCategoryId(nextCategoryId);
+            setPage(1);
+          }}
+          onFiltersChange={(nextFilters) => {
+            setFilters(nextFilters);
             setPage(1);
           }}
           onPageChange={setPage}
@@ -121,7 +170,15 @@ export function Catalogue({ selectedSlug, onSelectProduct, onBackToCatalogue }: 
 interface ProductListingProps {
   categoryId: string | undefined;
   page: number;
+  filters: {
+    q: string;
+    minPrice: string;
+    maxPrice: string;
+    sortBy: ProductSortField;
+    sortOrder: ProductSortOrder;
+  };
   onCategoryChange: (categoryId: string | undefined) => void;
+  onFiltersChange: (filters: ProductListingProps["filters"]) => void;
   onPageChange: (page: number | ((previousPage: number) => number)) => void;
   onSelectProduct: CatalogueProps["onSelectProduct"];
 }
@@ -129,7 +186,9 @@ interface ProductListingProps {
 function ProductListing({
   categoryId,
   page,
+  filters,
   onCategoryChange,
+  onFiltersChange,
   onPageChange,
   onSelectProduct,
 }: ProductListingProps) {
@@ -138,8 +197,20 @@ function ProductListing({
     queryFn: () => catalogueApi.getCategories(),
   });
   const productsQuery = useQuery({
-    queryKey: ["catalogue", "products", { categoryId, page }],
-    queryFn: () => catalogueApi.getProducts({ page, ...(categoryId ? { categoryId } : {}) }),
+    queryKey: ["catalogue", "products", { categoryId, page, filters }],
+    queryFn: () => {
+      const minPriceCents = filters.minPrice ? parseZarInput(filters.minPrice) : undefined;
+      const maxPriceCents = filters.maxPrice ? parseZarInput(filters.maxPrice) : undefined;
+      return catalogueApi.getProducts({
+        page,
+        sortBy: filters.sortBy,
+        sortOrder: filters.sortOrder,
+        ...(categoryId ? { categoryId } : {}),
+        ...(filters.q.trim() ? { q: filters.q.trim() } : {}),
+        ...(minPriceCents !== undefined ? { minPriceCents } : {}),
+        ...(maxPriceCents !== undefined ? { maxPriceCents } : {}),
+      });
+    },
     placeholderData: keepPreviousData,
   });
   const categories = categoriesQuery.data?.categories ?? [];
@@ -156,6 +227,8 @@ function ProductListing({
           Browse the products currently available in our catalogue.
         </p>
       </header>
+
+      <CatalogueFilters filters={filters} onApply={onFiltersChange} />
 
       {categoriesQuery.isPending ? (
         <p className="catalogue-status" role="status">
@@ -205,8 +278,8 @@ function ProductListing({
         </div>
       ) : productList && productList.products.length === 0 ? (
         <p className="catalogue-note" role="status">
-          {categoryId
-            ? "There are no products in this category yet."
+          {categoryId || filters.q || filters.minPrice || filters.maxPrice
+            ? "No products match your current filters."
             : "There are no products in the catalogue right now."}
         </p>
       ) : productList ? (
@@ -283,6 +356,112 @@ function ProductListing({
   );
 }
 
+function parseZarInput(value: string): number | undefined {
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return undefined;
+  const [whole, fraction = ""] = normalized.split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  return Number.isSafeInteger(cents) ? cents : undefined;
+}
+
+function CatalogueFilters({
+  filters,
+  onApply,
+}: {
+  filters: ProductListingProps["filters"];
+  onApply: ProductListingProps["onFiltersChange"];
+}) {
+  const [draft, setDraft] = useState(filters);
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+
+  return (
+    <form
+      className="catalogue-filters"
+      role="search"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const minimum = draft.minPrice.trim() ? parseZarInput(draft.minPrice) : undefined;
+        const maximum = draft.maxPrice.trim() ? parseZarInput(draft.maxPrice) : undefined;
+        if (
+          (draft.minPrice.trim() && minimum === undefined) ||
+          (draft.maxPrice.trim() && maximum === undefined)
+        ) {
+          setValidationMessage("Enter prices with up to two decimal places.");
+          return;
+        }
+        if (minimum !== undefined && maximum !== undefined && minimum > maximum) {
+          setValidationMessage("The minimum price must not exceed the maximum price.");
+          return;
+        }
+        setValidationMessage(null);
+        onApply({ ...draft, q: draft.q.trim() });
+      }}
+    >
+      <label>
+        Search products
+        <input
+          type="search"
+          value={draft.q}
+          maxLength={100}
+          onChange={(event) => setDraft({ ...draft, q: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Minimum price (ZAR)
+        <input
+          inputMode="decimal"
+          value={draft.minPrice}
+          onChange={(event) => setDraft({ ...draft, minPrice: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Maximum price (ZAR)
+        <input
+          inputMode="decimal"
+          value={draft.maxPrice}
+          onChange={(event) => setDraft({ ...draft, maxPrice: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Sort by
+        <select
+          value={draft.sortBy}
+          onChange={(event) => {
+            const sortBy = event.currentTarget.value;
+            if (isProductSortField(sortBy)) setDraft({ ...draft, sortBy });
+          }}
+        >
+          <option value="name">Name</option>
+          <option value="priceCents">Price</option>
+          <option value="createdAt">Recently added</option>
+        </select>
+      </label>
+      <label>
+        Sort order
+        <select
+          value={draft.sortOrder}
+          onChange={(event) => {
+            const sortOrder = event.currentTarget.value;
+            if (isProductSortOrder(sortOrder)) setDraft({ ...draft, sortOrder });
+          }}
+        >
+          <option value="asc">Ascending</option>
+          <option value="desc">Descending</option>
+        </select>
+      </label>
+      <Button type="submit" variant="secondary">
+        Apply filters
+      </Button>
+      {validationMessage ? (
+        <p className="catalogue-filter-error" role="alert">
+          {validationMessage}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
 function ProductDetail({
   slug,
   onBackToCatalogue,
@@ -320,15 +499,11 @@ function ProductDetail({
           <div className="product-gallery" aria-label={`${productQuery.data.product.name} images`}>
             {getProductGallery(productQuery.data.product).length > 0 ? (
               getProductGallery(productQuery.data.product).map((imageUrl, index) => (
-                <img
+                <ProductGalleryImage
                   key={`${productQuery.data.product.id}-${imageUrl}`}
-                  src={imageUrl}
-                  alt={`${productQuery.data.product.name} image ${index + 1}`}
-                  className="product-detail-image"
-                  loading="lazy"
-                  onError={(event) => {
-                    event.currentTarget.style.display = "none";
-                  }}
+                  productName={productQuery.data.product.name}
+                  imageUrl={imageUrl}
+                  index={index}
                 />
               ))
             ) : (

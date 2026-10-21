@@ -131,18 +131,15 @@ describe("App routing", () => {
       vi.fn<typeof fetch>(async (input) => {
         const url = new URL(String(input));
         if (url.pathname.endsWith("/cart")) {
-          return jsonResponse(
-            {
-              cart: {
-                items: [],
-                itemCount: 0,
-                currency: "ZAR",
-                totalCents: 0,
-                hasUnavailableItems: false,
-              },
+          return jsonResponse({
+            cart: {
+              items: [],
+              itemCount: 0,
+              currency: "ZAR",
+              totalCents: 0,
+              hasUnavailableItems: false,
             },
-            15000,
-          );
+          });
         }
         if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [] });
         if (url.pathname.endsWith("/products/aloe-product")) {
@@ -175,5 +172,50 @@ describe("App routing", () => {
     router.history.forward();
     await waitFor(() => expect(router.state.location.search).toEqual({ product: "aloe-product" }));
     expect(await screen.findByRole("button", { name: "Back to catalogue" })).toBeVisible();
+  }, 15000);
+
+  it("keeps administrator access inside /preview instead of adding a content route", async () => {
+    vi.stubEnv("VITE_BACKEND_BASE_URL", "https://api.example.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/auth/me")) {
+          return jsonResponse({ error: "Authentication required." }, 401);
+        }
+        if (url.pathname.endsWith("/cart")) {
+          return jsonResponse({
+            cart: {
+              items: [],
+              itemCount: 0,
+              currency: "ZAR",
+              totalCents: 0,
+              hasUnavailableItems: false,
+            },
+          });
+        }
+        if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [] });
+        if (url.pathname.endsWith("/products")) {
+          return jsonResponse({
+            products: [],
+            pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+          });
+        }
+        return jsonResponse({ error: "Not found" }, 404);
+      }),
+    );
+    const router = createRouter({
+      routeTree,
+      context: { queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+      history: createMemoryHistory({ initialEntries: ["/preview"] }),
+    });
+    await router.load();
+    render(<RouterProvider router={router} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Administrator access" }));
+
+    expect(await screen.findByRole("heading", { name: "Sign in to continue" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/preview");
+    expect(router.matchRoutes("/").map((match) => match.routeId)).not.toContain("/admin");
   }, 15000);
 });

@@ -48,17 +48,17 @@ For a separately hosted Next.js app, it is reasonable to define `NEXT_PUBLIC_API
 
 The application error handler returns a JSON object with an `error` string and does not return stack traces or database error details.
 
-| Condition | Status | Body/behaviour |
-|---|---:|---|
-| Zod body, path, or query validation failure | 400 | `{ "error": "Invalid request." }` (details are not exposed) |
-| Missing/invalid CSRF token | 403 | `{ "error": "Invalid or missing CSRF token." }` |
-| Authentication required / expired or invalidated session | 401 | Typically `{ "error": "Authentication required." }`; endpoint-specific challenge messages may differ |
-| Authenticated but required role missing | 403 | Endpoint-specific message, e.g. customer/admin access is required |
-| Missing resource | 404 | Endpoint-specific message; unmatched route returns `{ "error": "Not found" }` |
-| Business conflict, duplicate, insufficient stock | 409 | Endpoint-specific `{ "error": "..." }` |
-| Required transaction or integration unavailable | 503 | Endpoint-specific `{ "error": "..." }` |
-| Account endpoint rate limit | 429 | `{ "error": "Too many attempts. Please try again later." }` |
-| Unhandled server error | 500 | `{ "error": "Internal server error" }` |
+| Condition                                                | Status | Body/behaviour                                                                                       |
+| -------------------------------------------------------- | -----: | ---------------------------------------------------------------------------------------------------- |
+| Zod body, path, or query validation failure              |    400 | `{ "error": "Invalid request." }` (details are not exposed)                                          |
+| Missing/invalid CSRF token                               |    403 | `{ "error": "Invalid or missing CSRF token." }`                                                      |
+| Authentication required / expired or invalidated session |    401 | Typically `{ "error": "Authentication required." }`; endpoint-specific challenge messages may differ |
+| Authenticated but required role missing                  |    403 | Endpoint-specific message, e.g. customer/admin access is required                                    |
+| Missing resource                                         |    404 | Endpoint-specific message; unmatched route returns `{ "error": "Not found" }`                        |
+| Business conflict, duplicate, insufficient stock         |    409 | Endpoint-specific `{ "error": "..." }`                                                               |
+| Required transaction or integration unavailable          |    503 | Endpoint-specific `{ "error": "..." }`                                                               |
+| Account endpoint rate limit                              |    429 | `{ "error": "Too many attempts. Please try again later." }`                                          |
+| Unhandled server error                                   |    500 | `{ "error": "Internal server error" }`                                                               |
 
 Known `HttpError` messages for common cart/order/inventory cases are described in the relevant sections. Do not depend on validation issue details: the middleware intentionally exposes only the generic 400 message. Express parser errors also pass through the generic error handling path; exact malformed/oversized-body messaging is not a frontend contract.
 
@@ -94,10 +94,10 @@ Passwords are 12–128 characters at registration/reset; login permits 1–128 c
 
 The backend uses a MongoDB-backed `express-session` store, not JWT authentication.
 
-| Environment | Session cookie name |
-|---|---|
-| Development/test | `hw.sid` |
-| Production | `__Host-hw.sid` |
+| Environment      | Session cookie name |
+| ---------------- | ------------------- |
+| Development/test | `hw.sid`            |
+| Production       | `__Host-hw.sid`     |
 
 Cookie attributes are `HttpOnly`, `Path=/`, no configured `Domain` (host-only), and `SameSite` from `SESSION_SAME_SITE` (default `lax`). `Secure` is enabled in production and whenever SameSite is `none`. The production `__Host-` cookie name depends on the Secure/host-only/root-path requirements. The cookie lifetime and Mongo session-store TTL are 8 hours. Sessions use rolling expiry: requests refresh the cookie/store lifetime. There is no dedicated refresh-token or session-refresh endpoint.
 
@@ -149,61 +149,61 @@ All paths below are relative to `/api/v1`. For unsafe methods, CSRF is required 
 
 ### Health and authentication
 
-| Method and path | Access / CSRF | Request | Success response | Notes |
-|---|---|---|---|---|
-| `GET /health` | Public / no | None | 200 `{ status, database }`; 503 when disconnected | Health status only; no external integration checks. |
-| `GET /auth/csrf-token` | Public / no | Include cookies | 200 `{ csrfToken }` and CSRF cookie | Rate-limited; initializes/saves a session. |
-| `POST /auth/register` | Public / yes | `{ email, password, displayName?, phoneNumber? }` | 201 `{ user, emailVerificationEmailSent }` | Rate-limited. New role is customer. |
-| `POST /auth/login` | Public / yes | `{ email, password }` | 200 `{ user }`, or 202 `{ twoFactorRequired: true }`, or 202 `{ twoFactorEnrollmentRequired: true }` | Rate-limited; sets/regenerates session. |
-| `POST /auth/logout` | Public (authentication not required) / yes | No required body | 204, no JSON body | Destroys session and clears cookies. |
-| `GET /auth/me` | Authenticated / no | Cookie | 200 `{ user }` | Fully authenticated session only. |
-| `POST /auth/request-verification` | Public / yes | `{ email }` | 202 `{ message }` | Generic response; rate-limited. |
-| `POST /auth/verify-email` | Public / yes | `{ token }` | 200 `{ message: "Email address verified." }` | Token 40–200 chars; token one-use/expiring. |
-| `POST /auth/forgot-password` | Public / yes | `{ email }` | 202 `{ message }` | Generic response; rate-limited. |
-| `POST /auth/reset-password` | Public / yes | `{ token, password }` | 200 `{ message }` | Password 12–128 chars; token one-use/expiring; sessions invalidated. |
-| `GET /auth/google/start` | Public / no | Browser navigation | 302 redirect to Google | OAuth must be configured. |
-| `POST /auth/google/link` | Authenticated / yes | No required body | 200 `{ authorizationUrl }` | Then navigate browser to returned URL. |
-| `GET /auth/google/callback` | OAuth session transaction / no | Provider query including state/code or error | JSON result described above | One-use session-bound transaction, 10-minute expiry. |
+| Method and path                   | Access / CSRF                              | Request                                           | Success response                                                                                     | Notes                                                                |
+| --------------------------------- | ------------------------------------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `GET /health`                     | Public / no                                | None                                              | 200 `{ status, database }`; 503 when disconnected                                                    | Health status only; no external integration checks.                  |
+| `GET /auth/csrf-token`            | Public / no                                | Include cookies                                   | 200 `{ csrfToken }` and CSRF cookie                                                                  | Rate-limited; initializes/saves a session.                           |
+| `POST /auth/register`             | Public / yes                               | `{ email, password, displayName?, phoneNumber? }` | 201 `{ user, emailVerificationEmailSent }`                                                           | Rate-limited. New role is customer.                                  |
+| `POST /auth/login`                | Public / yes                               | `{ email, password }`                             | 200 `{ user }`, or 202 `{ twoFactorRequired: true }`, or 202 `{ twoFactorEnrollmentRequired: true }` | Rate-limited; sets/regenerates session.                              |
+| `POST /auth/logout`               | Public (authentication not required) / yes | No required body                                  | 204, no JSON body                                                                                    | Destroys session and clears cookies.                                 |
+| `GET /auth/me`                    | Authenticated / no                         | Cookie                                            | 200 `{ user }`                                                                                       | Fully authenticated session only.                                    |
+| `POST /auth/request-verification` | Public / yes                               | `{ email }`                                       | 202 `{ message }`                                                                                    | Generic response; rate-limited.                                      |
+| `POST /auth/verify-email`         | Public / yes                               | `{ token }`                                       | 200 `{ message: "Email address verified." }`                                                         | Token 40–200 chars; token one-use/expiring.                          |
+| `POST /auth/forgot-password`      | Public / yes                               | `{ email }`                                       | 202 `{ message }`                                                                                    | Generic response; rate-limited.                                      |
+| `POST /auth/reset-password`       | Public / yes                               | `{ token, password }`                             | 200 `{ message }`                                                                                    | Password 12–128 chars; token one-use/expiring; sessions invalidated. |
+| `GET /auth/google/start`          | Public / no                                | Browser navigation                                | 302 redirect to Google                                                                               | OAuth must be configured.                                            |
+| `POST /auth/google/link`          | Authenticated / yes                        | No required body                                  | 200 `{ authorizationUrl }`                                                                           | Then navigate browser to returned URL.                               |
+| `GET /auth/google/callback`       | OAuth session transaction / no             | Provider query including state/code or error      | JSON result described above                                                                          | One-use session-bound transaction, 10-minute expiry.                 |
 
 ### TOTP / recovery codes
 
-| Method and path | Access / CSRF | Request | Success response | Notes |
-|---|---|---|---|---|
-| `POST /auth/2fa/enroll` | Authenticated setup access or pending required admin enrollment / yes | No required body | 200 `{ secret, provisioningUri }` | Secret is sensitive enrollment material. |
-| `POST /auth/2fa/confirm` | Same enrollment access / yes | `{ code: "123456" }` | 200 `{ twoFactorEnabled: true, recoveryCodes: [...] }` | Establishes authenticated session; show recovery codes once. |
-| `POST /auth/2fa/verify` | Valid pending 2FA challenge / yes | `{ code }` | 200 `{ user }` | Six-digit TOTP or 32-character recovery code; challenge expires in five minutes. |
-| `GET /auth/2fa/status` | Authenticated / no | Cookie | 200 `{ twoFactorEnabled }` | |
-| `POST /auth/2fa/recovery-codes/rotate` | Authenticated and recent authentication / yes | `{ code }` | 200 `{ recoveryCodes: [...] }` | Current factor required; new codes shown once. |
-| `POST /auth/2fa/disable` | Authenticated and recent authentication / yes | `{ code }` | 200 `{ twoFactorEnabled: false }` | 403 for admin when admin 2FA is mandatory. |
+| Method and path                        | Access / CSRF                                                         | Request              | Success response                                       | Notes                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------- | -------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `POST /auth/2fa/enroll`                | Authenticated setup access or pending required admin enrollment / yes | No required body     | 200 `{ secret, provisioningUri }`                      | Secret is sensitive enrollment material.                                         |
+| `POST /auth/2fa/confirm`               | Same enrollment access / yes                                          | `{ code: "123456" }` | 200 `{ twoFactorEnabled: true, recoveryCodes: [...] }` | Establishes authenticated session; show recovery codes once.                     |
+| `POST /auth/2fa/verify`                | Valid pending 2FA challenge / yes                                     | `{ code }`           | 200 `{ user }`                                         | Six-digit TOTP or 32-character recovery code; challenge expires in five minutes. |
+| `GET /auth/2fa/status`                 | Authenticated / no                                                    | Cookie               | 200 `{ twoFactorEnabled }`                             |                                                                                  |
+| `POST /auth/2fa/recovery-codes/rotate` | Authenticated and recent authentication / yes                         | `{ code }`           | 200 `{ recoveryCodes: [...] }`                         | Current factor required; new codes shown once.                                   |
+| `POST /auth/2fa/disable`               | Authenticated and recent authentication / yes                         | `{ code }`           | 200 `{ twoFactorEnabled: false }`                      | 403 for admin when admin 2FA is mandatory.                                       |
 
 ### Profile and saved addresses
 
-| Method and path | Access / CSRF | Request | Success response | Notes |
-|---|---|---|---|---|
-| `GET /users/me` | Authenticated / no | Cookie | 200 `{ user }` | Current public user. |
-| `PATCH /users/me` | Authenticated / yes | At least one of `{ displayName?, phoneNumber? }` | 200 `{ user }` | `displayName` 1–100; phone 1–30. Other fields rejected. |
-| `POST /users/me/addresses` | Authenticated / yes | Address object described below | 201 `{ user }` | Maximum 10 saved addresses. |
-| `PATCH /users/me/addresses/:addressId` | Authenticated / yes | Non-empty partial address object | 200 `{ user }` | Address must belong to current user. |
-| `DELETE /users/me/addresses/:addressId` | Authenticated / yes | None | 200 `{ user }` | Address must belong to current user. |
+| Method and path                         | Access / CSRF       | Request                                          | Success response | Notes                                                   |
+| --------------------------------------- | ------------------- | ------------------------------------------------ | ---------------- | ------------------------------------------------------- |
+| `GET /users/me`                         | Authenticated / no  | Cookie                                           | 200 `{ user }`   | Current public user.                                    |
+| `PATCH /users/me`                       | Authenticated / yes | At least one of `{ displayName?, phoneNumber? }` | 200 `{ user }`   | `displayName` 1–100; phone 1–30. Other fields rejected. |
+| `POST /users/me/addresses`              | Authenticated / yes | Address object described below                   | 201 `{ user }`   | Maximum 10 saved addresses.                             |
+| `PATCH /users/me/addresses/:addressId`  | Authenticated / yes | Non-empty partial address object                 | 200 `{ user }`   | Address must belong to current user.                    |
+| `DELETE /users/me/addresses/:addressId` | Authenticated / yes | None                                             | 200 `{ user }`   | Address must belong to current user.                    |
 
 Address create fields: required `label` (1–40), `recipientName` (1–100), `phoneNumber` (1–30), `addressLine1` (1–120), `city` (1–80), `province` (1–80), `postalCode` (1–12); optional `addressLine2` (max 120), `deliveryInstructions` (max 300), and `country` (1–80; defaults to `"South Africa"`). Strings are trimmed. Patch accepts those fields optionally, rejects an empty object, and allows setting optional string fields to `""` if they satisfy their schema (addressLine2/instructions permit empty strings). Unknown fields are rejected.
 
 ### Catalogue and administrator catalogue/inventory
 
-| Method and path | Access / CSRF | Request | Success response | Notes |
-|---|---|---|---|---|
-| `GET /categories` | Public / no | None | 200 `{ categories: [...] }` | Active categories only; alphabetical by name. |
-| `GET /products` | Public / no | Product query filters below | 200 `{ products: [...], pagination }` | Active products in active categories only. |
-| `GET /products/:slug` | Public / no | Lowercase hyphen slug | 200 `{ product }` | Active product/category only; otherwise 404. |
-| `GET /admin/categories` | Admin / no | None | 200 `{ categories: [...] }` | Includes active and inactive categories. |
-| `POST /admin/categories` | Admin / yes | `{ name, slug?, description?, isActive? }` | 201 `{ category }` | |
-| `PATCH /admin/categories/:categoryId` | Admin / yes | Non-empty partial category object | 200 `{ category }` | |
-| `POST /admin/products` | Admin / yes | Product create object below | 201 `{ product }` | No stock field; initial stock defaults to zero. |
-| `PATCH /admin/products/:productId` | Admin / yes | Non-empty partial product object | 200 `{ product }` | No stock field; inventory changes use adjustment endpoint. |
-| `GET /admin/inventory` | Admin / no | Inventory filters below | 200 `{ inventory: [...], pagination }` | Includes draft/inactive products unless filtered. |
-| `GET /admin/inventory/adjustments` | Admin / no | `page`, `limit` | 200 `{ adjustments: [...], pagination }` | Recent ledger entries across products. |
-| `GET /admin/products/:productId/inventory-adjustments` | Admin / no | `page`, `limit` | 200 `{ adjustments: [...], pagination }` | Product-scoped ledger. |
-| `POST /admin/products/:productId/inventory-adjustments` | Admin / yes | `{ quantityDelta, reason }` and `Idempotency-Key` header | 201 first submission or 200 replay: `{ adjustment, replayed }` | Signed non-zero integer delta; key details below. |
+| Method and path                                         | Access / CSRF | Request                                                  | Success response                                               | Notes                                                      |
+| ------------------------------------------------------- | ------------- | -------------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------- |
+| `GET /categories`                                       | Public / no   | None                                                     | 200 `{ categories: [...] }`                                    | Active categories only; alphabetical by name.              |
+| `GET /products`                                         | Public / no   | Product query filters below                              | 200 `{ products: [...], pagination }`                          | Active products in active categories only.                 |
+| `GET /products/:slug`                                   | Public / no   | Lowercase hyphen slug                                    | 200 `{ product }`                                              | Active product/category only; otherwise 404.               |
+| `GET /admin/categories`                                 | Admin / no    | None                                                     | 200 `{ categories: [...] }`                                    | Includes active and inactive categories.                   |
+| `POST /admin/categories`                                | Admin / yes   | `{ name, slug?, description?, isActive? }`               | 201 `{ category }`                                             |                                                            |
+| `PATCH /admin/categories/:categoryId`                   | Admin / yes   | Non-empty partial category object                        | 200 `{ category }`                                             |                                                            |
+| `POST /admin/products`                                  | Admin / yes   | Product create object below                              | 201 `{ product }`                                              | No stock field; initial stock defaults to zero.            |
+| `PATCH /admin/products/:productId`                      | Admin / yes   | Non-empty partial product object                         | 200 `{ product }`                                              | No stock field; inventory changes use adjustment endpoint. |
+| `GET /admin/inventory`                                  | Admin / no    | Inventory filters below                                  | 200 `{ inventory: [...], pagination }`                         | Includes draft/inactive products unless filtered.          |
+| `GET /admin/inventory/adjustments`                      | Admin / no    | `page`, `limit`                                          | 200 `{ adjustments: [...], pagination }`                       | Recent ledger entries across products.                     |
+| `GET /admin/products/:productId/inventory-adjustments`  | Admin / no    | `page`, `limit`                                          | 200 `{ adjustments: [...], pagination }`                       | Product-scoped ledger.                                     |
+| `POST /admin/products/:productId/inventory-adjustments` | Admin / yes   | `{ quantityDelta, reason }` and `Idempotency-Key` header | 201 first submission or 200 replay: `{ adjustment, replayed }` | Signed non-zero integer delta; key details below.          |
 
 Admin category create accepts `name` (1–100), optional `slug` (max 120), optional `description` (1–1000), and optional `isActive` (default true). Patch accepts any non-empty subset and permits `description: null` to clear it. Duplicate slug conflicts return 409. Slugs are normalized from names when omitted.
 
@@ -211,21 +211,23 @@ Admin product create requires `name`, `sku`, `description`, `categoryId`, and po
 
 Product update accepts `packaging: null` or `shipping: null` to clear the respective optional metadata.
 
+`imageReferences` is the product-image field and remains an array of URL strings in public and administrator product responses. Product writes accept an empty array or up to 10 HTTPS URLs with no embedded username/password, and each URL hostname must exactly match a hostname configured in the backend's `PRODUCT_IMAGE_ALLOWED_HOSTS` setting. Configure that server-only setting with exact DNS hostnames (comma-separated); an empty allowlist means remote image URLs are rejected. The backend preserves accepted references and does not constrain URL paths or file extensions. The frontend may set the non-secret `VITE_PRODUCT_IMAGE_ALLOWED_HOSTS` to the same exact hostnames to filter which returned references it renders. Do not expose the backend environment setting or use arbitrary URL construction.
+
 Product filters: `page`, `limit`, `q`, `categoryId`, `minPriceCents`, `maxPriceCents`, `sortBy`, `sortOrder`. Inventory filters: `page`, `limit`, `q`, `categoryId`, `status`, `lowStockBelow`, `sortBy`, `sortOrder`.
 
 ### Cart and orders
 
-| Method and path | Access / CSRF | Request | Success response | Notes |
-|---|---|---|---|---|
-| `GET /cart` | Customer / no | Cookie | 200 `{ cart }` | Empty cart is returned if none is stored yet. |
-| `POST /cart/items` | Customer / yes | `{ productId, quantity }` | 200 `{ cart }` | Adds quantity to existing item; current active product/category and stock checked. |
-| `PATCH /cart/items/:productId` | Customer / yes | `{ quantity }` | 200 `{ cart }` | Sets quantity; item must already exist. |
-| `DELETE /cart/items/:productId` | Customer / yes | None | 200 `{ cart }` | Removing a missing item leaves cart unchanged. |
-| `DELETE /cart` | Customer / yes | None | 200 `{ cart }` | Clears the cart. |
-| `POST /orders` | Customer / yes | `{ addressId }` and `Idempotency-Key` header | 201 `{ order, replayed: false }`; replay 200 `{ order, replayed: true }` | Transactionally snapshots items/address, reserves stock, writes ledger, and empties cart. |
-| `GET /orders` | Customer / no | `page`, `limit` | 200 `{ orders: [...], pagination }` | Only current customer's orders. |
-| `GET /orders/:orderId` | Customer / no | ObjectId path | 200 `{ order }` | Only current customer's order; otherwise 404. |
-| `POST /admin/orders/:orderId/cancel` | Admin / yes | `{ reason }` | 200 `{ order, replayed }` | Cancels eligible pending-payment order and transactionally releases reserved stock. No admin order list/detail endpoint exists. |
+| Method and path                      | Access / CSRF  | Request                                      | Success response                                                         | Notes                                                                                                                           |
+| ------------------------------------ | -------------- | -------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /cart`                          | Customer / no  | Cookie                                       | 200 `{ cart }`                                                           | Empty cart is returned if none is stored yet.                                                                                   |
+| `POST /cart/items`                   | Customer / yes | `{ productId, quantity }`                    | 200 `{ cart }`                                                           | Adds quantity to existing item; current active product/category and stock checked.                                              |
+| `PATCH /cart/items/:productId`       | Customer / yes | `{ quantity }`                               | 200 `{ cart }`                                                           | Sets quantity; item must already exist.                                                                                         |
+| `DELETE /cart/items/:productId`      | Customer / yes | None                                         | 200 `{ cart }`                                                           | Removing a missing item leaves cart unchanged.                                                                                  |
+| `DELETE /cart`                       | Customer / yes | None                                         | 200 `{ cart }`                                                           | Clears the cart.                                                                                                                |
+| `POST /orders`                       | Customer / yes | `{ addressId }` and `Idempotency-Key` header | 201 `{ order, replayed: false }`; replay 200 `{ order, replayed: true }` | Transactionally snapshots items/address, reserves stock, writes ledger, and empties cart.                                       |
+| `GET /orders`                        | Customer / no  | `page`, `limit`                              | 200 `{ orders: [...], pagination }`                                      | Only current customer's orders.                                                                                                 |
+| `GET /orders/:orderId`               | Customer / no  | ObjectId path                                | 200 `{ order }`                                                          | Only current customer's order; otherwise 404.                                                                                   |
+| `POST /admin/orders/:orderId/cancel` | Admin / yes    | `{ reason }`                                 | 200 `{ order, replayed }`                                                | Cancels eligible pending-payment order and transactionally releases reserved stock. No admin order list/detail endpoint exists. |
 
 ## 5. Catalogue
 
@@ -276,14 +278,16 @@ The cart response is:
 ```json
 {
   "cart": {
-    "items": [{
-      "productId": "<object-id>",
-      "quantity": "<integer>",
-      "available": true,
-      "product": { "name": "<current-name>", "slug": "<current-slug>" },
-      "unitPriceCents": "<integer cents>",
-      "lineSubtotalCents": "<integer cents>"
-    }],
+    "items": [
+      {
+        "productId": "<object-id>",
+        "quantity": "<integer>",
+        "available": true,
+        "product": { "name": "<current-name>", "slug": "<current-slug>" },
+        "unitPriceCents": "<integer cents>",
+        "lineSubtotalCents": "<integer cents>"
+      }
+    ],
     "itemCount": "<number of distinct lines>",
     "currency": "ZAR",
     "totalCents": "<integer cents>",
@@ -370,14 +374,14 @@ Business/technical prerequisites remain: verified provider API contract and acco
 
 ## 9. Admin capabilities
 
-| Capability | Current authorization and boundary |
-|---|---|
-| Category management | Admin-only create/update and list including inactive categories. No delete route. |
-| Product management | Admin-only create/update. No product list/detail/delete admin route; public routes show only published products. No stock fields accepted. |
-| Product shipping metadata | Admin create/update only; not included in public product response. |
-| Inventory | Admin-only paginated listing, adjustment, recent ledger history, and product-scoped history. Mutations require CSRF and idempotency key. |
-| Order cancellation | Admin-only cancellation for pending unpaid orders with reserved stock. No admin order list/detail endpoint is registered. |
-| User administration | No admin user management route was found. |
+| Capability                | Current authorization and boundary                                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Category management       | Admin-only create/update and list including inactive categories. No delete route.                                                          |
+| Product management        | Admin-only create/update. No product list/detail/delete admin route; public routes show only published products. No stock fields accepted. |
+| Product shipping metadata | Admin create/update only; not included in public product response.                                                                         |
+| Inventory                 | Admin-only paginated listing, adjustment, recent ledger history, and product-scoped history. Mutations require CSRF and idempotency key.   |
+| Order cancellation        | Admin-only cancellation for pending unpaid orders with reserved stock. No admin order list/detail endpoint is registered.                  |
+| User administration       | No admin user management route was found.                                                                                                  |
 
 Authentication middleware reads the user ID/session version from the Mongo-backed session, rechecks active/email-verified status and current user record, then role middleware checks the public user's `roles`. When admin 2FA is required (default), incomplete admin second factor is denied before ordinary protected routes.
 
@@ -446,9 +450,7 @@ const query = new URLSearchParams({
   sortBy: "name",
   sortOrder: "asc",
 });
-const { products, pagination } = await api<ProductList>(
-  `/products?${query.toString()}`,
-);
+const { products, pagination } = await api<ProductList>(`/products?${query.toString()}`);
 const { categories } = await api<{ categories: Category[] }>("/categories");
 ```
 
@@ -494,28 +496,28 @@ Handle 409 from cart/order APIs as a business state (changed availability, insuf
 
 The status values below use the project's requested vocabulary. `TESTED` means relevant automated test coverage exists in the repository, not that the deployed service was tested. No `LIVE-VERIFIED` claim is made here.
 
-| Feature | Source-backed status | Frontend use / blocker |
-|---|---|---|
-| Health check | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Available; confirms database connectivity only. |
-| Public catalogue | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable; catalogue population is UNVERIFIED. |
-| Registration/password login/session logout | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable with CSRF and cookies; email verification is required for password login. |
-| Email verification/password recovery logic | PARTIAL / TESTED / NOT LIVE-VERIFIED | Token routes exist, but default email adapter is unconfigured; real email delivery must be supplied. |
-| Google sign-in/link | PARTIAL / TESTED / NOT LIVE-VERIFIED | Requires credentials; callback does not redirect to frontend. |
-| TOTP and recovery codes | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable when server encryption key is configured; admin policy requires enrollment. |
-| Customer profile and saved addresses | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable for authenticated session. |
-| Persistent cart | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable; no stock reservation until order creation. |
-| Order creation/history | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Creates unpaid pending-payment orders and reserves stock transactionally. |
-| Admin order viewing | NOT IMPLEMENTED | No admin list/detail route; admin cancellation is available only when order ID is already known. |
-| Admin order cancellation | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Requires admin + CSRF; only pending-payment reserved orders. |
-| Admin product/category operations | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Create/update and category list; no full admin product browse/delete API. |
-| Inventory management/ledger | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Requires transaction-capable MongoDB deployment. |
-| Product shipping metadata | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Admin-only optional fields; legacy missing values expected. |
-| Courier Guy/ShipLogic quote | NOT IMPLEMENTED (FOUNDATION ONLY) | No provider adapter, quote endpoint, credentials, persistence, or tested provider call. |
-| Delivery fee in order total | NOT IMPLEMENTED | `totalCents` equals merchandise `subtotalCents`. |
-| PayFast/payment confirmation | NOT IMPLEMENTED | No initiation, payment attempt, ITN/webhook, or payment-state transition. |
-| Automatic reservation expiry | NOT IMPLEMENTED | No expiry worker; admin cancellation is manual. |
-| Shipment booking/tracking | NOT IMPLEMENTED | No carrier booking or tracking routes. |
-| Production database transaction topology | UNVERIFIED | Confirm deployed MongoDB is replica-set/sharded transaction-capable. |
-| Deployed CORS/cookie environment | UNVERIFIED | Confirm exact frontend origin, SameSite, Secure/proxy behavior in deployment configuration. |
+| Feature                                    | Source-backed status                     | Frontend use / blocker                                                                               |
+| ------------------------------------------ | ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Health check                               | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Available; confirms database connectivity only.                                                      |
+| Public catalogue                           | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable; catalogue population is UNVERIFIED.                                                          |
+| Registration/password login/session logout | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable with CSRF and cookies; email verification is required for password login.                     |
+| Email verification/password recovery logic | PARTIAL / TESTED / NOT LIVE-VERIFIED     | Token routes exist, but default email adapter is unconfigured; real email delivery must be supplied. |
+| Google sign-in/link                        | PARTIAL / TESTED / NOT LIVE-VERIFIED     | Requires credentials; callback does not redirect to frontend.                                        |
+| TOTP and recovery codes                    | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable when server encryption key is configured; admin policy requires enrollment.                   |
+| Customer profile and saved addresses       | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable for authenticated session.                                                                    |
+| Persistent cart                            | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Usable; no stock reservation until order creation.                                                   |
+| Order creation/history                     | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Creates unpaid pending-payment orders and reserves stock transactionally.                            |
+| Admin order viewing                        | NOT IMPLEMENTED                          | No admin list/detail route; admin cancellation is available only when order ID is already known.     |
+| Admin order cancellation                   | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Requires admin + CSRF; only pending-payment reserved orders.                                         |
+| Admin product/category operations          | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Create/update and category list; no full admin product browse/delete API.                            |
+| Inventory management/ledger                | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Requires transaction-capable MongoDB deployment.                                                     |
+| Product shipping metadata                  | IMPLEMENTED / TESTED / NOT LIVE-VERIFIED | Admin-only optional fields; legacy missing values expected.                                          |
+| Courier Guy/ShipLogic quote                | NOT IMPLEMENTED (FOUNDATION ONLY)        | No provider adapter, quote endpoint, credentials, persistence, or tested provider call.              |
+| Delivery fee in order total                | NOT IMPLEMENTED                          | `totalCents` equals merchandise `subtotalCents`.                                                     |
+| PayFast/payment confirmation               | NOT IMPLEMENTED                          | No initiation, payment attempt, ITN/webhook, or payment-state transition.                            |
+| Automatic reservation expiry               | NOT IMPLEMENTED                          | No expiry worker; admin cancellation is manual.                                                      |
+| Shipment booking/tracking                  | NOT IMPLEMENTED                          | No carrier booking or tracking routes.                                                               |
+| Production database transaction topology   | UNVERIFIED                               | Confirm deployed MongoDB is replica-set/sharded transaction-capable.                                 |
+| Deployed CORS/cookie environment           | UNVERIFIED                               | Confirm exact frontend origin, SameSite, Secure/proxy behavior in deployment configuration.          |
 
 Automated tests are declared in `npm test`: foundation, Stage 2/3 auth, Stage 4 catalogue/inventory, and Stage 5 cart/orders. Inventory and order/cart suites use in-memory replica-set MongoDB; these are isolated tests, not a production topology check. No code or deployment configuration was changed to produce this handoff.

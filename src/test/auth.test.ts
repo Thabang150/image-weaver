@@ -41,6 +41,7 @@ describe("session foundation", () => {
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[0]?.[0]).toBe("https://api.example.test/api/v1/auth/me");
+    expect(fetcher.mock.calls[0]?.[1]?.credentials).toBe("include");
   });
 
   it("returns a typed authenticated session from the documented user response", async () => {
@@ -112,6 +113,66 @@ describe("session foundation", () => {
       "https://api.example.test/api/v1/auth/2fa/verify",
       "https://api.example.test/api/v1/auth/2fa/confirm",
     ]);
+    expect(new Headers(fetcher.mock.calls[1]?.[1]?.headers).get("X-CSRF-Token")).toBe("token-1");
+    expect(new Headers(fetcher.mock.calls[3]?.[1]?.headers).get("X-CSRF-Token")).toBe("token-2");
+    expect(new Headers(fetcher.mock.calls[5]?.[1]?.headers).get("X-CSRF-Token")).toBe("token-3");
+    expect(new Headers(fetcher.mock.calls[7]?.[1]?.headers).get("X-CSRF-Token")).toBe("token-4");
+  });
+
+  it("restores a valid cookie session and returns to unauthenticated after logout", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ user }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ error: "Authentication required." }, 401));
+    const auth = createAuthApi(
+      createApiClient({
+        baseUrl: "https://api.example.test",
+        csrfTokenProvider: vi.fn().mockResolvedValue("logout-csrf"),
+        fetcher,
+      }),
+    );
+
+    await expect(auth.getSession()).resolves.toEqual({ status: "authenticated", user });
+    await auth.logout();
+    await expect(auth.getSession()).resolves.toEqual({ status: "unauthenticated" });
+
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    for (const [, init] of fetcher.mock.calls) {
+      expect(init?.credentials).toBe("include");
+    }
+  });
+
+  it("preserves invalid-credential and registration validation responses", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: "Invalid email or password." }, 401))
+      .mockResolvedValueOnce(jsonResponse({ error: "Invalid request." }, 400));
+    const auth = createAuthApi(
+      createApiClient({
+        baseUrl: "https://api.example.test",
+        csrfTokenProvider: vi.fn().mockResolvedValue("csrf-for-errors"),
+        fetcher,
+      }),
+    );
+
+    await expect(
+      auth.login({ email: user.email, password: "incorrect-password" }),
+    ).rejects.toMatchObject({
+      name: "ApiHttpError",
+      status: 401,
+      message: "Invalid email or password.",
+    });
+    await expect(
+      auth.register({ email: "not-an-email", password: "too-short" }),
+    ).rejects.toMatchObject({
+      name: "ApiHttpError",
+      status: 400,
+      message: "Invalid request.",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0]?.[1]?.credentials).toBe("include");
+    expect(fetcher.mock.calls[1]?.[1]?.credentials).toBe("include");
   });
 
   it("uses the documented registration and email verification contracts", async () => {

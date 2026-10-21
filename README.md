@@ -14,11 +14,13 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
 
 ## Backend API configuration
 
-The frontend uses the existing TanStack Start/Vite runtime. For local API development, copy `.env.example` to `.env.local` and set `VITE_BACKEND_BASE_URL` to the public backend origin. The client normalizes the `/api/v1` prefix, so the value may be either the origin or an origin already ending in `/api/v1`.
+The frontend uses the existing TanStack Start/Vite runtime. For local API development, set `VITE_BACKEND_BASE_URL` to the backend origin or an origin already ending in `/api/v1`. The client normalizes the prefix and includes browser cookies. This is a public URL and is exposed in the development bundle.
+
+Production API calls use the same-origin `/api/v1` path. Nitro proxies `/api/v1/**` to `https://heathywayssa-backend.onrender.com/api/v1/**`; the request method, body and headers and the backend response (including `Set-Cookie`) pass through the proxy. Production does not use `VITE_BACKEND_BASE_URL`, and no API credentials or other secrets are placed in the frontend bundle.
 
 Only the public backend URL belongs in a `VITE_*` variable; Vite exposes these values in the browser bundle. Do not place passwords, session secrets, CSRF tokens, payment credentials, or other secrets in frontend environment variables. Session cookies are browser-managed, and unsafe API requests must obtain their CSRF token through the backend's documented contract before use.
 
-`src/lib/api/client.ts` follows the supplied `FRONTEND_HANDOFF.md` for `GET /api/v1/auth/csrf-token` and its `{ csrfToken }` response. Unsafe requests are blocked if token acquisition fails. On the documented CSRF 403, the client refreshes the token but does not replay the failed request. Authentication helpers refresh CSRF after login, logout, 2FA verification, and 2FA confirmation. Confirm the backend's CORS and cookie settings for the actual frontend origin before relying on browser sessions.
+`src/lib/api/client.ts` follows the supplied `FRONTEND_HANDOFF.md` for `GET /api/v1/auth/csrf-token` and its `{ csrfToken }` response. Unsafe requests are blocked if token acquisition fails. On the exact documented CSRF 403, the client refreshes the token and retries once; the backend's CSRF middleware rejects the request before its route handler runs. Authentication helpers refresh CSRF after session-regenerating login/logout/2FA transitions. Production session cookies are host-only and work through the same-origin proxy without third-party cookies. Configure the backend's exact `FRONTEND_ORIGIN` for the deployed site.
 
 ## Development
 

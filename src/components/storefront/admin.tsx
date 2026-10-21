@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { ApiHttpError, ApiResponseError } from "@/lib/api/client";
+import { ApiHttpError, ApiResponseError, CsrfTokenError } from "@/lib/api/client";
 import { adminApi, type AdminInventoryItem } from "@/lib/api/admin";
 import type { PublicUser } from "@/lib/api/auth";
 import { isAdminUser } from "@/lib/auth/authorization";
@@ -19,19 +19,15 @@ function safeAdminError(error: unknown, action: string): string {
     return "Your session has expired or authentication is required. Please sign in again.";
   }
   if (error instanceof ApiHttpError && error.status === 403) {
-    if (
-      typeof error.body === "object" &&
-      error.body !== null &&
-      !Array.isArray(error.body) &&
-      "error" in error.body &&
-      error.body.error === "Invalid or missing CSRF token."
-    ) {
-      return "The request could not be verified. Refresh the page and try again; the rejected request was not replayed.";
-    }
+    if (error.isCsrfFailure)
+      return "The request could not be verified after one token refresh. Refresh the page and try again.";
     return "The backend denied this administrator action.";
   }
   if (error instanceof ApiResponseError) {
     return `${action} failed because the backend response was invalid.`;
+  }
+  if (error instanceof CsrfTokenError) {
+    return `${action} could not be secured because a CSRF token was unavailable. Refresh the page and try again.`;
   }
   return `${action} could not be completed. Check your connection and try again.`;
 }

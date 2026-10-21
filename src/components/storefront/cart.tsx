@@ -10,7 +10,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { ApiHttpError } from "@/lib/api/client";
+import { ApiHttpError, CsrfTokenError } from "@/lib/api/client";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
 import { formatZarCents } from "@/lib/money";
 
@@ -35,6 +35,9 @@ const CartContext = createContext<CartContextValue | null>(null);
 
 function getCartErrorMessage(error: unknown): string {
   if (error instanceof ApiHttpError) {
+    if (error.isCsrfFailure) {
+      return "The cart request could not be verified after one token refresh. Refresh the page and try again.";
+    }
     if (error.status === 401) {
       return "Please sign in to use your cart.";
     }
@@ -52,6 +55,9 @@ function getCartErrorMessage(error: unknown): string {
       return error.body.error;
     }
     return `The cart is unavailable (HTTP ${error.status}).`;
+  }
+  if (error instanceof CsrfTokenError) {
+    return "The cart request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
   return "The cart could not be reached. Check your connection and try again.";
 }

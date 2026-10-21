@@ -5,7 +5,7 @@ import { AdminPanel } from "@/components/storefront/admin";
 import { CartPage, CartSheet, CartTrigger } from "@/components/storefront/cart";
 import { Catalogue } from "@/components/storefront/catalogue";
 import { Button } from "@/components/ui/button";
-import { ApiHttpError, ApiResponseError } from "@/lib/api/client";
+import { ApiHttpError, ApiResponseError, CsrfTokenError } from "@/lib/api/client";
 import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { isAdminUser } from "@/lib/auth/authorization";
 import { ordersApi } from "@/lib/api/orders";
@@ -42,6 +42,11 @@ const inputClass =
 
 function describeAuthError(error: unknown, action: string): string {
   if (error instanceof ApiHttpError) {
+    if (error.isCsrfFailure) {
+      return error.csrfRefreshError
+        ? "The backend rejected the security token and a fresh token could not be obtained. Refresh the page and try again."
+        : "The backend rejected the security token after one refresh attempt. Refresh the page and try again.";
+    }
     if (error.status === 401) {
       return "Sign-in failed. Check your email and password, and confirm your email address is verified.";
     }
@@ -59,6 +64,9 @@ function describeAuthError(error: unknown, action: string): string {
   }
   if (error instanceof ApiResponseError) {
     return `${action} could not be completed because the backend response was invalid.`;
+  }
+  if (error instanceof CsrfTokenError) {
+    return "This request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
   return `${action} could not be completed. Check your connection and try again.`;
 }
@@ -247,8 +255,9 @@ export function PreviewSite({
         >
           {sessionQuery.isError ? (
             <div className="mx-auto max-w-7xl px-5 pt-4">
-              <p role="status" className="text-sm text-muted-foreground">
-                Account status could not be checked. Store browsing remains available.
+              <p role="alert" className="text-sm text-destructive">
+                Account status could not be checked. Store browsing remains available.{" "}
+                {describeAuthError(sessionQuery.error, "Session check")}
               </p>
             </div>
           ) : null}

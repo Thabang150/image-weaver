@@ -27,8 +27,26 @@ describe("API URL configuration", () => {
   });
 
   it("requires an explicit public backend URL and rejects non-HTTP configuration", () => {
-    expect(() => getBackendBaseUrl("")).toThrow("Set VITE_BACKEND_BASE_URL");
+    expect(() => getBackendBaseUrl("", true)).toThrow("Set VITE_BACKEND_BASE_URL");
     expect(() => normalizeApiBaseUrl("javascript:alert(1)")).toThrow("HTTP(S) URL");
+  });
+
+  it("uses the configured backend locally and the relative API path in production", () => {
+    expect(getBackendBaseUrl(baseUrl, true)).toBe(`${baseUrl}/api/v1/`);
+    expect(getBackendBaseUrl(baseUrl, false)).toBe("/api/v1/");
+    expect(buildApiUrl(getBackendBaseUrl(baseUrl, false), "/auth/login")).toBe(
+      "/api/v1/auth/login",
+    );
+  });
+
+  it("sends production API requests to relative same-origin URLs", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ products: [] }));
+    const client = createApiClient({ baseUrl: "/api/v1", fetcher });
+
+    await client.request("/products");
+
+    expect(fetcher.mock.calls[0]?.[0]).toBe("/api/v1/products");
+    expect(fetcher.mock.calls[0]?.[1]?.credentials).toBe("include");
   });
 
   it("rejects absolute endpoints outside the configured API origin", () => {
@@ -58,6 +76,27 @@ describe("API requests", () => {
     expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-1");
     expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
     expect(init?.body).toBe(JSON.stringify({ name: "test" }));
+  });
+
+  it("sends credentials and the in-memory CSRF token for every protected method", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(jsonResponse({ ok: true })));
+    const client = createApiClient({
+      baseUrl,
+      csrfTokenProvider: vi.fn().mockResolvedValue("csrf-methods"),
+      fetcher,
+    });
+
+    for (const method of ["POST", "PATCH", "PUT", "DELETE"]) {
+      await client.request("/resource", { method });
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    for (const [, init] of fetcher.mock.calls) {
+      expect(init?.credentials).toBe("include");
+      expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-methods");
+    }
   });
 
   it("uses no CSRF token for safe methods and includes the abort signal", async () => {
@@ -111,12 +150,13 @@ describe("API requests", () => {
     expect(fetcher.mock.calls[0]?.[0]).toBe(`${baseUrl}/api/v1/auth/csrf-token`);
     expect(fetcher.mock.calls[0]?.[1]?.method).toBe("GET");
     expect(fetcher.mock.calls[0]?.[1]?.credentials).toBe("include");
+    expect(fetcher.mock.calls[0]?.[1]?.cache).toBe("no-store");
     expect(new Headers(fetcher.mock.calls[1]?.[1]?.headers).get("X-CSRF-Token")).toBe(
       "csrf-from-backend",
     );
   });
 
-  it("refreshes after the documented CSRF 403 without replaying the mutation", async () => {
+  it("refreshes and retries once after the backend's exact CSRF rejection", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ csrfToken: "csrf-stale" }))
@@ -127,17 +167,31 @@ describe("API requests", () => {
 
     await expect(
       client.request("/mutate", { method: "POST", json: { value: 1 } }),
-    ).rejects.toMatchObject({
-      status: 403,
-      message: "Invalid or missing CSRF token.",
-    });
-    expect(fetcher).toHaveBeenCalledTimes(3);
-
-    await client.request("/next-mutation", { method: "PATCH" });
+    ).resolves.toEqual({ ok: true });
     expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher.mock.calls[1]?.[0]).toBe(`${baseUrl}/api/v1/mutate`);
+    expect(fetcher.mock.calls[3]?.[0]).toBe(`${baseUrl}/api/v1/mutate`);
+    expect(fetcher.mock.calls[3]?.[1]?.body).toBe(JSON.stringify({ value: 1 }));
+    expect(new Headers(fetcher.mock.calls[1]?.[1]?.headers).get("X-CSRF-Token")).toBe("csrf-stale");
     expect(new Headers(fetcher.mock.calls[3]?.[1]?.headers).get("X-CSRF-Token")).toBe(
       "csrf-refreshed",
     );
+  });
+
+  it("does not retry indefinitely when the refreshed CSRF token is rejected", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: "csrf-stale" }))
+      .mockResolvedValueOnce(jsonResponse({ error: "Invalid or missing CSRF token." }, 403))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: "csrf-refreshed" }))
+      .mockResolvedValueOnce(jsonResponse({ error: "Invalid or missing CSRF token." }, 403));
+    const client = createApiClient({ baseUrl, fetcher });
+
+    await expect(client.request("/mutate", { method: "POST" })).rejects.toMatchObject({
+      status: 403,
+      isCsrfFailure: true,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
   it("does not refresh the CSRF token for unrelated forbidden errors", async () => {

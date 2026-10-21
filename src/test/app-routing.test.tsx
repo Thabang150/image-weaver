@@ -271,6 +271,40 @@ describe("App routing", () => {
     expect(screen.queryByText(/account created/i)).not.toBeInTheDocument();
   }, 15000);
 
+  it("shows backend invalid-credential errors on the login form", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/me") || url.pathname.endsWith("/cart")) {
+        return jsonResponse({ error: "Authentication required." }, 401);
+      }
+      if (url.pathname.endsWith("/auth/csrf-token")) {
+        return jsonResponse({ csrfToken: "csrf-login-test" });
+      }
+      if (url.pathname.endsWith("/auth/login")) {
+        return jsonResponse({ error: "Invalid email or password." }, 401);
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    await renderPreviewAt("/preview?view=login", fetcher);
+
+    fireEvent.change(await screen.findByLabelText("Email"), {
+      target: { value: "customer@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "incorrect-password" },
+    });
+    const loginForm = screen.getByLabelText("Email").closest("form");
+    expect(loginForm).not.toBeNull();
+    fireEvent.submit(loginForm!);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Sign-in failed. Check your email and password",
+    );
+    const loginCall = fetcher.mock.calls.find(([input]) => String(input).endsWith("/auth/login"));
+    expect(loginCall?.[1]?.credentials).toBe("include");
+    expect(new Headers(loginCall?.[1]?.headers).get("X-CSRF-Token")).toBeTruthy();
+  }, 15000);
+
   it("renders backend account and order data and saves an address through the customer API", async () => {
     const savedUser = {
       id: "customer-1",

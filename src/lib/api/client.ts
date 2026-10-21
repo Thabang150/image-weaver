@@ -20,6 +20,7 @@ export type ApiErrorKind = "unauthorized" | "forbidden" | "http";
 
 export class ApiHttpError extends Error {
   readonly kind: ApiErrorKind;
+  readonly isCsrfFailure: boolean;
   csrfRefreshError?: unknown;
 
   constructor(
@@ -30,6 +31,8 @@ export class ApiHttpError extends Error {
     super(message);
     this.name = "ApiHttpError";
     this.kind = status === 401 ? "unauthorized" : status === 403 ? "forbidden" : "http";
+    this.isCsrfFailure =
+      status === 403 && isRecord(body) && body["error"] === "Invalid or missing CSRF token.";
   }
 }
 
@@ -54,33 +57,38 @@ export class CsrfTokenError extends Error {
 }
 
 export function normalizeApiBaseUrl(baseUrl: string): string {
+  const isRelative = baseUrl.startsWith("/") && !baseUrl.startsWith("//");
   let url: URL;
 
   try {
-    url = new URL(baseUrl);
+    url = isRelative ? new URL(baseUrl, "https://api.invalid") : new URL(baseUrl);
   } catch {
-    throw new Error("VITE_BACKEND_BASE_URL must be an absolute HTTP(S) URL.");
+    throw new Error("VITE_BACKEND_BASE_URL must be an HTTP(S) URL or a relative API path.");
   }
 
   if (
-    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    (!isRelative && url.protocol !== "http:" && url.protocol !== "https:") ||
     url.username ||
     url.password ||
     url.search ||
     url.hash
   ) {
     throw new Error(
-      "VITE_BACKEND_BASE_URL must be an HTTP(S) URL without credentials, query, or fragment.",
+      "VITE_BACKEND_BASE_URL must be an HTTP(S) URL or relative path without credentials, query, or fragment.",
     );
   }
 
   const path = url.pathname.replace(/\/+$/, "");
   url.pathname = path.endsWith(API_PREFIX) ? path : `${path}${API_PREFIX}`;
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
-  return url.toString();
+  return isRelative ? `${url.pathname}${url.search}` : url.toString();
 }
 
-export function getBackendBaseUrl(configuredUrl = import.meta.env.VITE_BACKEND_BASE_URL) {
+export function getBackendBaseUrl(
+  configuredUrl = import.meta.env.VITE_BACKEND_BASE_URL,
+  isDevelopment = import.meta.env.DEV,
+) {
+  if (!isDevelopment) return normalizeApiBaseUrl(API_PREFIX);
   if (!configuredUrl?.trim()) {
     throw new Error("Set VITE_BACKEND_BASE_URL before making backend requests.");
   }
@@ -92,7 +100,9 @@ export function buildApiUrl(baseUrl: string, endpoint: string): string {
     throw new Error("API endpoints must be relative paths.");
   }
 
-  const base = new URL(normalizeApiBaseUrl(baseUrl));
+  const normalizedBase = normalizeApiBaseUrl(baseUrl);
+  const isRelative = normalizedBase.startsWith("/");
+  const base = new URL(normalizedBase, "https://api.invalid");
   const relativeEndpoint = endpoint.replace(/^\/+/, "").replace(/^api\/v1(?:\/|$)/, "");
   const url = new URL(relativeEndpoint, base);
 
@@ -100,7 +110,7 @@ export function buildApiUrl(baseUrl: string, endpoint: string): string {
     throw new Error("API endpoint must remain within the configured API prefix.");
   }
 
-  return url.toString();
+  return isRelative ? `${url.pathname}${url.search}` : url.toString();
 }
 
 function isUnsafeMethod(method: string): boolean {
@@ -156,6 +166,7 @@ export function createApiClient(options: ApiClientOptions) {
       method: "GET",
       headers: { Accept: "application/json" },
       credentials: "include",
+      cache: "no-store",
     });
     const body = await readResponseBody(response);
 
@@ -174,18 +185,15 @@ export function createApiClient(options: ApiClientOptions) {
 
   const csrfTokenProvider = options.csrfTokenProvider ?? fetchCsrfToken;
 
-  function acquireCsrfToken(force = false): Promise<string> {
-    if (!force && csrfToken) return Promise.resolve(csrfToken);
-    if (csrfRequest) return csrfRequest;
-
-    csrfToken = undefined;
+  function startCsrfTokenRequest(): Promise<string> {
+    const requestGeneration = csrfGeneration;
     const pendingRequest = Promise.resolve()
       .then(csrfTokenProvider)
       .then((token) => {
         if (typeof token !== "string" || token.length === 0) {
           throw new CsrfTokenError("The CSRF token provider returned no token.");
         }
-        csrfToken = token;
+        if (requestGeneration === csrfGeneration) csrfToken = token;
         return token;
       })
       .catch((error: unknown) => {
@@ -204,6 +212,45 @@ export function createApiClient(options: ApiClientOptions) {
       });
     csrfRequest = pendingRequest;
     return pendingRequest;
+  }
+
+  let csrfGeneration = 0;
+  let csrfRefreshRequest: Promise<string> | undefined;
+
+  function acquireCsrfToken(force = false): Promise<string> {
+    if (!force && csrfToken) return Promise.resolve(csrfToken);
+    if (!force && csrfRequest) return csrfRequest;
+    if (force && csrfRefreshRequest) return csrfRefreshRequest;
+
+    if (!force) return startCsrfTokenRequest();
+
+    csrfGeneration += 1;
+    csrfToken = undefined;
+    const pendingRefresh = (async () => {
+      if (csrfRequest) {
+        try {
+          await csrfRequest;
+        } catch {
+          // A fresh request below is still required after a session transition.
+        }
+      }
+      return startCsrfTokenRequest();
+    })().finally(() => {
+      if (csrfRefreshRequest === pendingRefresh) csrfRefreshRequest = undefined;
+    });
+    csrfRefreshRequest = pendingRefresh;
+    return pendingRefresh;
+  }
+
+  async function refreshCsrfTokenAfterSessionTransition(): Promise<void> {
+    if (csrfRefreshRequest) {
+      try {
+        await csrfRefreshRequest;
+      } catch {
+        // The session transition requires a fresh token even if an older refresh failed.
+      }
+    }
+    await acquireCsrfToken(true);
   }
 
   async function request<T = unknown>(
@@ -225,56 +272,66 @@ export function createApiClient(options: ApiClientOptions) {
       }
     }
 
-    if (isUnsafeMethod(method)) {
-      const token = await acquireCsrfToken();
-      headers.set("X-CSRF-Token", token);
-    }
-
-    const init: RequestInit = {
-      method,
-      headers,
-      credentials: "include",
-    };
-    if (body !== undefined) init.body = body;
-    if (requestOptions.signal) init.signal = requestOptions.signal;
-
-    const response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
-    const responseBody = await readResponseBody(response);
-
-    if (!response.ok) {
-      const apiError = new ApiHttpError(
-        response.status,
-        responseBody,
-        getErrorMessage(responseBody, response),
-      );
-      const isCsrfRejection =
-        response.status === 403 &&
-        isRecord(responseBody) &&
-        responseBody["error"] === "Invalid or missing CSRF token.";
-
-      if (isCsrfRejection) {
-        csrfToken = undefined;
-        try {
-          await acquireCsrfToken(true);
-        } catch (error) {
-          apiError.csrfRefreshError = error;
-        }
+    let csrfRetryAttempted = false;
+    while (true) {
+      let requestCsrfToken: string | undefined;
+      if (isUnsafeMethod(method)) {
+        requestCsrfToken = await acquireCsrfToken();
+        headers.set("X-CSRF-Token", requestCsrfToken);
       }
 
-      throw apiError;
-    }
+      const init: RequestInit = {
+        method,
+        headers: new Headers(headers),
+        credentials: "include",
+      };
+      if (body !== undefined) init.body = body;
+      if (requestOptions.signal) init.signal = requestOptions.signal;
 
-    if (requestOptions.regeneratesSession) {
-      await acquireCsrfToken(true);
-    }
+      const response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
+      const responseBody = await readResponseBody(response);
 
-    return responseBody as T | undefined;
+      if (!response.ok) {
+        const apiError = new ApiHttpError(
+          response.status,
+          responseBody,
+          getErrorMessage(responseBody, response),
+        );
+
+        if (apiError.isCsrfFailure && isUnsafeMethod(method)) {
+          if (!csrfRetryAttempted) {
+            csrfRetryAttempted = true;
+            try {
+              if (csrfToken === requestCsrfToken) {
+                await acquireCsrfToken(true);
+              } else if (!csrfToken) {
+                await acquireCsrfToken(true);
+              }
+              continue;
+            } catch (error) {
+              apiError.csrfRefreshError = error;
+            }
+          } else if (csrfToken === requestCsrfToken) {
+            csrfGeneration += 1;
+            csrfToken = undefined;
+          }
+        }
+
+        throw apiError;
+      }
+
+      if (requestOptions.regeneratesSession) {
+        await refreshCsrfTokenAfterSessionTransition();
+      }
+
+      return responseBody as T | undefined;
+    }
   }
 
   return {
     request,
     refreshCsrfToken: async () => {
-      await acquireCsrfToken(true);
+      await refreshCsrfTokenAfterSessionTransition();
     },
   };
 }

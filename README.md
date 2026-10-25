@@ -22,6 +22,8 @@ Only the public backend URL belongs in a `VITE_*` variable; Vite exposes these v
 
 `src/lib/api/client.ts` follows the authentication contract for `GET /api/v1/auth/csrf-token` and its `{ csrfToken }` response. Unsafe requests are blocked if token acquisition fails. On the exact documented CSRF 403, the client refreshes the token but does not replay the rejected mutation. Authentication helpers refresh CSRF after session-regenerating login/logout/2FA transitions. Configure the backend's exact `FRONTEND_ORIGIN` for the deployed site.
 
+The administrator catalogue UI accepts image references only. Set the frontend `VITE_PRODUCT_IMAGE_ALLOWED_HOSTS` to a comma-separated list of approved HTTPS image hostnames, and configure the matching backend `PRODUCT_IMAGE_ALLOWED_HOSTS`; file uploads are not supported.
+
 ## Development
 
 Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).

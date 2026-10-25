@@ -20,6 +20,8 @@ export type PreviewView =
   | "account"
   | "cart"
   | "admin"
+  | "admin-login"
+  | "admin-register"
   | "forgot-password"
   | "reset-password";
 
@@ -50,16 +52,19 @@ function describeAuthError(error: unknown, action: string): string {
         ? "The backend rejected the security token and a fresh token could not be obtained. Refresh the page and try again."
         : "The backend rejected the security token after one refresh attempt. Refresh the page and try again.";
     }
-    if (error.status === 401) {
+    if (error.status === 401 && action.toLowerCase().includes("sign in")) {
       return "Sign-in failed. Check your email and password, and confirm your email address is verified.";
     }
+    if (error.status === 401) {
+      return `${action} was not accepted. Check the code and try again before the challenge expires.`;
+    }
     if (error.status === 403) {
-      return "The backend denied this request. Verify the account or refresh the page and try again.";
+      return "The backend denied this request. Your session may have expired, or recent authentication may be required.";
     }
     if (error.status === 409)
       return "This account or request already exists. Check the details and try again.";
     if (error.status === 400) {
-      return `${action} was not accepted. Check the required fields, password length, or token format and try again.`;
+      return error.message || `${action} was not accepted. Check the required fields and try again.`;
     }
     if (error.status === 429) return "Too many attempts. Wait a few minutes before trying again.";
     if (error.status >= 500)
@@ -180,13 +185,26 @@ export function PreviewSite({
     setLogoutBusy(true);
     setLogoutError(null);
     try {
-      await authApi.logout();
+      const result = await authApi.logout();
       queryClient.setQueryData(["session"], { status: "unauthenticated" });
       queryClient.removeQueries({ queryKey: ["cart"] });
       queryClient.removeQueries({ queryKey: ["orders"] });
+      if (result.csrfRefreshFailed) {
+        setLogoutError(
+          "You are signed out, but the security token could not be refreshed. Reload before making another account change.",
+        );
+      }
       onNavigate("shop");
     } catch (error) {
-      setLogoutError(describeAuthError(error, "Sign out"));
+      if (error instanceof ApiHttpError && error.status === 401) {
+        queryClient.setQueryData(["session"], { status: "unauthenticated" });
+        queryClient.removeQueries({ queryKey: ["cart"] });
+        queryClient.removeQueries({ queryKey: ["orders"] });
+        setLogoutError("Your session had expired. You have been signed out on this device.");
+        onNavigate("shop");
+      } else {
+        setLogoutError(describeAuthError(error, "Sign out"));
+      }
     } finally {
       setLogoutBusy(false);
     }
@@ -203,8 +221,12 @@ export function PreviewSite({
     );
   } else if (view === "login") {
     content = <LoginPage onNavigate={onNavigate} returnTo={returnTo} />;
+  } else if (view === "admin-login") {
+    content = <LoginPage isAdminFlow onNavigate={onNavigate} returnTo="admin" />;
   } else if (view === "register") {
     content = <RegisterPage onNavigate={onNavigate} />;
+  } else if (view === "admin-register") {
+    content = <RegisterPage isAdminRegistration onNavigate={onNavigate} />;
   } else if (view === "verify-email") {
     content = (
       <VerifyEmailPage
@@ -217,7 +239,7 @@ export function PreviewSite({
   } else if (view === "forgot-password") {
     content = <ForgotPasswordPage onNavigate={onNavigate} />;
   } else if (view === "reset-password") {
-    content = <ResetPasswordPage onNavigate={onNavigate} />;
+    content = <ResetPasswordPage onNavigate={onNavigate} verificationToken={verificationToken} />;
   } else if (view === "account") {
     content = user ? (
       <AccountPage user={user} />
@@ -241,15 +263,27 @@ export function PreviewSite({
         {user && !isAdminUser(user) ? (
           <AccessMessage
             title="Administrator access denied"
-            description="A matching email domain is not enough. The backend must confirm the verified administrator role and completed two-factor authentication. The current backend has no public admin-registration or invitation endpoint; ask the backend operator to provision an admin account through an approved secure process."
+            description="A matching email domain is not enough. The backend must confirm the verified administrator role and completed two-factor authentication."
           />
         ) : !user ? (
-          <AccessMessage
-            title="Administrator sign-in required"
-            description="Sign in with an authorized administrator account. The backend role and required two-factor authentication are checked after sign-in. There is no public admin-registration or invitation endpoint; ask the backend operator about approved secure provisioning."
-            onAction={() => onNavigate("login", "admin")}
-            action="Go to login"
-          />
+          <>
+            <AccessMessage
+              title="Administrator sign-in required"
+              description="Sign in with an authorized administrator account. The backend checks the administrator role and requires verified email and authenticator-app enrollment. Eligible addresses must use the exact @healtywayssa.co.za domain."
+              onAction={() => onNavigate("admin-login", "admin")}
+              action="Administrator sign in"
+            />
+            <p className="mx-auto mt-4 max-w-xl text-center text-sm">
+              Need administrator access?{" "}
+              <button
+                className="underline"
+                type="button"
+                onClick={() => onNavigate("admin-register")}
+              >
+                Register as an administrator
+              </button>
+            </p>
+          </>
         ) : (
           <AdminPanel user={user} />
         )}
@@ -356,11 +390,18 @@ function FormPage({
   );
 }
 
-function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void }) {
+function RegisterPage({
+  onNavigate,
+  isAdminRegistration = false,
+}: {
+  onNavigate: (view: PreviewView) => void;
+  isAdminRegistration?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [fields, setFields] = useState({
     displayName: "",
     email: "",
+    phoneNumber: "",
     password: "",
     confirmPassword: "",
   });
@@ -380,20 +421,39 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
       setFieldError("Passwords do not match.");
       return;
     }
+    if (
+      isAdminRegistration &&
+      !fields.email.trim().toLowerCase().endsWith("@healtywayssa.co.za")
+    ) {
+      setFieldError("Administrator registration is limited to the exact @healtywayssa.co.za domain.");
+      return;
+    }
     setBusy(true);
     try {
-      const result = await authApi.register({
+      const registration = isAdminRegistration ? authApi.registerAdmin : authApi.register;
+      const result = await registration({
         email: fields.email.trim(),
         password: fields.password,
         ...(fields.displayName.trim() ? { displayName: fields.displayName.trim() } : {}),
+        ...(fields.phoneNumber.trim() ? { phoneNumber: fields.phoneNumber.trim() } : {}),
       });
-      setFields({ displayName: "", email: "", password: "", confirmPassword: "" });
+      setFields({
+        displayName: "",
+        email: "",
+        phoneNumber: "",
+        password: "",
+        confirmPassword: "",
+      });
       await queryClient.invalidateQueries({ queryKey: ["session"] });
       setFeedback({
         kind: result.emailVerificationEmailSent ? "success" : "info",
         message: result.emailVerificationEmailSent
-          ? `Account created for ${result.user.email}. The backend reports that the email provider accepted the verification message; this does not confirm delivery. Verify the email before signing in.`
-          : `Account created for ${result.user.email}, but the backend reports that no verification message was accepted by the email provider. Contact the site operator or request verification again when email delivery is available.`,
+          ? isAdminRegistration
+            ? `Administrator account created for ${result.user.email}. Verify the email address first; administrator sign-in also requires authenticator-app TOTP enrollment.`
+            : `Account created for ${result.user.email}. The backend reports that the email provider accepted the verification message; this does not confirm delivery. Verify the email before signing in.`
+          : isAdminRegistration
+            ? `Administrator account created for ${result.user.email}, but no verification email was accepted by the email provider. Request another verification email when delivery is available. Email verification and TOTP enrollment are both required before administrator access.`
+            : `Account created for ${result.user.email}, but the backend reports that no verification message was accepted by the email provider. Contact the site operator or request verification again when email delivery is available.`,
       });
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Registration") });
@@ -404,8 +464,12 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
 
   return (
     <FormPage
-      title="Create an account"
-      description="Customer registration. Email verification is required before login."
+      title={isAdminRegistration ? "Administrator registration" : "Create an account"}
+      description={
+        isAdminRegistration
+          ? "Only the exact @healtywayssa.co.za email domain is eligible. The backend enforces eligibility. Email verification and authenticator-app TOTP enrollment are both required."
+          : "Customer registration. Email verification is required before login."
+      }
     >
       <form className="space-y-4" onSubmit={(event) => void submit(event)}>
         <label className="block space-y-1 text-sm">
@@ -416,6 +480,17 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
             maxLength={100}
             value={fields.displayName}
             onChange={(event) => setFields({ ...fields, displayName: event.currentTarget.value })}
+          />
+        </label>
+        <label className="block space-y-1 text-sm">
+          <span>Phone number (optional)</span>
+          <input
+            className={inputClass}
+            type="tel"
+            autoComplete="tel"
+            maxLength={30}
+            value={fields.phoneNumber}
+            onChange={(event) => setFields({ ...fields, phoneNumber: event.currentTarget.value })}
           />
         </label>
         <label className="block space-y-1 text-sm">
@@ -463,12 +538,16 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
         ) : null}
         <FeedbackMessage feedback={feedback} />
         <Button type="submit" disabled={busy}>
-          {busy ? "Creating account…" : "Register"}
+          {busy ? "Creating account…" : isAdminRegistration ? "Register administrator" : "Register"}
         </Button>
       </form>
       <p className="mt-5 text-sm">
         Already registered?{" "}
-        <button className="underline" type="button" onClick={() => onNavigate("login")}>
+        <button
+          className="underline"
+          type="button"
+          onClick={() => onNavigate(isAdminRegistration ? "admin-login" : "login")}
+        >
           Log in
         </button>
       </p>
@@ -482,14 +561,21 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
   );
 }
 
-type LoginStep = "credentials" | "two-factor" | "enrollment" | "recovery-codes";
+type LoginStep =
+  | "credentials"
+  | "email-otp"
+  | "two-factor"
+  | "enrollment"
+  | "recovery-codes";
 
 function LoginPage({
   onNavigate,
   returnTo,
+  isAdminFlow = false,
 }: {
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
   returnTo: "cart" | "account" | "admin" | undefined;
+  isAdminFlow?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
@@ -497,9 +583,15 @@ function LoginPage({
   const [code, setCode] = useState("");
   const [step, setStep] = useState<LoginStep>("credentials");
   const [provisioningUri, setProvisioningUri] = useState("");
+  const [enrollmentSecret, setEnrollmentSecret] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+
+  async function finishLogin() {
+    await refreshSession(queryClient);
+    onNavigate(isAdminFlow ? "admin" : (returnTo ?? "account"));
+  }
 
   async function submitCredentials(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -508,15 +600,17 @@ function LoginPage({
     try {
       const response = await authApi.login({ email: email.trim(), password });
       setPassword("");
-      if ("twoFactorRequired" in response) {
+      if ("emailOtpRequired" in response) {
+        setStep("email-otp");
+      } else if ("twoFactorRequired" in response) {
         setStep("two-factor");
       } else if ("twoFactorEnrollmentRequired" in response) {
         const setup = await authApi.enrollTwoFactor();
         setProvisioningUri(setup.provisioningUri);
+        setEnrollmentSecret(setup.secret);
         setStep("enrollment");
       } else {
-        await refreshSession(queryClient);
-        onNavigate(returnTo ?? "account");
+        await finishLogin();
       }
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Sign in") });
@@ -530,15 +624,29 @@ function LoginPage({
     setBusy(true);
     setFeedback(null);
     try {
-      if (step === "two-factor") {
+      if (step === "email-otp") {
+        const result = await authApi.verifyEmailOtp(code.trim());
+        setCode("");
+        if ("twoFactorRequired" in result) {
+          setStep("two-factor");
+        } else {
+          await finishLogin();
+        }
+      } else if (step === "two-factor") {
         await authApi.verifyTwoFactor(code.trim());
-        await refreshSession(queryClient);
-        onNavigate(returnTo ?? "account");
+        await finishLogin();
       } else {
         const result = await authApi.confirmTwoFactor(code.trim());
         setRecoveryCodes(result.recoveryCodes);
         setCode("");
         setStep("recovery-codes");
+        if (result.csrfRefreshFailed) {
+          setFeedback({
+            kind: "error",
+            message:
+              "Two-factor enrollment succeeded, but the security token could not be refreshed. Save these one-time recovery codes, then refresh the page before continuing.",
+          });
+        }
         await refreshSession(queryClient);
       }
     } catch (error) {
@@ -548,12 +656,29 @@ function LoginPage({
     }
   }
 
+  async function resendEmailOtp() {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await authApi.resendEmailOtp();
+      setFeedback({
+        kind: "info",
+        message: "A new sign-in code was requested. Check your email; the previous code is no longer valid.",
+      });
+    } catch (error) {
+      setFeedback({ kind: "error", message: describeAuthError(error, "Email code resend") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (step === "recovery-codes" && recoveryCodes) {
     return (
       <FormPage title="Save your recovery codes">
         <p className="text-sm">
-          These codes are shown once. Store them securely; they are not saved in this browser.
+          These codes are shown once. Save them securely now; they are not stored in this browser.
         </p>
+        <FeedbackMessage feedback={feedback} />
         <ul className="my-4 list-disc pl-6">
           {recoveryCodes.map((entry) => (
             <li key={entry}>
@@ -561,7 +686,9 @@ function LoginPage({
             </li>
           ))}
         </ul>
-        <Button onClick={() => onNavigate("account")}>Continue to account</Button>
+        <Button onClick={() => onNavigate(isAdminFlow ? "admin" : "account")}>
+          Continue to {isAdminFlow ? "administrator workspace" : "account"}
+        </Button>
       </FormPage>
     );
   }
@@ -570,10 +697,19 @@ function LoginPage({
     <FormPage
       title={
         step === "credentials"
-          ? "Log in"
+          ? isAdminFlow
+            ? "Administrator sign in"
+            : "Log in"
           : step === "enrollment"
             ? "Set up two-factor authentication"
-            : "Verify sign-in"
+            : step === "email-otp"
+              ? "Check your email"
+              : "Verify sign-in"
+      }
+      description={
+        step === "credentials" && isAdminFlow
+          ? "Administrator access is granted only after the backend confirms the account role, verified email and required TOTP."
+          : undefined
       }
     >
       {step === "credentials" ? (
@@ -618,9 +754,19 @@ function LoginPage({
         <form className="space-y-4" onSubmit={(event) => void submitFactor(event)}>
           {step === "enrollment" ? (
             <div className="space-y-2 text-sm">
-              <p>Add this setup URI to your authenticator app. It is shown only during setup.</p>
+              <p>
+                Add this account to your authenticator app by scanning a QR code if available, or
+                enter the provisioning URI or secret manually. This enrollment material is shown
+                only during setup.
+              </p>
               <code className="block break-all rounded bg-muted p-3">{provisioningUri}</code>
+              <p>Authenticator secret</p>
+              <code className="block break-all rounded bg-muted p-3">{enrollmentSecret}</code>
             </div>
+          ) : step === "email-otp" ? (
+            <p className="text-sm">
+              Enter the six-digit sign-in code sent to your email. It expires after five minutes.
+            </p>
           ) : (
             <p className="text-sm">
               Enter the authenticator code or a recovery code to finish signing in.
@@ -628,16 +774,19 @@ function LoginPage({
           )}
           <label className="block space-y-1 text-sm">
             <span>
-              {step === "enrollment"
-                ? "Six-digit authenticator code"
-                : "Authenticator or recovery code"}
+              {step === "email-otp"
+                ? "Six-digit email code"
+                : step === "enrollment"
+                  ? "Six-digit authenticator code"
+                  : "Authenticator or recovery code"}
             </span>
             <input
               className={inputClass}
-              inputMode="numeric"
+              inputMode={step === "two-factor" ? "text" : "numeric"}
               autoComplete="one-time-code"
               minLength={6}
-              maxLength={32}
+              maxLength={step === "two-factor" ? 32 : 6}
+              pattern={step === "two-factor" ? undefined : "[0-9]{6}"}
               required
               value={code}
               onChange={(event) => setCode(event.currentTarget.value)}
@@ -645,17 +794,46 @@ function LoginPage({
           </label>
           <FeedbackMessage feedback={feedback} />
           <Button type="submit" disabled={busy}>
-            {busy ? "Verifying…" : step === "enrollment" ? "Confirm setup" : "Verify and continue"}
+            {busy
+              ? "Verifying…"
+              : step === "enrollment"
+                ? "Confirm setup"
+                : step === "email-otp"
+                  ? "Verify email code"
+                  : "Verify and continue"}
           </Button>
+          {step === "email-otp" ? (
+            <Button type="button" variant="outline" disabled={busy} onClick={() => void resendEmailOtp()}>
+              {busy ? "Requesting…" : "Resend email code"}
+            </Button>
+          ) : null}
         </form>
       )}
       {step === "credentials" ? (
-        <p className="mt-5 text-sm">
-          No account yet?{" "}
-          <button className="underline" type="button" onClick={() => onNavigate("register")}>
-            Register
-          </button>
-        </p>
+        <>
+          <p className="mt-5 text-sm">
+            No account yet?{" "}
+            <button
+              className="underline"
+              type="button"
+              onClick={() => onNavigate(isAdminFlow ? "admin-register" : "register")}
+            >
+              {isAdminFlow ? "Administrator registration" : "Register"}
+            </button>
+          </p>
+          {!isAdminFlow ? (
+            <p className="mt-2 text-sm">
+              Administrator?{" "}
+              <button
+                className="underline"
+                type="button"
+                onClick={() => onNavigate("admin-login", "admin")}
+              >
+                Sign in here
+              </button>
+            </p>
+          ) : null}
+        </>
       ) : null}
     </FormPage>
   );
@@ -931,8 +1109,14 @@ function ForgotPasswordPage({ onNavigate }: { onNavigate: (view: PreviewView) =>
   );
 }
 
-function ResetPasswordPage({ onNavigate }: { onNavigate: (view: PreviewView) => void }) {
-  const [token, setToken] = useState("");
+function ResetPasswordPage({
+  onNavigate,
+  verificationToken,
+}: {
+  onNavigate: (view: PreviewView) => void;
+  verificationToken: string | undefined;
+}) {
+  const [token, setToken] = useState(verificationToken ?? "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);

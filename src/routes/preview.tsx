@@ -13,6 +13,8 @@ const previewViews: PreviewView[] = [
   "account",
   "cart",
   "admin",
+  "admin-login",
+  "admin-register",
   "forgot-password",
   "reset-password",
 ];
@@ -70,9 +72,11 @@ function Preview() {
 
   useEffect(() => {
     const url = new URL(window.location.href);
+    const isVerificationLink = url.pathname === "/verify-email";
+    const isPasswordResetLink = url.pathname === "/reset-password";
     if (
-      url.pathname !== "/verify-email" ||
-      search.emailLink === 1 ||
+      (!isVerificationLink && !isPasswordResetLink) ||
+      (isVerificationLink && search.emailLink === 1) ||
       emailLinkFallbackStartedRef.current
     ) {
       return;
@@ -83,8 +87,8 @@ function Preview() {
     void navigate({
       to: "/preview",
       search: {
-        view: "verify-email",
-        emailLink: 1,
+        view: isVerificationLink ? "verify-email" : "reset-password",
+        ...(isVerificationLink ? { emailLink: 1 as const } : {}),
         ...(token === null ? {} : { token }),
       },
       replace: true,
@@ -111,7 +115,9 @@ function Preview() {
         product={search.product}
         returnTo={search.returnTo}
         verificationToken={search.token}
-        isEmailLink={search.emailLink === 1}
+        isEmailLink={
+          search.emailLink === 1 || (view === "verify-email" && Boolean(search.token))
+        }
         onClearEmailLink={() => {
           void navigate({
             to: "/preview",

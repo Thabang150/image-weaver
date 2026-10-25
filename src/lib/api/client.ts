@@ -270,60 +270,48 @@ export function createApiClient(options: ApiClientOptions) {
       }
     }
 
-    let csrfRetryAttempted = false;
-    while (true) {
-      let requestCsrfToken: string | undefined;
-      if (isUnsafeMethod(method)) {
-        requestCsrfToken = await acquireCsrfToken();
-        headers.set("X-CSRF-Token", requestCsrfToken);
-      }
+    let requestCsrfToken: string | undefined;
+    if (isUnsafeMethod(method)) {
+      requestCsrfToken = await acquireCsrfToken();
+      headers.set("X-CSRF-Token", requestCsrfToken);
+    }
 
-      const init: RequestInit = {
-        method,
-        headers: new Headers(headers),
-        credentials: "include",
-      };
-      if (body !== undefined) init.body = body;
-      if (requestOptions.signal) init.signal = requestOptions.signal;
+    const init: RequestInit = {
+      method,
+      headers: new Headers(headers),
+      credentials: "include",
+    };
+    if (body !== undefined) init.body = body;
+    if (requestOptions.signal) init.signal = requestOptions.signal;
 
-      const response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
-      const responseBody = await readResponseBody(response);
+    const response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
+    const responseBody = await readResponseBody(response);
 
-      if (!response.ok) {
-        const apiError = new ApiHttpError(
-          response.status,
-          responseBody,
-          getErrorMessage(responseBody, response),
-        );
+    if (!response.ok) {
+      const apiError = new ApiHttpError(
+        response.status,
+        responseBody,
+        getErrorMessage(responseBody, response),
+      );
 
-        if (apiError.isCsrfFailure && isUnsafeMethod(method)) {
-          if (!csrfRetryAttempted) {
-            csrfRetryAttempted = true;
-            try {
-              if (csrfToken === requestCsrfToken) {
-                await acquireCsrfToken(true);
-              } else if (!csrfToken) {
-                await acquireCsrfToken(true);
-              }
-              continue;
-            } catch (error) {
-              apiError.csrfRefreshError = error;
-            }
-          } else if (csrfToken === requestCsrfToken) {
-            csrfGeneration += 1;
-            csrfToken = undefined;
+      if (apiError.isCsrfFailure && isUnsafeMethod(method)) {
+        if (csrfToken === requestCsrfToken || !csrfToken) {
+          try {
+            await acquireCsrfToken(true);
+          } catch (error) {
+            apiError.csrfRefreshError = error;
           }
         }
-
-        throw apiError;
       }
 
-      if (requestOptions.regeneratesSession) {
-        await refreshCsrfTokenAfterSessionTransition();
-      }
-
-      return responseBody as T | undefined;
+      throw apiError;
     }
+
+    if (requestOptions.regeneratesSession) {
+      await refreshCsrfTokenAfterSessionTransition();
+    }
+
+    return responseBody as T | undefined;
   }
 
   return {

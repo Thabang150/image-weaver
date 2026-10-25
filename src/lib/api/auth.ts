@@ -34,7 +34,12 @@ export interface PublicUser {
 }
 
 export type LoginResponse =
-  { user: PublicUser } | { twoFactorRequired: true } | { twoFactorEnrollmentRequired: true };
+  | { user: PublicUser }
+  | { emailOtpRequired: true }
+  | { twoFactorRequired: true }
+  | { twoFactorEnrollmentRequired: true };
+
+export type EmailOtpVerificationResponse = { user: PublicUser } | { twoFactorRequired: true };
 
 export interface RegistrationResult {
   user: PublicUser;
@@ -44,7 +49,10 @@ export interface RegistrationResult {
 export type SessionState =
   { status: "unauthenticated" } | { status: "authenticated"; user: PublicUser };
 
-export type AuthApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
+export type AuthApiClient = Pick<
+  ReturnType<typeof createApiClient>,
+  "request" | "refreshCsrfToken"
+>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -94,6 +102,14 @@ export function createAuthApi(client: AuthApiClient) {
     async getSession(): Promise<SessionState> {
       try {
         const response = await client.request<unknown>("/auth/me");
+        if (
+          isRecord(response) &&
+          (response["emailOtpRequired"] === true ||
+            response["twoFactorRequired"] === true ||
+            response["twoFactorEnrollmentRequired"] === true)
+        ) {
+          return { status: "unauthenticated" };
+        }
         if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
         return { status: "authenticated", user: response["user"] };
       } catch (error) {
@@ -110,6 +126,13 @@ export function createAuthApi(client: AuthApiClient) {
         json: credentials,
         regeneratesSession: true,
       });
+      if (
+        isRecord(response) &&
+        response["emailOtpRequired"] === true &&
+        Object.keys(response).length === 1
+      ) {
+        return { emailOtpRequired: true };
+      }
       if (
         isRecord(response) &&
         response["twoFactorRequired"] === true &&
@@ -151,6 +174,64 @@ export function createAuthApi(client: AuthApiClient) {
         user: response["user"],
         emailVerificationEmailSent: response["emailVerificationEmailSent"],
       };
+    },
+
+    async registerAdmin(input: {
+      email: string;
+      password: string;
+      displayName?: string;
+      phoneNumber?: string;
+    }): Promise<RegistrationResult> {
+      const response = await client.request<unknown>("/auth/admin/register", {
+        method: "POST",
+        json: input,
+      });
+      if (!isRecord(response)) {
+        return invalidAuthResponse();
+      }
+      const user = response["user"];
+      const emailVerificationEmailSent = response["emailVerificationEmailSent"];
+      if (
+        !isPublicUser(user) ||
+        !user.roles.includes("admin") ||
+        typeof emailVerificationEmailSent !== "boolean"
+      ) {
+        return invalidAuthResponse();
+      }
+      return {
+        user,
+        emailVerificationEmailSent,
+      };
+    },
+
+    async verifyEmailOtp(code: string): Promise<EmailOtpVerificationResponse> {
+      const response = await client.request<unknown>("/auth/login/verify-email-otp", {
+        method: "POST",
+        json: { code },
+        regeneratesSession: true,
+      });
+      if (
+        isRecord(response) &&
+        response["twoFactorRequired"] === true &&
+        Object.keys(response).length === 1
+      ) {
+        return { twoFactorRequired: true };
+      }
+      if (isRecord(response) && isPublicUser(response["user"])) {
+        return { user: response["user"] };
+      }
+      return invalidAuthResponse();
+    },
+
+    async resendEmailOtp(): Promise<{ emailOtpSent: true }> {
+      const response = await client.request<unknown>("/auth/login/resend-email-otp", {
+        method: "POST",
+        json: {},
+      });
+      if (!isRecord(response) || response["emailOtpSent"] !== true) {
+        return invalidAuthResponse();
+      }
+      return { emailOtpSent: true };
     },
 
     async requestVerification(email: string): Promise<{ message: string }> {
@@ -233,11 +314,16 @@ export function createAuthApi(client: AuthApiClient) {
       return response["user"];
     },
 
-    logout() {
-      return client.request<void>("/auth/logout", {
+    async logout(): Promise<{ csrfRefreshFailed: boolean }> {
+      await client.request<void>("/auth/logout", {
         method: "POST",
-        regeneratesSession: true,
       });
+      try {
+        await client.refreshCsrfToken();
+        return { csrfRefreshFailed: false };
+      } catch {
+        return { csrfRefreshFailed: true };
+      }
     },
 
     async verifyTwoFactor(code: string) {
@@ -254,7 +340,6 @@ export function createAuthApi(client: AuthApiClient) {
       const response = await client.request<unknown>("/auth/2fa/confirm", {
         method: "POST",
         json: { code },
-        regeneratesSession: true,
       });
       if (
         !isRecord(response) ||
@@ -264,11 +349,19 @@ export function createAuthApi(client: AuthApiClient) {
       ) {
         return invalidAuthResponse();
       }
+      const recoveryCodes = response["recoveryCodes"].filter(
+        (entry): entry is string => typeof entry === "string",
+      );
+      let csrfRefreshFailed = false;
+      try {
+        await client.refreshCsrfToken();
+      } catch {
+        csrfRefreshFailed = true;
+      }
       return {
         twoFactorEnabled: true as const,
-        recoveryCodes: response["recoveryCodes"].filter(
-          (entry): entry is string => typeof entry === "string",
-        ),
+        recoveryCodes,
+        ...(csrfRefreshFailed ? { csrfRefreshFailed: true as const } : {}),
       };
     },
 
@@ -286,6 +379,44 @@ export function createAuthApi(client: AuthApiClient) {
       }
       return { secret: response["secret"], provisioningUri: response["provisioningUri"] };
     },
+
+    async getTwoFactorStatus(): Promise<{ twoFactorEnabled: boolean }> {
+      const response = await client.request<unknown>("/auth/2fa/status");
+      if (!isRecord(response) || typeof response["twoFactorEnabled"] !== "boolean") {
+        return invalidAuthResponse();
+      }
+      return { twoFactorEnabled: response["twoFactorEnabled"] };
+    },
+
+    async rotateRecoveryCodes(code: string): Promise<{ recoveryCodes: string[] }> {
+      const response = await client.request<unknown>("/auth/2fa/recovery-codes/rotate", {
+        method: "POST",
+        json: { code },
+      });
+      if (
+        !isRecord(response) ||
+        !Array.isArray(response["recoveryCodes"]) ||
+        !response["recoveryCodes"].every((entry) => typeof entry === "string")
+      ) {
+        return invalidAuthResponse();
+      }
+      return {
+        recoveryCodes: response["recoveryCodes"].filter(
+          (entry): entry is string => typeof entry === "string",
+        ),
+      };
+    },
+
+    async disableTwoFactor(code: string): Promise<{ twoFactorEnabled: false }> {
+      const response = await client.request<unknown>("/auth/2fa/disable", {
+        method: "POST",
+        json: { code },
+      });
+      if (!isRecord(response) || response["twoFactorEnabled"] !== false) {
+        return invalidAuthResponse();
+      }
+      return { twoFactorEnabled: false };
+    },
   };
 }
 
@@ -302,6 +433,10 @@ export const authApi = {
     getConfiguredAuthApi().login(credentials),
   register: (input: Parameters<ReturnType<typeof createAuthApi>["register"]>[0]) =>
     getConfiguredAuthApi().register(input),
+  registerAdmin: (input: Parameters<ReturnType<typeof createAuthApi>["registerAdmin"]>[0]) =>
+    getConfiguredAuthApi().registerAdmin(input),
+  verifyEmailOtp: (code: string) => getConfiguredAuthApi().verifyEmailOtp(code),
+  resendEmailOtp: () => getConfiguredAuthApi().resendEmailOtp(),
   requestVerification: (email: string) => getConfiguredAuthApi().requestVerification(email),
   verifyEmail: (token: string) => getConfiguredAuthApi().verifyEmail(token),
   forgotPassword: (email: string) => getConfiguredAuthApi().forgotPassword(email),
@@ -317,4 +452,7 @@ export const authApi = {
   verifyTwoFactor: (code: string) => getConfiguredAuthApi().verifyTwoFactor(code),
   confirmTwoFactor: (code: string) => getConfiguredAuthApi().confirmTwoFactor(code),
   enrollTwoFactor: () => getConfiguredAuthApi().enrollTwoFactor(),
+  getTwoFactorStatus: () => getConfiguredAuthApi().getTwoFactorStatus(),
+  rotateRecoveryCodes: (code: string) => getConfiguredAuthApi().rotateRecoveryCodes(code),
+  disableTwoFactor: (code: string) => getConfiguredAuthApi().disableTwoFactor(code),
 };

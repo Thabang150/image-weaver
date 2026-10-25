@@ -61,8 +61,9 @@ function describeAuthError(error: unknown, action: string): string {
     if (error.status === 403) {
       return "The backend denied this request. Your session may have expired, or recent authentication may be required.";
     }
-    if (error.status === 409)
-      return "This account or request already exists. Check the details and try again.";
+    if (error.status === 409) {
+      return error.message || "This account or request already exists. Check the details and try again.";
+    }
     if (error.status === 400) {
       return error.message || `${action} was not accepted. Check the required fields and try again.`;
     }
@@ -153,7 +154,16 @@ function SiteFrame({
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-6 text-sm text-muted-foreground">
           <span>© 2026 Healthy Ways SA. Naturally, with care.</span>
           <ContactActions />
-          <span>Rooted in nature. Made for your wellbeing.</span>
+          <div className="flex items-center gap-4">
+            <span>Rooted in nature. Made for your wellbeing.</span>
+            <button
+              className="underline underline-offset-4"
+              type="button"
+              onClick={() => onNavigate("admin-login", "admin")}
+            >
+              Admin Login
+            </button>
+          </div>
         </div>
       </footer>
     </>
@@ -375,14 +385,17 @@ function AccessMessage({
 function FormPage({
   title,
   description,
+  eyebrow,
   children,
 }: {
   title: string;
   description?: string;
+  eyebrow?: string;
   children: ReactNode;
 }) {
   return (
     <main className="mx-auto w-full max-w-xl px-5 py-10">
+      {eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}
       <h1 className="section-title">{title}</h1>
       {description ? <p className="mt-3 text-sm text-muted-foreground">{description}</p> : null}
       <div className="mt-6 rounded-lg border border-border bg-card p-5 sm:p-7">{children}</div>
@@ -465,6 +478,7 @@ function RegisterPage({
   return (
     <FormPage
       title={isAdminRegistration ? "Administrator registration" : "Create an account"}
+      eyebrow={isAdminRegistration ? "Administrator access" : undefined}
       description={
         isAdminRegistration
           ? "Only the exact @healtywayssa.co.za email domain is eligible. The backend enforces eligibility. Email verification and authenticator-app TOTP enrollment are both required."
@@ -706,6 +720,7 @@ function LoginPage({
               ? "Check your email"
               : "Verify sign-in"
       }
+      eyebrow={isAdminFlow ? "Administrator access" : undefined}
       description={
         step === "credentials" && isAdminFlow
           ? "Administrator access is granted only after the backend confirms the account role, verified email and required TOTP."

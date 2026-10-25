@@ -10,6 +10,8 @@ const previewViews: PreviewView[] = [
   "login",
   "register",
   "verify-email",
+  "customer-verify-email",
+  "admin-verify-email",
   "account",
   "cart",
   "admin",
@@ -17,6 +19,8 @@ const previewViews: PreviewView[] = [
   "admin-register",
   "forgot-password",
   "reset-password",
+  "admin-forgot-password",
+  "admin-reset-password",
 ];
 
 type PreviewReturnTarget = "cart" | "account" | "admin";
@@ -95,7 +99,12 @@ function Preview() {
     });
   }, [navigate, search.emailLink]);
 
-  function navigateTo(nextView: PreviewView, returnTo?: "cart" | "account" | "admin") {
+  function navigateTo(
+    nextView: PreviewView,
+    returnTo?: "cart" | "account" | "admin",
+    token?: string,
+  ) {
+    const preservedToken = token;
     void navigate({
       search:
         nextView === "shop" && search.product
@@ -103,8 +112,12 @@ function Preview() {
           : nextView === "shop"
             ? {}
             : returnTo
-              ? { view: nextView, returnTo }
-              : { view: nextView },
+              ? {
+                  view: nextView,
+                  returnTo,
+                  ...(preservedToken ? { token: preservedToken } : {}),
+                }
+              : { view: nextView, ...(preservedToken ? { token: preservedToken } : {}) },
     });
   }
 
@@ -116,12 +129,14 @@ function Preview() {
         returnTo={search.returnTo}
         verificationToken={search.token}
         isEmailLink={
-          search.emailLink === 1 || (view === "verify-email" && Boolean(search.token))
+          search.emailLink === 1 ||
+          (["verify-email", "customer-verify-email", "admin-verify-email"].includes(view) &&
+            Boolean(search.token))
         }
         onClearEmailLink={() => {
           void navigate({
             to: "/preview",
-            search: { view: "verify-email", emailLink: 1 },
+            search: { view, emailLink: 1 },
             replace: true,
           });
         }}

@@ -12,6 +12,7 @@ export interface PublicAddress {
   phoneNumber: string;
   addressLine1: string;
   addressLine2?: string;
+  localArea?: string;
   city: string;
   province: string;
   postalCode: string;
@@ -67,6 +68,7 @@ function isPublicAddress(value: unknown): value is PublicAddress {
     typeof value["phoneNumber"] === "string" &&
     typeof value["addressLine1"] === "string" &&
     (value["addressLine2"] === undefined || typeof value["addressLine2"] === "string") &&
+    (value["localArea"] === undefined || typeof value["localArea"] === "string") &&
     typeof value["city"] === "string" &&
     typeof value["province"] === "string" &&
     typeof value["postalCode"] === "string" &&

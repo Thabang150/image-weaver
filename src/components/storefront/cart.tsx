@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/sheet";
 import { ApiHttpError, CsrfTokenError } from "@/lib/api/client";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
+import { type PublicUser } from "@/lib/api/auth";
+import { ordersApi, type CustomerOrder, type ShippingQuote } from "@/lib/api/orders";
 import { formatZarCents } from "@/lib/money";
 
 interface CartContextValue {
@@ -217,7 +219,13 @@ export function CartTrigger() {
   );
 }
 
-export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
+export function CartSheet({
+  onSignIn,
+  onCheckout,
+}: {
+  onSignIn?: () => void;
+  onCheckout?: () => void;
+} = {}) {
   const {
     isOpen,
     setIsOpen,
@@ -255,11 +263,11 @@ export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
 
         {notice ? <p className="cart-notice">{notice}</p> : null}
 
-        {isCartLoading ? (
+        {isCartLoading && !order ? (
           <p className="cart-status" role="status">
             Loading cart…
           </p>
-        ) : cartError ? (
+        ) : cartError && !order ? (
           <div className="cart-error" role="alert">
             <p>{getCartErrorMessage(cartError)}</p>
             {cartError instanceof ApiHttpError && cartError.status === 401 && onSignIn ? (
@@ -376,8 +384,17 @@ export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
                 Clear cart
               </Button>
             </div>
-            <Button className="cart-checkout-disabled" type="button" variant="default" disabled>
-              Checkout — coming next
+            <Button
+              className="cart-checkout-disabled"
+              type="button"
+              variant="default"
+              onClick={() => {
+                setIsOpen(false);
+                setNotice(null);
+                onCheckout?.();
+              }}
+            >
+              Continue to checkout
             </Button>
           </>
         )}
@@ -389,9 +406,13 @@ export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
 export function CartPage({
   onContinueShopping,
   onSignIn,
+  onManageAddress,
+  user,
 }: {
   onContinueShopping: () => void;
   onSignIn: () => void;
+  onManageAddress: () => void;
+  user: PublicUser | undefined;
 }) {
   const {
     cart,
@@ -404,6 +425,126 @@ export function CartPage({
     removeItem,
     clearCart,
   } = useCart();
+  const [addressId, setAddressId] = useState("");
+  const [order, setOrder] = useState<CustomerOrder | null>(null);
+  const [quotes, setQuotes] = useState<ShippingQuote[] | null>(null);
+  const [selectedQuote, setSelectedQuote] = useState<ShippingQuote | null>(null);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [pendingAttempt, setPendingAttempt] = useState<{
+    addressId: string;
+    idempotencyKey: string;
+  } | null>(null);
+  const queryClient = useQueryClient();
+
+  function describeCheckoutError(error: unknown): string {
+    if (error instanceof ApiHttpError) {
+      if (error.isCsrfFailure) {
+        return "The security token was rejected after one refresh attempt. Refresh the page before retrying.";
+      }
+      if (error.status === 401) return "Your sign-in has expired. Sign in again to continue checkout.";
+      if (error.status === 403) return "This order action is not permitted for the current account.";
+      if (error.status === 409) {
+        return typeof error.body === "object" &&
+          error.body !== null &&
+          "error" in error.body &&
+          typeof error.body.error === "string"
+          ? error.body.error
+          : "The cart or selected address changed. Review your details and try again.";
+      }
+      if (
+        typeof error.body === "object" &&
+        error.body !== null &&
+        "error" in error.body &&
+        typeof error.body.error === "string" &&
+        error.body.error.trim()
+      ) {
+        return error.body.error;
+      }
+      return `Checkout could not be completed (HTTP ${error.status}).`;
+    }
+    if (error instanceof CsrfTokenError) {
+      return "A security token was unavailable. Refresh the page and try again.";
+    }
+    return "Checkout could not be completed. Check your connection and try again.";
+  }
+
+  async function createOrder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (checkoutBusy || !user) return;
+    const selectedAddress = user.addresses.find((address) => address.id === addressId);
+    if (!selectedAddress || !selectedAddress.localArea?.trim()) {
+      setCheckoutError("Choose a saved delivery address with a suburb / local area.");
+      return;
+    }
+    setCheckoutBusy(true);
+    setCheckoutError(null);
+    setCheckoutMessage(null);
+    const attempt =
+      pendingAttempt?.addressId === addressId
+        ? pendingAttempt
+        : { addressId, idempotencyKey: crypto.randomUUID() };
+    setPendingAttempt(attempt);
+    try {
+      const created = await ordersApi.createCustomerOrder(addressId, attempt.idempotencyKey);
+      setOrder(created);
+      setPendingAttempt(null);
+      setCheckoutMessage(`Order ${created.orderNumber} was created. Request delivery rates below.`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["cart"] }),
+        queryClient.invalidateQueries({ queryKey: ["orders", "customer"] }),
+      ]);
+    } catch (error) {
+      setCheckoutError(describeCheckoutError(error));
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
+
+  async function requestQuotes() {
+    if (!order || checkoutBusy) return;
+    setCheckoutBusy(true);
+    setCheckoutError(null);
+    setCheckoutMessage(null);
+    setQuotes(null);
+    setSelectedQuote(null);
+    try {
+      const response = await ordersApi.requestShippingQuotes(order.id);
+      setQuotes(response.rates);
+      setCheckoutMessage(
+        response.rates.length
+          ? "Available delivery services are shown below."
+          : "No delivery rates are available for this order right now.",
+      );
+    } catch (error) {
+      if (error instanceof ApiHttpError && error.status === 422) {
+        setQuotes([]);
+        setCheckoutMessage("No delivery rates were returned. You can retry after reviewing the order details.");
+      }
+      setCheckoutError(describeCheckoutError(error));
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
+
+  async function selectQuote(quote: ShippingQuote) {
+    if (!order || checkoutBusy) return;
+    setCheckoutBusy(true);
+    setCheckoutError(null);
+    setCheckoutMessage(null);
+    try {
+      await ordersApi.selectShippingQuote(order.id, quote.quoteId);
+      const refreshed = await ordersApi.getCustomerOrder(order.id);
+      setOrder(refreshed);
+      setSelectedQuote(quote);
+      setCheckoutMessage(`${quote.serviceLevel.name} selected.`);
+    } catch (error) {
+      setCheckoutError(describeCheckoutError(error));
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
 
   return (
     <section className="catalogue-section" aria-labelledby="cart-page-title">
@@ -437,7 +578,7 @@ export function CartPage({
             Continue shopping
           </Button>
         </div>
-      ) : !cart || cart.items.length === 0 ? (
+      ) : (!cart || cart.items.length === 0) && !order ? (
         <div className="cart-empty" role="status">
           <ShoppingBag aria-hidden="true" size={22} />
           <p>Your cart is empty.</p>
@@ -447,7 +588,7 @@ export function CartPage({
         </div>
       ) : (
         <>
-          <div className="cart-list" aria-live="polite">
+          {cart && !order ? <div className="cart-list" aria-live="polite">
             {cart.items.map((item) => (
               <div className="cart-item" key={item.productId}>
                 <div className="cart-item-copy">
@@ -506,12 +647,12 @@ export function CartPage({
                 </div>
               </div>
             ))}
-          </div>
-          <div className="cart-summary">
+          </div> : null}
+          {cart && !order ? <div className="cart-summary">
             <div>
               <span className="cart-summary-label">Merchandise subtotal</span>
               <strong>{formatZarCents(cart.totalCents)}</strong>
-            </div>
+            </div> : null}
             <Button
               type="button"
               variant="outline"
@@ -521,9 +662,94 @@ export function CartPage({
               Clear cart
             </Button>
           </div>
-          <p className="cart-checkout-disabled" role="note">
-            Checkout is coming next. No order or payment will be submitted from this cart.
-          </p>
+          {!order ? (
+            <form className="mt-5 space-y-4 rounded-lg border border-border bg-card p-4" onSubmit={(event) => void createOrder(event)}>
+              <h2 className="text-lg font-medium">Delivery and shipping</h2>
+              {!user ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">Sign in to choose a saved delivery address and create your order.</p>
+                  <Button type="button" variant="outline" onClick={onSignIn}>Sign in to checkout</Button>
+                </div>
+              ) : user.addresses.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Add a saved delivery address in My Account before checkout.</p>
+              ) : (
+                <>
+                  <label className="block space-y-1 text-sm">
+                    <span>Delivery address</span>
+                    <select
+                      className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+                      value={addressId}
+                      onChange={(event) => {
+                        setAddressId(event.currentTarget.value);
+                        setCheckoutError(null);
+                        setPendingAttempt(null);
+                      }}
+                      required
+                      disabled={checkoutBusy}
+                    >
+                      <option value="">Choose a saved address</option>
+                      {user.addresses.map((address) => (
+                        <option key={address.id} value={address.id} disabled={!address.localArea?.trim()}>
+                          {address.label}{address.localArea?.trim() ? ` — ${address.localArea}` : " — add suburb/local area in My Account"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="text-xs text-muted-foreground">A suburb/local area is required for shipping quotes. Older saved addresses without one can be updated in My Account.</p>
+                      {!user.addresses.some((address) => address.localArea?.trim()) ? (
+                        <Button type="button" variant="link" className="px-0" onClick={onManageAddress}>
+                          Manage saved addresses
+                        </Button>
+                      ) : null}
+                  <Button type="submit" disabled={checkoutBusy || isBusy || !addressId}>
+                    {checkoutBusy ? "Creating order…" : pendingAttempt?.addressId === addressId ? "Retry order creation" : "Create order and continue"}
+                  </Button>
+                </>
+              )}
+            </form>
+          ) : null}
+          {checkoutError ? <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{checkoutError}</p> : null}
+          {checkoutMessage ? <p className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm" role="status">{checkoutMessage}</p> : null}
+          {order ? (
+            <section className="mt-5 space-y-4 rounded-lg border border-border bg-card p-4" aria-labelledby="shipping-quote-title">
+              <div>
+                <h2 id="shipping-quote-title" className="text-lg font-medium">Order {order.orderNumber}</h2>
+                <p className="text-sm text-muted-foreground">Status: {order.status.replace(/_/g, " ")}</p>
+              </div>
+              <dl className="grid gap-2 text-sm sm:grid-cols-3">
+                <div><dt className="text-muted-foreground">Merchandise subtotal</dt><dd className="font-medium">{formatZarCents(order.subtotalCents)}</dd></div>
+                <div><dt className="text-muted-foreground">Shipping fee</dt><dd className="font-medium">{selectedQuote ? formatZarCents(selectedQuote.rateCents) : "Not selected"}</dd></div>
+                <div><dt className="text-muted-foreground">Order total</dt><dd className="font-medium">{formatZarCents(order.totalCents)}</dd></div>
+              </dl>
+              <Button type="button" variant="outline" disabled={checkoutBusy} onClick={() => void requestQuotes()}>
+                {checkoutBusy && quotes === null ? "Requesting rates…" : "Request delivery rates"}
+              </Button>
+              {quotes?.length === 0 ? <p className="text-sm text-muted-foreground">No rates were returned. You can try again later.</p> : null}
+              {quotes?.length ? (
+                <ul className="space-y-3">
+                  {quotes.map((quote) => (
+                    <li key={quote.quoteId} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
+                      <div className="text-sm">
+                        <strong>{quote.serviceLevel.name}</strong>
+                        {quote.serviceLevel.deliveryDateFrom || quote.serviceLevel.deliveryDateTo ? (
+                          <p className="text-muted-foreground">
+                            Estimated delivery: {quote.serviceLevel.deliveryDateFrom && quote.serviceLevel.deliveryDateTo
+                              ? `${quote.serviceLevel.deliveryDateFrom} – ${quote.serviceLevel.deliveryDateTo}`
+                              : quote.serviceLevel.deliveryDateFrom ?? quote.serviceLevel.deliveryDateTo}
+                          </p>
+                        ) : null}
+                        <p>{formatZarCents(quote.rateCents)}</p>
+                      </div>
+                      <Button type="button" variant={selectedQuote?.quoteId === quote.quoteId ? "secondary" : "outline"} disabled={checkoutBusy} onClick={() => void selectQuote(quote)}>
+                        {selectedQuote?.quoteId === quote.quoteId ? "Selected" : "Select service"}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <p className="text-xs text-muted-foreground">Payment is not available in this checkout stage.</p>
+            </section>
+          ) : null}
           <Button type="button" variant="outline" onClick={onContinueShopping}>
             Continue shopping
           </Button>

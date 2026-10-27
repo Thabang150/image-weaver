@@ -16,13 +16,14 @@ export interface CustomerOrder {
   subtotalCents: number;
   totalCents: number;
   currency: "ZAR";
-  status: "pending_payment" | "cancelled";
-  stockReservationStatus: "reserved" | "released";
+  status: string;
+  stockReservationStatus: string;
   deliveryAddress: {
     recipientName: string;
     phoneNumber: string;
     addressLine1: string;
     addressLine2?: string;
+    localArea?: string;
     city: string;
     province: string;
     postalCode: string;
@@ -39,6 +40,25 @@ export interface CustomerOrderList {
   pagination: { page: number; limit: number; total: number; totalPages: number };
 }
 
+export interface ShippingQuote {
+  quoteId: string;
+  serviceLevel: {
+    id: string;
+    code: string;
+    name: string;
+    deliveryDateFrom?: string;
+    deliveryDateTo?: string;
+  };
+  rateCents: number;
+  currency: "ZAR";
+}
+
+export interface ShippingQuoteResponse {
+  orderId: string;
+  currency: "ZAR";
+  rates: ShippingQuote[];
+}
+
 type OrdersApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -50,7 +70,7 @@ function isSafeInteger(value: unknown): value is number {
 }
 
 function invalidResponse(): never {
-  throw new ApiResponseError(200, "Backend returned an invalid order history response.");
+  throw new ApiResponseError(200, "Backend returned an invalid order or shipping response.");
 }
 
 function parseCancellation(value: unknown): CustomerOrder["cancellation"] {
@@ -79,14 +99,16 @@ function parseOrder(value: unknown): CustomerOrder {
     !isSafeInteger(value["subtotalCents"]) ||
     !isSafeInteger(value["totalCents"]) ||
     value["currency"] !== "ZAR" ||
-    (value["status"] !== "pending_payment" && value["status"] !== "cancelled") ||
-    (value["stockReservationStatus"] !== "reserved" &&
-      value["stockReservationStatus"] !== "released") ||
+    typeof value["status"] !== "string" ||
+    !value["status"].trim() ||
+    typeof value["stockReservationStatus"] !== "string" ||
+    !value["stockReservationStatus"].trim() ||
     !isRecord(address) ||
     typeof address["recipientName"] !== "string" ||
     typeof address["phoneNumber"] !== "string" ||
     typeof address["addressLine1"] !== "string" ||
     (address["addressLine2"] !== undefined && typeof address["addressLine2"] !== "string") ||
+    (address["localArea"] !== undefined && typeof address["localArea"] !== "string") ||
     typeof address["city"] !== "string" ||
     typeof address["province"] !== "string" ||
     typeof address["postalCode"] !== "string" ||
@@ -141,6 +163,7 @@ function parseOrder(value: unknown): CustomerOrder {
       ...(typeof address["addressLine2"] === "string"
         ? { addressLine2: address["addressLine2"] }
         : {}),
+      ...(typeof address["localArea"] === "string" ? { localArea: address["localArea"] } : {}),
       city: address["city"],
       province: address["province"],
       postalCode: address["postalCode"],
@@ -155,8 +178,86 @@ function parseOrder(value: unknown): CustomerOrder {
   };
 }
 
+function parseShippingQuote(value: unknown): ShippingQuote {
+  if (
+    !isRecord(value) ||
+    typeof value["quoteId"] !== "string" ||
+    !isRecord(value["serviceLevel"]) ||
+    typeof value["serviceLevel"]["id"] !== "string" ||
+    typeof value["serviceLevel"]["code"] !== "string" ||
+    typeof value["serviceLevel"]["name"] !== "string" ||
+    !isSafeInteger(value["rateCents"]) ||
+    value["currency"] !== "ZAR" ||
+    (value["serviceLevel"]["deliveryDateFrom"] !== undefined &&
+      typeof value["serviceLevel"]["deliveryDateFrom"] !== "string") ||
+    (value["serviceLevel"]["deliveryDateTo"] !== undefined &&
+      typeof value["serviceLevel"]["deliveryDateTo"] !== "string")
+  ) {
+    return invalidResponse();
+  }
+  return {
+    quoteId: value["quoteId"],
+    serviceLevel: {
+      id: value["serviceLevel"]["id"],
+      code: value["serviceLevel"]["code"],
+      name: value["serviceLevel"]["name"],
+      ...(typeof value["serviceLevel"]["deliveryDateFrom"] === "string"
+        ? { deliveryDateFrom: value["serviceLevel"]["deliveryDateFrom"] }
+        : {}),
+      ...(typeof value["serviceLevel"]["deliveryDateTo"] === "string"
+        ? { deliveryDateTo: value["serviceLevel"]["deliveryDateTo"] }
+        : {}),
+    },
+    rateCents: value["rateCents"],
+    currency: "ZAR",
+  };
+}
+
 export function createOrdersApi(client: OrdersApiClient) {
   return {
+    async createCustomerOrder(addressId: string, idempotencyKey: string): Promise<CustomerOrder> {
+      const response = await client.request<unknown>("/orders", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        json: { addressId },
+      });
+      return parseOrder(response);
+    },
+
+    async getCustomerOrder(orderId: string): Promise<CustomerOrder> {
+      const response = await client.request<unknown>(`/orders/${encodeURIComponent(orderId)}`);
+      return parseOrder(response);
+    },
+
+    async requestShippingQuotes(orderId: string): Promise<ShippingQuoteResponse> {
+      const response = await client.request<unknown>(
+        `/orders/${encodeURIComponent(orderId)}/shipping/quote`,
+        { method: "POST", json: {} },
+      );
+      if (
+        !isRecord(response) ||
+        typeof response["orderId"] !== "string" ||
+        response["currency"] !== "ZAR" ||
+        (response["rates"] !== null && !Array.isArray(response["rates"]))
+      ) {
+        return invalidResponse();
+      }
+      return {
+        orderId: response["orderId"],
+        currency: "ZAR",
+        rates: Array.isArray(response["rates"])
+          ? response["rates"].map(parseShippingQuote)
+          : [],
+      };
+    },
+
+    async selectShippingQuote(orderId: string, quoteId: string): Promise<void> {
+      await client.request<unknown>(
+        `/orders/${encodeURIComponent(orderId)}/shipping/quote/${encodeURIComponent(quoteId)}/select`,
+        { method: "POST", json: {} },
+      );
+    },
+
     async listCustomerOrders(page = 1): Promise<CustomerOrderList> {
       const response = await client.request<unknown>(`/orders?page=${page}&limit=20`);
       if (
@@ -191,6 +292,22 @@ export function createOrdersApi(client: OrdersApiClient) {
 let configuredOrdersApi: ReturnType<typeof createOrdersApi> | undefined;
 
 export const ordersApi = {
+  createCustomerOrder: (addressId: string, idempotencyKey: string) => {
+    configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());
+    return configuredOrdersApi.createCustomerOrder(addressId, idempotencyKey);
+  },
+  getCustomerOrder: (orderId: string) => {
+    configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());
+    return configuredOrdersApi.getCustomerOrder(orderId);
+  },
+  requestShippingQuotes: (orderId: string) => {
+    configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());
+    return configuredOrdersApi.requestShippingQuotes(orderId);
+  },
+  selectShippingQuote: (orderId: string, quoteId: string) => {
+    configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());
+    return configuredOrdersApi.selectShippingQuote(orderId, quoteId);
+  },
   listCustomerOrders: (page?: number) => {
     configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());
     return configuredOrdersApi.listCustomerOrders(page);

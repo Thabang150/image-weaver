@@ -296,6 +296,8 @@ export function PreviewSite({
       <CartPage
         onContinueShopping={() => onNavigate("shop")}
         onSignIn={() => onNavigate("login", "cart")}
+        onManageAddress={() => onNavigate("account")}
+        user={user}
       />
     );
   } else {
@@ -361,6 +363,7 @@ export function PreviewSite({
       }
       view={view}
       onSignIn={() => onNavigate("login", "cart")}
+      onCheckout={() => onNavigate("cart")}
     />
   );
 }
@@ -369,10 +372,12 @@ function CartProviderView({
   content,
   view,
   onSignIn,
+  onCheckout,
 }: {
   content: ReactNode;
   view: PreviewView;
   onSignIn: () => void;
+  onCheckout: () => void;
 }) {
   return (
     <>
@@ -382,7 +387,7 @@ function CartProviderView({
           <CartTrigger />
         </div>
       ) : null}
-      <CartSheet onSignIn={onSignIn} />
+      <CartSheet onSignIn={onSignIn} onCheckout={onCheckout} />
     </>
   );
 }
@@ -1532,6 +1537,7 @@ const emptyAddress: Omit<PublicAddress, "id"> = {
   phoneNumber: "",
   addressLine1: "",
   addressLine2: "",
+  localArea: "",
   city: "",
   province: "",
   postalCode: "",
@@ -1587,6 +1593,7 @@ function AccountPage({ user }: { user: PublicUser }) {
         recipientName: address.recipientName.trim(),
         phoneNumber: address.phoneNumber.trim(),
         addressLine1: address.addressLine1.trim(),
+        ...(address.localArea?.trim() ? { localArea: address.localArea.trim() } : {}),
         city: address.city.trim(),
         province: address.province.trim(),
         postalCode: address.postalCode.trim(),
@@ -1633,6 +1640,7 @@ function AccountPage({ user }: { user: PublicUser }) {
       phoneNumber: entry.phoneNumber,
       addressLine1: entry.addressLine1,
       addressLine2: entry.addressLine2 ?? "",
+      localArea: entry.localArea ?? "",
       city: entry.city,
       province: entry.province,
       postalCode: entry.postalCode,
@@ -1718,6 +1726,7 @@ function AccountPage({ user }: { user: PublicUser }) {
                     {entry.addressLine2 ? `, ${entry.addressLine2}` : ""}, {entry.city},{" "}
                     {entry.province}, {entry.postalCode}, {entry.country}
                   </p>
+                  {entry.localArea ? <p>Suburb / local area: {entry.localArea}</p> : null}
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -1755,6 +1764,7 @@ function AccountPage({ user }: { user: PublicUser }) {
               ["phoneNumber", "Phone number", true],
               ["addressLine1", "Address line 1", true],
               ["addressLine2", "Address line 2", false],
+              ["localArea", "Suburb / local area (needed for shipping quotes)", false],
               ["city", "City", true],
               ["province", "Province", true],
               ["postalCode", "Postal code", true],
@@ -1767,7 +1777,7 @@ function AccountPage({ user }: { user: PublicUser }) {
                 className={inputClass}
                 required={required}
                 maxLength={
-                  key === "addressLine1" || key === "addressLine2"
+                  key === "addressLine1" || key === "addressLine2" || key === "localArea"
                     ? 120
                     : key === "postalCode"
                       ? 12

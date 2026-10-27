@@ -11,6 +11,16 @@ export interface AdminInventoryItem {
   updatedAt: string;
 }
 
+export interface AdminUploadedImage {
+  url: string;
+  publicId: string;
+  originalFilename: string;
+  format: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
 export interface AdminCategory {
   id: string;
   name: string;
@@ -103,6 +113,33 @@ function isInventoryMovementType(
 
 function invalidAdminResponse(): never {
   throw new ApiResponseError(200, "Backend returned an invalid administrator response.");
+}
+
+function parseUploadedImages(value: unknown): AdminUploadedImage[] {
+  if (!isRecord(value) || !Array.isArray(value["images"])) return invalidAdminResponse();
+  return value["images"].map((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry["url"] !== "string" ||
+      typeof entry["publicId"] !== "string" ||
+      typeof entry["originalFilename"] !== "string" ||
+      typeof entry["format"] !== "string" ||
+      !isSafeInteger(entry["width"]) ||
+      !isSafeInteger(entry["height"]) ||
+      !isSafeInteger(entry["bytes"])
+    ) {
+      return invalidAdminResponse();
+    }
+    return {
+      url: entry["url"],
+      publicId: entry["publicId"],
+      originalFilename: entry["originalFilename"],
+      format: entry["format"],
+      width: entry["width"],
+      height: entry["height"],
+      bytes: entry["bytes"],
+    };
+  });
 }
 
 function parseCategories(value: unknown): AdminCategory[] {
@@ -386,6 +423,15 @@ export function createAdminApi(client: AdminApiClient) {
         await client.request<unknown>(`/admin/products/${encodeURIComponent(productId)}`),
       );
     },
+    async uploadProductImages(files: File[]): Promise<AdminUploadedImage[]> {
+      const body = new FormData();
+      for (const file of files) body.append("images", file);
+      const response = await client.request<unknown>("/admin/uploads/images", {
+        method: "POST",
+        body,
+      });
+      return parseUploadedImages(response);
+    },
     async getInventory(options: {
       page: number;
       limit?: number;
@@ -520,6 +566,7 @@ export const adminApi = {
   getProducts: (options: Parameters<ReturnType<typeof createAdminApi>["getProducts"]>[0]) =>
     getConfiguredAdminApi().getProducts(options),
   getProduct: (productId: string) => getConfiguredAdminApi().getProduct(productId),
+  uploadProductImages: (files: File[]) => getConfiguredAdminApi().uploadProductImages(files),
   getInventory: (options: Parameters<ReturnType<typeof createAdminApi>["getInventory"]>[0]) =>
     getConfiguredAdminApi().getInventory(options),
   getInventoryAdjustments: (

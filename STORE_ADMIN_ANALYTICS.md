@@ -1,8 +1,7 @@
 # Store administration and analytics API
 
 This guide documents the current backend routes. It does not enable payment checkout, process
-payments, create shipments, or provide image uploads. Use a local or staging database for
-state-changing requests.
+payments, or create shipments. Use a local or staging database for state-changing requests.
 
 ## Access, sessions, and CSRF
 
@@ -38,10 +37,13 @@ include `x-csrf-token:$csrf`. Use only a test administrator and non-production d
   to retain historical references.
 - Categories can be created, listed and updated. There is no category-delete route, so product
   references are not removed by category deletion.
-- Product and category images are externally hosted HTTPS URL references, not uploaded files.
-  No image-provider SDK, upload endpoint, credentials, or cleanup process is implemented. Configure
-  `PRODUCT_IMAGE_ALLOWED_HOSTS` as exact comma-separated hostnames; an empty list rejects image
-  writes. Choose and configure an approved hosting provider separately before adding its hostname.
+- Product and category images are stored as HTTPS URL references. Product images can be uploaded
+  through the authenticated `POST /api/v1/admin/uploads/images` endpoint; the backend owns the
+  Cloudinary integration and credentials. Configure `PRODUCT_IMAGE_ALLOWED_HOSTS` as exact
+  comma-separated hostnames; an empty list rejects image-reference writes. Configure the
+  frontend's `VITE_PRODUCT_IMAGE_ALLOWED_HOSTS` with the same exact hostnames so returned URLs pass
+  editor validation and display in storefront image components. Do not place Cloudinary credentials
+  in frontend environment variables.
 - Stock is changed through auditable, idempotent inventory adjustments. Order creation atomically
   reserves stock while creating a `pending_payment` order; admin cancellation of such an order
   releases stock. The current backend has no verified payment callback, paid/completed order state,
@@ -65,6 +67,7 @@ All admin routes use the `/api/v1` prefix and require admin session plus CSRF fo
 | `GET /admin/products/:productId` | Get a product |
 | `POST /admin/products` | Create a product |
 | `PATCH /admin/products/:productId` | Update only supplied product fields |
+| `POST /admin/uploads/images` | Upload up to 10 multipart files using repeated `images` fields |
 
 Product prices are integer cents in ZAR (`priceCents`, optional `salePriceCents`, and optional
 `costCents`). A sale price must be below the regular price. `stockQuantity` is not directly
@@ -102,9 +105,14 @@ http --session=$Session --json PATCH "$API/admin/products/$ProductId" `
   "x-csrf-token:$csrf" lowStockThreshold:=5 status='inactive'
 ```
 
-For an image reference, provide an allowed HTTPS URL in `imageReferences`; optional
-`primaryImageReference` must be one of those references. No multipart upload is supported.
-Category images use `imageReference` and the same allowlist.
+Product image uploads accept JPEG, PNG, WebP and GIF files up to 5 MiB each. The multipart request
+uses repeated `images` fields and returns HTTP 201 on full success or 207 on partial success; each
+successful result includes its HTTPS `url`, `publicId`, original filename, format, dimensions and
+byte size. The frontend should persist the returned URLs through the existing product
+`imageReferences` field; optional `primaryImageReference` must be one of those references.
+Category images use `imageReference` and the same allowlist; there is no category image upload
+workflow documented here. Uploaded Cloudinary assets are not automatically deleted when a product
+reference is removed.
 
 ## Inventory routes
 

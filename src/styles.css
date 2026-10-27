@@ -1050,6 +1050,44 @@ body {
   overflow-wrap: anywhere;
   font-size: 11px;
 }
+.admin-image-upload {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.admin-upload-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.admin-upload-preview {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+.admin-upload-preview img {
+  width: 100%;
+  height: 110px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.admin-upload-preview span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.admin-upload-feedback {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 13px;
+}
 .admin-category-list {
   display: grid;
   gap: 12px;

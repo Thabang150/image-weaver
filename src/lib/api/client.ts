@@ -12,6 +12,7 @@ export interface ApiRequestOptions {
   method?: string;
   headers?: HeadersInit;
   json?: unknown;
+  body?: BodyInit;
   signal?: AbortSignal;
   regeneratesSession?: boolean;
 }
@@ -259,12 +260,19 @@ export function createApiClient(options: ApiClientOptions) {
     const headers = new Headers(requestOptions.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
-    let body: string | undefined;
+    let body: BodyInit | undefined;
+    if (requestOptions.body !== undefined) {
+      if (Object.prototype.hasOwnProperty.call(requestOptions, "json")) {
+        throw new TypeError("Provide either a raw request body or a JSON body, not both.");
+      }
+      body = requestOptions.body;
+    }
     if (Object.prototype.hasOwnProperty.call(requestOptions, "json")) {
-      body = JSON.stringify(requestOptions.json);
-      if (body === undefined) {
+      const jsonBody = JSON.stringify(requestOptions.json);
+      if (jsonBody === undefined) {
         throw new TypeError("JSON request body must be serializable.");
       }
+      body = jsonBody;
       if (!headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }

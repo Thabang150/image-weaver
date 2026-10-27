@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   type AdminCategory,
   type AdminInventoryItem,
   type AdminProduct,
+  type AdminUploadedImage,
 } from "@/lib/api/admin";
 import { isAllowedProductImageUrl } from "@/lib/image-url";
 
@@ -41,6 +42,8 @@ function safeAdminError(error: unknown, action: string): string {
     if (error.status === 409 || error.status === 400 || error.status === 422) {
       return error.message;
     }
+    if (error.status === 413) return "The upload exceeded the backend's image size limit.";
+    if (error.status === 415) return "The backend does not support one or more selected image formats.";
     if (error.status === 429) return "Too many requests. Wait before trying again.";
   }
   if (error instanceof ApiResponseError) {
@@ -247,6 +250,15 @@ interface ProductFormState {
   imageReferencesText: string;
   primaryImageReference: string;
 }
+
+interface PendingProductImage {
+  id: string;
+  file: File;
+  previewUrl: string;
+}
+
+const supportedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const maxImageFileBytes = 5 * 1024 * 1024;
 
 const emptyProductForm: ProductFormState = {
   name: "",
@@ -583,12 +595,139 @@ function ProductEditor({
     product ? productToForm(product) : emptyProductForm,
   );
   const [error, setError] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<PendingProductImage[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadFeedback, setUploadFeedback] = useState<{
+    kind: "success" | "partial" | "error";
+    message: string;
+  } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewUrlsRef = useRef(new Set<string>());
   const setField = <K extends keyof ProductFormState>(key: K, value: ProductFormState[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
+
+  useEffect(
+    () => () => previewUrlsRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl)),
+    [],
+  );
+
+  function chooseImages(files: FileList | null) {
+    if (!files?.length) return;
+    const selected = Array.from(files);
+    const references = form.imageReferencesText
+      .split(/\r?\n/)
+      .map((reference) => reference.trim())
+      .filter(Boolean);
+    const issues: string[] = [];
+    if (selected.length > 10) issues.push("Select no more than 10 files per upload.");
+    if (selected.some((file) => !supportedImageTypes.has(file.type))) {
+      issues.push("Use JPEG, PNG, WebP or GIF image files.");
+    }
+    if (selected.some((file) => file.size > maxImageFileBytes)) {
+      issues.push("Each image must be 5 MiB or smaller.");
+    }
+    if (references.length + pendingImages.length + selected.length > 10) {
+      issues.push("A product can have up to 10 image references. Remove an image before adding more.");
+    }
+    if (issues.length) {
+      setUploadFeedback({ kind: "error", message: issues.join(" ") });
+    } else {
+      setPendingImages((current) => [
+        ...current,
+        ...selected.map((file) => {
+          const previewUrl = URL.createObjectURL(file);
+          previewUrlsRef.current.add(previewUrl);
+          return { id: crypto.randomUUID(), file, previewUrl };
+        }),
+      ]);
+      setUploadFeedback(null);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function removePendingImage(imageId: string) {
+    const removed = pendingImages.find((image) => image.id === imageId);
+    if (removed) {
+      URL.revokeObjectURL(removed.previewUrl);
+      previewUrlsRef.current.delete(removed.previewUrl);
+    }
+    setPendingImages((current) => {
+      return current.filter((image) => image.id !== imageId);
+    });
+  }
+
+  function removeImageReference(reference: string) {
+    const nextReferences = form.imageReferencesText
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry && entry !== reference);
+    setField("imageReferencesText", nextReferences.join("\n"));
+    if (form.primaryImageReference.trim() === reference) {
+      setField("primaryImageReference", nextReferences[0] ?? "");
+    }
+  }
+
+  async function uploadSelectedImages() {
+    if (!pendingImages.length || uploading) return;
+    setUploading(true);
+    setUploadFeedback(null);
+    try {
+      const uploaded = await adminApi.uploadProductImages(pendingImages.map(({ file }) => file));
+      const filenameCounts = new Map<string, number>();
+      uploaded.forEach((image) => {
+        filenameCounts.set(
+          image.originalFilename,
+          (filenameCounts.get(image.originalFilename) ?? 0) + 1,
+        );
+      });
+      const successfulIds = new Set<string>();
+      pendingImages.forEach(({ id, file }) => {
+        const remaining = filenameCounts.get(file.name) ?? 0;
+        if (remaining > 0) {
+          successfulIds.add(id);
+          filenameCounts.set(file.name, remaining - 1);
+        }
+      });
+      const successfulImages = pendingImages.filter((image) => successfulIds.has(image.id));
+      const failedCount = pendingImages.length - successfulImages.length;
+      const newReferences = uploaded.map((image: AdminUploadedImage) => image.url);
+      setField(
+        "imageReferencesText",
+        [...form.imageReferencesText.split(/\r?\n/).map((reference) => reference.trim()).filter(Boolean), ...newReferences].join("\n"),
+      );
+      setPendingImages((current) => current.filter((image) => !successfulIds.has(image.id)));
+      successfulImages.forEach((image) => {
+        URL.revokeObjectURL(image.previewUrl);
+        previewUrlsRef.current.delete(image.previewUrl);
+      });
+      if (failedCount) {
+        setUploadFeedback({
+          kind: "partial",
+          message: `${successfulImages.length} image${successfulImages.length === 1 ? "" : "s"} uploaded. ${failedCount} failed and remain selected so you can retry them.`,
+        });
+      } else {
+        setUploadFeedback({
+          kind: "success",
+          message: `${successfulImages.length} image${successfulImages.length === 1 ? "" : "s"} uploaded and added to the product. Save the product to persist the references.`,
+        });
+      }
+    } catch (uploadError) {
+      setUploadFeedback({
+        kind: "error",
+        message: safeAdminError(uploadError, "Image upload"),
+      });
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    if (pendingImages.length || uploading) {
+      setError("Upload or remove the selected image files before saving the product.");
+      return;
+    }
     const priceCents = parseZarCents(form.price);
     if (priceCents === undefined) {
       setError("Enter a positive ZAR price with no more than two decimal places.");
@@ -730,14 +869,60 @@ function ProductEditor({
         <label>Short description<textarea maxLength={300} rows={2} value={form.shortDescription} onChange={(event) => setField("shortDescription", event.currentTarget.value)} /></label>
       </div>
       <label>Description<textarea required maxLength={5000} rows={5} value={form.description} onChange={(event) => setField("description", event.currentTarget.value)} /></label>
-      <label>Image references (one HTTPS URL per line; no file upload)<textarea rows={4} value={form.imageReferencesText} onChange={(event) => setField("imageReferencesText", event.currentTarget.value)} /></label>
-      <p className="admin-muted">Images are references only. Uploading image files is not supported by this backend.</p>
+      <label>Image references (one HTTPS URL per line)<textarea rows={4} value={form.imageReferencesText} onChange={(event) => setField("imageReferencesText", event.currentTarget.value)} /></label>
+      <section className="admin-image-upload" aria-labelledby="product-image-upload-title">
+        <h5 id="product-image-upload-title">Upload product images</h5>
+        <p className="admin-muted">Choose up to 10 JPEG, PNG, WebP or GIF files (maximum 5 MiB each). Images are uploaded through the authenticated backend; successful URLs are added to the references above. Save the product to persist them.</p>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          multiple
+          disabled={uploading || saving}
+          onChange={(event) => chooseImages(event.currentTarget.files)}
+          aria-label="Choose product images"
+        />
+        {pendingImages.length ? (
+          <>
+            <div className="admin-upload-preview-grid">
+              {pendingImages.map((image) => (
+                <div className="admin-upload-preview" key={image.id}>
+                  <img src={image.previewUrl} alt={`Preview of ${image.file.name}`} />
+                  <span>{image.file.name}</span>
+                  <Button type="button" variant="outline" disabled={uploading} onClick={() => removePendingImage(image.id)}>
+                    Remove
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button type="button" disabled={uploading || saving} onClick={() => void uploadSelectedImages()}>
+              {uploading ? "Uploading images…" : `Upload ${pendingImages.length} selected image${pendingImages.length === 1 ? "" : "s"}`}
+            </Button>
+          </>
+        ) : null}
+        {uploadFeedback ? (
+          <p
+            className={uploadFeedback.kind === "error" ? "admin-field-error" : "admin-upload-feedback"}
+            role={uploadFeedback.kind === "error" ? "alert" : "status"}
+          >
+            {uploadFeedback.message}
+          </p>
+        ) : null}
+      </section>
       {form.imageReferencesText.split(/\r?\n/).map((reference) => reference.trim()).filter(Boolean).map((reference) => (
         <div className="admin-image-preview" key={reference}>
           {isAllowedProductImageUrl(reference)
             ? <img src={reference} alt="Product image preview" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
             : <span className="admin-image-placeholder">Image preview unavailable</span>}
           <span>{reference}</span>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saving || uploading}
+            onClick={() => removeImageReference(reference)}
+          >
+            Remove image
+          </Button>
         </div>
       ))}
       <label>Primary image reference (must match an image above)<input value={form.primaryImageReference} onChange={(event) => setField("primaryImageReference", event.currentTarget.value)} /></label>

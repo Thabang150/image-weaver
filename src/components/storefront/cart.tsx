@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +36,7 @@ interface CartContextValue {
   notice: string | null;
   setNotice: (nextNotice: string | null) => void;
   addItem: (productId: string, quantity?: number) => Promise<void>;
-  updateItem: (productId: string, quantity: number) => Promise<void>;
+  changeItemQuantity: (productId: string, delta: number) => Promise<void>;
   removeItem: (productId: string) => Promise<void>;
   clearCart: () => Promise<void>;
 }
@@ -68,6 +76,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [queuedOperations, setQueuedOperations] = useState(0);
+  const operationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const {
     data: cart,
@@ -82,6 +92,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
   });
 
   const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
+
+  const enqueueCartOperation = useCallback(<T,>(operation: () => Promise<T>): Promise<T> => {
+    setQueuedOperations((count) => count + 1);
+    const run = async () => {
+      await queryClient.cancelQueries({ queryKey: ["cart"], exact: true });
+      return operation();
+    };
+    const result = operationQueueRef.current.then(run, run);
+    operationQueueRef.current = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result.finally(() => setQueuedOperations((count) => Math.max(0, count - 1)));
+  }, [queryClient]);
 
   const addItemMutation = useMutation({
     mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
@@ -143,6 +167,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       retryCart,
       totalQuantity,
       isBusy:
+        queuedOperations > 0 ||
         addItemMutation.isPending ||
         updateItemMutation.isPending ||
         removeItemMutation.isPending ||
@@ -150,16 +175,24 @@ export function CartProvider({ children }: { children: ReactNode }) {
       notice,
       setNotice,
       addItem: async (productId: string, quantity = 1) => {
-        await addItemMutation.mutateAsync({ productId, quantity });
+        await enqueueCartOperation(() => addItemMutation.mutateAsync({ productId, quantity }));
       },
-      updateItem: async (productId: string, quantity: number) => {
-        await updateItemMutation.mutateAsync({ productId, quantity });
+      changeItemQuantity: async (productId: string, delta: number) => {
+        await enqueueCartOperation(async () => {
+          const currentCart = queryClient.getQueryData<Cart>(["cart"]);
+          const item = currentCart?.items.find((line) => line.productId === productId);
+          if (!item || !item.available || !Number.isInteger(delta) || delta === 0) return;
+          const quantity = Math.min(99, Math.max(1, item.quantity + delta));
+          if (quantity !== item.quantity) {
+            await updateItemMutation.mutateAsync({ productId, quantity });
+          }
+        });
       },
       removeItem: async (productId: string) => {
-        await removeItemMutation.mutateAsync({ productId });
+        await enqueueCartOperation(() => removeItemMutation.mutateAsync({ productId }));
       },
       clearCart: async () => {
-        await clearCartMutation.mutateAsync();
+        await enqueueCartOperation(() => clearCartMutation.mutateAsync());
       },
     }),
     [
@@ -172,6 +205,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
       removeItemMutation,
       totalQuantity,
       updateItemMutation,
+      queuedOperations,
+      queryClient,
+      enqueueCartOperation,
       isCartLoading,
       retryCart,
     ],
@@ -236,7 +272,7 @@ export function CartSheet({
     notice,
     setNotice,
     isBusy,
-    updateItem,
+    changeItemQuantity,
     removeItem,
     clearCart,
   } = useCart();
@@ -322,11 +358,11 @@ export function CartSheet({
                         className="cart-quantity-button"
                         aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
                         onClick={() =>
-                          void updateItem(item.productId, Math.max(1, item.quantity - 1)).catch(
+                          void changeItemQuantity(item.productId, -1).catch(
                             () => undefined,
                           )
                         }
-                        disabled={isBusy || item.quantity <= 1}
+                        disabled={isBusy || !item.available || item.quantity <= 1}
                       >
                         <Minus aria-hidden="true" size={14} />
                       </Button>
@@ -338,11 +374,11 @@ export function CartSheet({
                         className="cart-quantity-button"
                         aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
                         onClick={() =>
-                          void updateItem(item.productId, Math.min(99, item.quantity + 1)).catch(
+                          void changeItemQuantity(item.productId, 1).catch(
                             () => undefined,
                           )
                         }
-                        disabled={isBusy || item.quantity >= 99}
+                        disabled={isBusy || !item.available || item.quantity >= 99}
                       >
                         <Plus aria-hidden="true" size={14} />
                       </Button>
@@ -421,7 +457,7 @@ export function CartPage({
     retryCart,
     notice,
     isBusy,
-    updateItem,
+    changeItemQuantity,
     removeItem,
     clearCart,
   } = useCart();
@@ -610,7 +646,7 @@ export function CartPage({
                       aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
                       disabled={isBusy || !item.available || item.quantity <= 1}
                       onClick={() =>
-                        void updateItem(item.productId, item.quantity - 1).catch(() => undefined)
+                        void changeItemQuantity(item.productId, -1).catch(() => undefined)
                       }
                     >
                       <Minus aria-hidden="true" size={14} />
@@ -623,7 +659,7 @@ export function CartPage({
                       aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
                       disabled={isBusy || !item.available || item.quantity >= 99}
                       onClick={() =>
-                        void updateItem(item.productId, item.quantity + 1).catch(() => undefined)
+                        void changeItemQuantity(item.productId, 1).catch(() => undefined)
                       }
                     >
                       <Plus aria-hidden="true" size={14} />
@@ -674,6 +710,11 @@ export function CartPage({
                 <p className="text-sm text-muted-foreground">Add a saved delivery address in My Account before checkout.</p>
               ) : (
                 <>
+                  {cart?.hasUnavailableItems ? (
+                    <p className="cart-item-unavailable" role="alert">
+                      Remove unavailable or out-of-stock items before creating this order.
+                    </p>
+                  ) : null}
                   <label className="block space-y-1 text-sm">
                     <span>Delivery address</span>
                     <select
@@ -701,7 +742,10 @@ export function CartPage({
                           Manage saved addresses
                         </Button>
                       ) : null}
-                  <Button type="submit" disabled={checkoutBusy || isBusy || !addressId}>
+                  <Button
+                    type="submit"
+                    disabled={checkoutBusy || isBusy || !addressId || cart?.hasUnavailableItems}
+                  >
                     {checkoutBusy ? "Creating order…" : pendingAttempt?.addressId === addressId ? "Retry order creation" : "Create order and continue"}
                   </Button>
                 </>
@@ -772,20 +816,27 @@ export function CartAddButton({
 }) {
   const cart = useOptionalCart();
   const isBusy = cart?.isBusy ?? false;
+  const existingQuantity =
+    cart?.cart?.items.find((item) => item.productId === productId)?.quantity ?? 0;
+  const quantityLimitReached = existingQuantity + quantity > 99;
 
   return (
     <Button
       type="button"
       variant="secondary"
       className="w-full"
-      disabled={!cart || disabled || isBusy}
+      disabled={!cart || disabled || isBusy || quantityLimitReached}
       aria-busy={isBusy}
       onClick={() => {
         if (!cart) return;
         void cart.addItem(productId, quantity).catch(() => undefined);
       }}
     >
-      {isBusy ? "Adding…" : (children ?? "Add to cart")}
+      {isBusy
+        ? "Adding…"
+        : quantityLimitReached
+          ? "Maximum quantity in cart"
+          : (children ?? "Add to cart")}
     </Button>
   );
 }

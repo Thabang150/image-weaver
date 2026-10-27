@@ -13,6 +13,7 @@ import {
   type AdminInventoryItem,
   type AdminProduct,
   type AdminUploadedImage,
+  type InventoryList,
 } from "@/lib/api/admin";
 import { isAllowedProductImageUrl } from "@/lib/image-url";
 
@@ -133,7 +134,7 @@ function QueryError({ error, action }: { error: unknown; action: string }) {
 }
 
 function AdminManagement() {
-  const [activeSection, setActiveSection] = useState<AdminSection>("overview");
+  const [activeSection, setActiveSection] = useState<AdminSection>("products");
   return (
     <div className="admin-management">
       <nav className="admin-section-tabs" aria-label="Administrator sections">
@@ -518,7 +519,7 @@ function ProductManagement() {
             categories={categoriesQuery.data ?? []}
             saving={saving}
             onCancel={() => setCreating(false)}
-            onSave={(payload) => createMutation.mutate(payload)}
+            onSave={(payload) => createMutation.mutateAsync(payload).then(() => undefined)}
           />
         ) : null}
         {selectedProductId !== null ? (
@@ -535,7 +536,9 @@ function ProductManagement() {
                 categories={categoriesQuery.data ?? []}
                 saving={saving}
                 onCancel={() => setSelectedProductId(null)}
-                onSave={(payload) => updateMutation.mutate({ id: editing.id, payload })}
+                onSave={(payload) =>
+                  updateMutation.mutateAsync({ id: editing.id, payload }).then(() => undefined)
+                }
               />
             ) : null}
           </div>
@@ -589,7 +592,7 @@ function ProductEditor({
   categories: AdminCategory[];
   saving: boolean;
   onCancel: () => void;
-  onSave: (payload: Record<string, unknown>) => void;
+  onSave: (payload: Record<string, unknown>) => Promise<void>;
 }) {
   const [form, setForm] = useState<ProductFormState>(
     product ? productToForm(product) : emptyProductForm,
@@ -603,6 +606,7 @@ function ProductEditor({
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlsRef = useRef(new Set<string>());
+  const saveLockRef = useRef(false);
   const setField = <K extends keyof ProductFormState>(key: K, value: ProductFormState[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
 
@@ -675,26 +679,37 @@ function ProductEditor({
       const uploaded = await adminApi.uploadProductImages(pendingImages.map(({ file }) => file));
       const filenameCounts = new Map<string, number>();
       uploaded.forEach((image) => {
+        const filename = image.originalFilename.toLowerCase();
         filenameCounts.set(
-          image.originalFilename,
-          (filenameCounts.get(image.originalFilename) ?? 0) + 1,
+          filename,
+          (filenameCounts.get(filename) ?? 0) + 1,
         );
       });
       const successfulIds = new Set<string>();
       pendingImages.forEach(({ id, file }) => {
-        const remaining = filenameCounts.get(file.name) ?? 0;
+        const filename = file.name.toLowerCase();
+        const remaining = filenameCounts.get(filename) ?? 0;
         if (remaining > 0) {
           successfulIds.add(id);
-          filenameCounts.set(file.name, remaining - 1);
+          filenameCounts.set(filename, remaining - 1);
         }
       });
       const successfulImages = pendingImages.filter((image) => successfulIds.has(image.id));
       const failedCount = pendingImages.length - successfulImages.length;
       const newReferences = uploaded.map((image: AdminUploadedImage) => image.url);
-      setField(
-        "imageReferencesText",
-        [...form.imageReferencesText.split(/\r?\n/).map((reference) => reference.trim()).filter(Boolean), ...newReferences].join("\n"),
-      );
+      setForm((current) => {
+        const references = current.imageReferencesText
+          .split(/\r?\n/)
+          .map((reference) => reference.trim())
+          .filter(Boolean);
+        const mergedReferences = [...references, ...newReferences.filter((url) => !references.includes(url))];
+        return {
+          ...current,
+          imageReferencesText: mergedReferences.join("\n"),
+          primaryImageReference:
+            current.primaryImageReference.trim() || mergedReferences[0] || "",
+        };
+      });
       setPendingImages((current) => current.filter((image) => !successfulIds.has(image.id)));
       successfulImages.forEach((image) => {
         URL.revokeObjectURL(image.previewUrl);
@@ -721,8 +736,9 @@ function ProductEditor({
     }
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saveLockRef.current || saving) return;
     setError(null);
     if (pendingImages.length || uploading) {
       setError("Upload or remove the selected image files before saving the product.");
@@ -830,7 +846,14 @@ function ProductEditor({
       setError("Change at least one product field before saving.");
       return;
     }
-    onSave(payload);
+    saveLockRef.current = true;
+    try {
+      await onSave(payload);
+    } catch (saveError) {
+      setError(safeAdminError(saveError, product ? "Product update" : "Product creation"));
+    } finally {
+      saveLockRef.current = false;
+    }
   }
 
   return (
@@ -846,7 +869,9 @@ function ProductEditor({
           </p>
         ) : <p>Enter only business-approved product information. New products start as drafts.</p>}
       </div>
-      <div className="admin-editor-grid">
+      <fieldset className="admin-editor-section">
+        <legend>Product details</legend>
+        <div className="admin-editor-grid">
         <label>Product name<input required maxLength={160} value={form.name} onChange={(event) => setField("name", event.currentTarget.value)} /></label>
         <label>SKU<input required maxLength={64} value={form.sku} onChange={(event) => setField("sku", event.currentTarget.value)} /></label>
         <label>Slug (optional; backend may derive it from the name)<input maxLength={160} value={form.slug} onChange={(event) => setField("slug", event.currentTarget.value)} /></label>
@@ -854,12 +879,6 @@ function ProductEditor({
           <option value="">Choose a category</option>
           {categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.isActive ? "" : " (inactive)"}</option>)}
         </select></label>
-        <label>Price (ZAR)<input inputMode="decimal" required value={form.price} onChange={(event) => setField("price", event.currentTarget.value)} /></label>
-        <label>Sale price (ZAR, optional)<input inputMode="decimal" value={form.salePrice} onChange={(event) => setField("salePrice", event.currentTarget.value)} /></label>
-        <label>Cost (ZAR, optional)<input inputMode="decimal" value={form.cost} onChange={(event) => setField("cost", event.currentTarget.value)} /></label>
-        <label>Low-stock threshold (optional)<input type="number" min="0" step="1" value={form.lowStockThreshold} onChange={(event) => setField("lowStockThreshold", event.currentTarget.value)} /></label>
-        <label>Packaging amount<input type="number" min="0.01" step="any" value={form.packagingAmount} onChange={(event) => setField("packagingAmount", event.currentTarget.value)} /></label>
-        <label>Packaging unit<input maxLength={40} value={form.packagingUnit} onChange={(event) => setField("packagingUnit", event.currentTarget.value)} /></label>
         <label>Status<select value={form.status} onChange={(event) => {
           const value = event.currentTarget.value;
           if (isProductStatus(value)) setField("status", value);
@@ -867,12 +886,25 @@ function ProductEditor({
           <option value="draft">Draft</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option>
         </select></label>
         <label>Short description<textarea maxLength={300} rows={2} value={form.shortDescription} onChange={(event) => setField("shortDescription", event.currentTarget.value)} /></label>
-      </div>
-      <label>Description<textarea required maxLength={5000} rows={5} value={form.description} onChange={(event) => setField("description", event.currentTarget.value)} /></label>
-      <label>Image references (one HTTPS URL per line)<textarea rows={4} value={form.imageReferencesText} onChange={(event) => setField("imageReferencesText", event.currentTarget.value)} /></label>
+        </div>
+        <label>Description<textarea required maxLength={5000} rows={5} value={form.description} onChange={(event) => setField("description", event.currentTarget.value)} /></label>
+      </fieldset>
+      <fieldset className="admin-editor-section">
+        <legend>Pricing and packaging</legend>
+        <div className="admin-editor-grid">
+        <label>Price (ZAR)<input inputMode="decimal" required value={form.price} onChange={(event) => setField("price", event.currentTarget.value)} /></label>
+        <label>Sale price (ZAR, optional)<input inputMode="decimal" value={form.salePrice} onChange={(event) => setField("salePrice", event.currentTarget.value)} /></label>
+        <label>Cost (ZAR, optional)<input inputMode="decimal" value={form.cost} onChange={(event) => setField("cost", event.currentTarget.value)} /></label>
+        <label>Packaging amount<input type="number" min="0.01" step="any" value={form.packagingAmount} onChange={(event) => setField("packagingAmount", event.currentTarget.value)} /></label>
+        <label>Packaging unit<input maxLength={40} value={form.packagingUnit} onChange={(event) => setField("packagingUnit", event.currentTarget.value)} /></label>
+        </div>
+      </fieldset>
+      <fieldset className="admin-editor-section">
+        <legend>Images</legend>
+        <label>Image references (one HTTPS URL per line)<textarea rows={4} value={form.imageReferencesText} disabled={uploading} onChange={(event) => setField("imageReferencesText", event.currentTarget.value)} /></label>
       <section className="admin-image-upload" aria-labelledby="product-image-upload-title">
         <h5 id="product-image-upload-title">Upload product images</h5>
-        <p className="admin-muted">Choose up to 10 JPEG, PNG, WebP or GIF files (maximum 5 MiB each). Images are uploaded through the authenticated backend; successful URLs are added to the references above. Save the product to persist them.</p>
+        <p className="admin-muted">Choose up to 10 JPEG, PNG, WebP or GIF files (maximum 5 MiB each). Upload them first, then save the product to persist their URLs. Uploading is separate from product saving: successful URLs stay in this form if saving fails, and only failed files remain selected for retry.</p>
         <input
           ref={fileInputRef}
           type="file"
@@ -927,6 +959,12 @@ function ProductEditor({
       ))}
       <label>Primary image reference (must match an image above)<input value={form.primaryImageReference} onChange={(event) => setField("primaryImageReference", event.currentTarget.value)} /></label>
       <p className="admin-muted">Images must use an approved HTTPS host configured by the backend and frontend.</p>
+      </fieldset>
+      <fieldset className="admin-editor-section">
+        <legend>Inventory settings</legend>
+        <p className="admin-muted">Stock quantity is managed separately through auditable inventory adjustments. Product details and price edits never change on-hand stock.</p>
+        <label>Low-stock threshold (optional)<input type="number" min="0" step="1" value={form.lowStockThreshold} onChange={(event) => setField("lowStockThreshold", event.currentTarget.value)} /></label>
+      </fieldset>
       {error ? <p className="admin-field-error" role="alert">{error}</p> : null}
       <div className="admin-row-actions">
         <Button type="submit" disabled={saving || categories.length === 0}>{saving ? "Saving…" : product ? "Save changes" : "Save product"}</Button>
@@ -1104,13 +1142,15 @@ function InventoryManagement() {
   const [message, setMessage] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<unknown>(null);
   const queryClient = useQueryClient();
+  const inventoryQueryKey = ["admin", "inventory", page, search, categoryId, status, lowStockBelow] as const;
+  const adjustmentLockRef = useRef(false);
   const categoriesQuery = useQuery({
     queryKey: ["admin", "categories"],
     queryFn: () => adminApi.getCategories(),
     retry: false,
   });
   const inventoryQuery = useQuery({
-    queryKey: ["admin", "inventory", page, search, categoryId, status, lowStockBelow],
+    queryKey: inventoryQueryKey,
     queryFn: () => adminApi.getInventory({
       page,
       limit: 20,
@@ -1148,6 +1188,22 @@ function InventoryManagement() {
       input.key,
     ),
     onSuccess: async (result) => {
+      queryClient.setQueryData<InventoryList>(inventoryQueryKey, (current) =>
+        current
+          ? {
+              ...current,
+              inventory: current.inventory.map((item) =>
+                item.productId === result.adjustment.productId
+                  ? {
+                      ...item,
+                      stockQuantity: result.adjustment.resultingQuantity,
+                      updatedAt: result.adjustment.createdAt,
+                    }
+                  : item,
+              ),
+            }
+          : current,
+      );
       setMessage(
         `Inventory updated. New stock: ${result.adjustment.resultingQuantity} units${result.replayed ? " (the original adjustment was replayed safely)" : ""}.`,
       );
@@ -1160,6 +1216,9 @@ function InventoryManagement() {
       await queryClient.invalidateQueries({ queryKey: ["admin", "analytics", "overview"] });
     },
     onError: (error) => setAdjustmentError(error),
+    onSettled: () => {
+      adjustmentLockRef.current = false;
+    },
   });
 
   function submitFilter(event: FormEvent<HTMLFormElement>) {
@@ -1169,10 +1228,18 @@ function InventoryManagement() {
   }
   function submitAdjustment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (adjustmentLockRef.current || adjustmentMutation.isPending) return;
     setAdjustmentError(null);
     const delta = Number(quantityDelta);
     if (!productId || !Number.isSafeInteger(delta) || delta === 0 || reason.trim().length < 3) {
       setAdjustmentError(new Error("Select a product, enter a non-zero whole quantity and give a reason of at least 3 characters."));
+      return;
+    }
+    const selectedItem = inventoryQuery.data?.inventory.find((item) => item.productId === productId);
+    if (delta < 0 && selectedItem && selectedItem.stockQuantity + delta < 0) {
+      setAdjustmentError(
+        new Error(`Only ${selectedItem.stockQuantity} units are currently recorded; the adjustment cannot reduce stock below zero.`),
+      );
       return;
     }
     const normalizedReason = reason.trim();
@@ -1180,6 +1247,7 @@ function InventoryManagement() {
     if (idempotencyRef.current?.fingerprint !== fingerprint) {
       idempotencyRef.current = { fingerprint, key: crypto.randomUUID() };
     }
+    adjustmentLockRef.current = true;
     adjustmentMutation.mutate({
       productId,
       quantityDelta: delta,

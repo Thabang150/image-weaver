@@ -24,7 +24,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { ApiHttpError, CsrfTokenError } from "@/lib/api/client";
+import { ApiHttpError, ApiResponseError, CsrfTokenError } from "@/lib/api/client";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
 import { authApi, type PublicUser } from "@/lib/api/auth";
 import { catalogueApi } from "@/lib/api/catalogue";
@@ -521,7 +521,7 @@ export function CartPage({
   const submitLockRef = useRef(false);
   const storageKey = user ? `healthywayssa-checkout-${user.id}` : null;
 
-  const describeCheckoutError = useCallback((error: unknown): string => {
+  const describeCheckoutError = useCallback((error: unknown, action = "checkout"): string => {
     if (error instanceof ApiHttpError) {
       if (error.isCsrfFailure) {
         return "The security token was rejected after one refresh attempt. Refresh the page before retrying.";
@@ -552,7 +552,19 @@ export function CartPage({
     if (error instanceof CsrfTokenError) {
       return "A security token was unavailable. Refresh the page and try again.";
     }
-    return "Checkout could not be completed. Check your connection and try again.";
+    if (error instanceof ApiResponseError) {
+      return `The backend returned an unexpected response while ${action}. Refresh your account details before retrying.`;
+    }
+    if (error instanceof TypeError) {
+      return `The store could not be reached while ${action}. Check your internet connection and try again.`;
+    }
+    if (
+      error instanceof Error &&
+      error.message === "The saved delivery address was missing from the response."
+    ) {
+      return "The address request completed, but the backend response did not include the saved address. Refresh your account details before retrying.";
+    }
+    return `Checkout encountered an unexpected error while ${action}. Please try again.`;
   }, []);
 
   function persistCheckout(value: StoredCheckoutState): boolean {
@@ -728,6 +740,7 @@ export function CartPage({
     setCheckoutBusy(true);
     setCheckoutError(null);
     setCheckoutMessage(null);
+    let checkoutAction = "saving your delivery address";
     try {
       let addressId = pendingAttempt?.addressId ?? "";
       let idempotencyKey = pendingAttempt?.idempotencyKey ?? "";
@@ -783,6 +796,7 @@ export function CartPage({
         if (!persistCheckout({ addressId, idempotencyKey })) return;
       }
 
+      checkoutAction = "creating your order";
       const created = await ordersApi.createCustomerOrder(addressId, idempotencyKey);
       setOrder(created);
       setPendingAttempt({ addressId, idempotencyKey });
@@ -797,7 +811,7 @@ export function CartPage({
         queryClient.invalidateQueries({ queryKey: ["orders", "customer"] }),
       ]);
     } catch (error) {
-      setCheckoutError(describeCheckoutError(error));
+      setCheckoutError(describeCheckoutError(error, checkoutAction));
     } finally {
       submitLockRef.current = false;
       setCheckoutBusy(false);

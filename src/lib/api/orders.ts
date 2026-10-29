@@ -59,6 +59,23 @@ export interface ShippingQuoteResponse {
   rates: ShippingQuote[];
 }
 
+export interface PayFastCheckout {
+  paymentAttemptId: string;
+  merchantReference: string;
+  amountCents: number;
+  currency: "ZAR";
+  amountBreakdown: {
+    productSubtotalCents: number;
+    discountCents: number;
+    shippingCents: number;
+    additionalChargesCents: number;
+    totalCents: number;
+  };
+  checkoutUrl: string;
+  method: "POST";
+  fields: Record<string, string>;
+}
+
 type OrdersApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -213,6 +230,83 @@ function parseShippingQuote(value: unknown): ShippingQuote {
   };
 }
 
+function parsePayFastCheckout(value: unknown): PayFastCheckout {
+  if (!isRecord(value) || !isRecord(value["amountBreakdown"]) || !isRecord(value["fields"])) {
+    return invalidResponse();
+  }
+  const breakdown = value["amountBreakdown"];
+  let url: URL;
+  try {
+    if (typeof value["checkoutUrl"] !== "string") return invalidResponse();
+    url = new URL(value["checkoutUrl"]);
+  } catch {
+    return invalidResponse();
+  }
+  const fields: Record<string, string> = {};
+  for (const [key, fieldValue] of Object.entries(value["fields"])) {
+    if (typeof fieldValue !== "string") return invalidResponse();
+    fields[key] = fieldValue;
+  }
+  if (
+    typeof value["paymentAttemptId"] !== "string" ||
+    typeof value["merchantReference"] !== "string" ||
+    !isSafeInteger(value["amountCents"]) ||
+    value["amountCents"] <= 0 ||
+    value["currency"] !== "ZAR" ||
+    !isSafeInteger(breakdown["productSubtotalCents"]) ||
+    !isSafeInteger(breakdown["discountCents"]) ||
+    !isSafeInteger(breakdown["shippingCents"]) ||
+    !isSafeInteger(breakdown["additionalChargesCents"]) ||
+    !isSafeInteger(breakdown["totalCents"]) ||
+    breakdown["productSubtotalCents"] < 0 ||
+    breakdown["discountCents"] < 0 ||
+    breakdown["shippingCents"] < 0 ||
+    breakdown["additionalChargesCents"] < 0 ||
+    breakdown["discountCents"] > breakdown["productSubtotalCents"] ||
+    breakdown["totalCents"] !== value["amountCents"] ||
+    breakdown["productSubtotalCents"] -
+      breakdown["discountCents"] +
+      breakdown["shippingCents"] +
+      breakdown["additionalChargesCents"] !==
+      breakdown["totalCents"] ||
+    value["method"] !== "POST" ||
+    url.protocol !== "https:" ||
+    !["sandbox.payfast.co.za", "www.payfast.co.za"].includes(url.hostname) ||
+    Boolean(url.port || url.username || url.password || url.hash) ||
+    url.pathname !== "/eng/process" ||
+    fields["amount"] !== (value["amountCents"] / 100).toFixed(2) ||
+    fields["currency"] !== "ZAR" ||
+    fields["m_payment_id"] !== value["merchantReference"] ||
+    !fields["merchant_id"] ||
+    !fields["merchant_key"] ||
+    !fields["return_url"] ||
+    !fields["cancel_url"] ||
+    !fields["notify_url"] ||
+    !fields["email_address"] ||
+    !fields["item_name"] ||
+    !fields["signature"]
+  ) {
+    return invalidResponse();
+  }
+
+  return {
+    paymentAttemptId: value["paymentAttemptId"],
+    merchantReference: value["merchantReference"],
+    amountCents: value["amountCents"],
+    currency: "ZAR",
+    amountBreakdown: {
+      productSubtotalCents: breakdown["productSubtotalCents"],
+      discountCents: breakdown["discountCents"],
+      shippingCents: breakdown["shippingCents"],
+      additionalChargesCents: breakdown["additionalChargesCents"],
+      totalCents: breakdown["totalCents"],
+    },
+    checkoutUrl: url.toString(),
+    method: "POST",
+    fields,
+  };
+}
+
 export function createOrdersApi(client: OrdersApiClient) {
   return {
     async createCustomerOrder(addressId: string, idempotencyKey: string): Promise<CustomerOrder> {
@@ -245,9 +339,7 @@ export function createOrdersApi(client: OrdersApiClient) {
       return {
         orderId: response["orderId"],
         currency: "ZAR",
-        rates: Array.isArray(response["rates"])
-          ? response["rates"].map(parseShippingQuote)
-          : [],
+        rates: Array.isArray(response["rates"]) ? response["rates"].map(parseShippingQuote) : [],
       };
     },
 
@@ -256,6 +348,14 @@ export function createOrdersApi(client: OrdersApiClient) {
         `/orders/${encodeURIComponent(orderId)}/shipping/quote/${encodeURIComponent(quoteId)}/select`,
         { method: "POST", json: {} },
       );
+    },
+
+    async initiatePayFastCheckout(orderId: string): Promise<PayFastCheckout> {
+      const response = await client.request<unknown>(
+        `/orders/${encodeURIComponent(orderId)}/payfast/checkout`,
+        { method: "POST", json: {} },
+      );
+      return parsePayFastCheckout(response);
     },
 
     async listCustomerOrders(page = 1): Promise<CustomerOrderList> {
@@ -307,6 +407,10 @@ export const ordersApi = {
   selectShippingQuote: (orderId: string, quoteId: string) => {
     configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());
     return configuredOrdersApi.selectShippingQuote(orderId, quoteId);
+  },
+  initiatePayFastCheckout: (orderId: string) => {
+    configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());
+    return configuredOrdersApi.initiatePayFastCheckout(orderId);
   },
   listCustomerOrders: (page?: number) => {
     configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient());

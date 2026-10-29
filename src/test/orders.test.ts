@@ -76,4 +76,82 @@ describe("customer order history API", () => {
       message: "Backend returned an invalid order history response.",
     });
   });
+
+  it("uses the documented PayFast endpoint and validates its signed shipping-inclusive response", async () => {
+    const checkout = {
+      paymentAttemptId: "attempt-1",
+      merchantReference: "HW-2026-000001-attempt-1",
+      amountCents: 3300,
+      currency: "ZAR",
+      amountBreakdown: {
+        productSubtotalCents: 2500,
+        discountCents: 0,
+        shippingCents: 800,
+        additionalChargesCents: 0,
+        totalCents: 3300,
+      },
+      checkoutUrl: "https://sandbox.payfast.co.za/eng/process",
+      method: "POST",
+      fields: {
+        merchant_id: "merchant",
+        merchant_key: "key",
+        return_url: "https://store.example.test/payment/return?orderId=order-1",
+        cancel_url: "https://store.example.test/payment/cancel?orderId=order-1",
+        notify_url: "https://api.example.test/api/v1/payments/payfast/itn",
+        email_address: "customer@example.test",
+        m_payment_id: "HW-2026-000001-attempt-1",
+        amount: "33.00",
+        item_name: "Healthy Ways SA HW-2026-000001",
+        signature: "signed-value",
+      },
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      if (url.pathname.endsWith("/payfast/checkout")) return jsonResponse(checkout);
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    const result = await api.initiatePayFastCheckout("order-1");
+
+    expect(result.amountBreakdown.shippingCents).toBe(800);
+    expect(result.amountCents).toBe(3300);
+    expect(result.method).toBe("POST");
+    const request = fetcher.mock.calls.find(([input]) =>
+      String(input).endsWith("/orders/order-1/payfast/checkout"),
+    );
+    expect(request?.[1]?.method).toBe("POST");
+    expect(request?.[1]?.credentials).toBe("include");
+    expect(new Headers(request?.[1]?.headers).get("X-CSRF-Token")).toBe("csrf");
+  });
+
+  it("rejects a PayFast response whose shipping-inclusive breakdown is inconsistent", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      return jsonResponse({
+        paymentAttemptId: "attempt-1",
+        merchantReference: "HW-1",
+        amountCents: 3300,
+        currency: "ZAR",
+        amountBreakdown: {
+          productSubtotalCents: 2500,
+          discountCents: 0,
+          shippingCents: 700,
+          additionalChargesCents: 0,
+          totalCents: 3300,
+        },
+        checkoutUrl: "https://sandbox.payfast.co.za/eng/process",
+        method: "POST",
+        fields: { amount: "33.00", signature: "signed" },
+      });
+    });
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    await expect(api.initiatePayFastCheckout("order-1")).rejects.toMatchObject({
+      name: "ApiResponseError",
+      message: "Backend returned an invalid order or shipping response.",
+    });
+  });
 });

@@ -21,6 +21,8 @@ const previewViews: PreviewView[] = [
   "reset-password",
   "admin-forgot-password",
   "admin-reset-password",
+  "payment-return",
+  "payment-cancel",
 ];
 
 type PreviewReturnTarget = "cart" | "account" | "admin";
@@ -40,11 +42,13 @@ export const Route = createFileRoute("/preview")({
     const returnTo = search["returnTo"];
     const token = search["token"];
     const emailLink = search["emailLink"];
+    const orderId = search["orderId"];
     return {
       ...(typeof product === "string" && productSlugPattern.test(product) ? { product } : {}),
       ...(isPreviewView(view) ? { view } : {}),
       ...(isPreviewReturnTarget(returnTo) ? { returnTo } : {}),
       ...(typeof token === "string" ? { token } : {}),
+      ...(typeof orderId === "string" && orderId.trim() ? { orderId } : {}),
       ...(emailLink === 1 || emailLink === "1" ? { emailLink: 1 as const } : {}),
     };
   },
@@ -128,6 +132,7 @@ function Preview() {
         product={search.product}
         returnTo={search.returnTo}
         verificationToken={search.token}
+        checkoutOrderId={search.orderId}
         isEmailLink={
           search.emailLink === 1 ||
           (["verify-email", "customer-verify-email", "admin-verify-email"].includes(view) &&

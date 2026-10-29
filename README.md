@@ -24,6 +24,14 @@ Only the public backend URL belongs in a `VITE_*` variable; Vite exposes these v
 
 The administrator catalogue UI accepts image references only. Set the frontend `VITE_PRODUCT_IMAGE_ALLOWED_HOSTS` to a comma-separated list of approved HTTPS image hostnames, and configure the matching backend `PRODUCT_IMAGE_ALLOWED_HOSTS`; file uploads are not supported.
 
+## Checkout address search
+
+The checkout address selector uses Google Places Autocomplete restricted to South African addresses. Set `VITE_GOOGLE_MAPS_API_KEY` in the local `.env` file and in the Vercel Preview/Production environment settings. This is a browser-visible key: enable the Maps JavaScript API and Places API for its Google Cloud project, restrict it to the deployed storefront referrer domains (including local development domains if needed), and apply API restrictions so it can only call the required Maps APIs. Do not use a server-side or unrestricted key.
+
+Checkout requires a selected Google Places suggestion with structured street, suburb/local area, city, province and postal code components. Typed text is not accepted as a delivery address. The selected components are saved using the existing authenticated customer-address API before order creation.
+
+The existing order flow requests and selects backend Ship Logic quotes, then uses `POST /api/v1/orders/:orderId/payfast/checkout` to obtain signed hosted-checkout fields and a backend-calculated shipping-inclusive amount. Payment status is confirmed by the backend order endpoint after PayFast ITN processing; return and cancellation pages query the order and do not trust redirect state as payment proof.
+
 ## Development
 
 Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).

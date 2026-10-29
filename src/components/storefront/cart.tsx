@@ -8,8 +8,13 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type FormEvent,
 } from "react";
 
+import {
+  AddressAutocomplete,
+  type SelectedDeliveryAddress,
+} from "@/components/storefront/address-autocomplete";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -20,8 +25,15 @@ import {
 } from "@/components/ui/sheet";
 import { ApiHttpError, CsrfTokenError } from "@/lib/api/client";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
-import { type PublicUser } from "@/lib/api/auth";
-import { ordersApi, type CustomerOrder, type ShippingQuote } from "@/lib/api/orders";
+import { authApi, type PublicUser } from "@/lib/api/auth";
+import { catalogueApi } from "@/lib/api/catalogue";
+import {
+  ordersApi,
+  type CustomerOrder,
+  type PayFastCheckout,
+  type ShippingQuote,
+} from "@/lib/api/orders";
+import { getAllowedProductImageUrls } from "@/lib/image-url";
 import { formatZarCents } from "@/lib/money";
 
 interface CartContextValue {
@@ -93,19 +105,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
 
-  const enqueueCartOperation = useCallback(<T,>(operation: () => Promise<T>): Promise<T> => {
-    setQueuedOperations((count) => count + 1);
-    const run = async () => {
-      await queryClient.cancelQueries({ queryKey: ["cart"], exact: true });
-      return operation();
-    };
-    const result = operationQueueRef.current.then(run, run);
-    operationQueueRef.current = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result.finally(() => setQueuedOperations((count) => Math.max(0, count - 1)));
-  }, [queryClient]);
+  const enqueueCartOperation = useCallback(
+    <T,>(operation: () => Promise<T>): Promise<T> => {
+      setQueuedOperations((count) => count + 1);
+      const run = async () => {
+        await queryClient.cancelQueries({ queryKey: ["cart"], exact: true });
+        return operation();
+      };
+      const result = operationQueueRef.current.then(run, run);
+      operationQueueRef.current = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result.finally(() => setQueuedOperations((count) => Math.max(0, count - 1)));
+    },
+    [queryClient],
+  );
 
   const addItemMutation = useMutation({
     mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
@@ -358,9 +373,7 @@ export function CartSheet({
                         className="cart-quantity-button"
                         aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
                         onClick={() =>
-                          void changeItemQuantity(item.productId, -1).catch(
-                            () => undefined,
-                          )
+                          void changeItemQuantity(item.productId, -1).catch(() => undefined)
                         }
                         disabled={isBusy || !item.available || item.quantity <= 1}
                       >
@@ -374,9 +387,7 @@ export function CartSheet({
                         className="cart-quantity-button"
                         aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
                         onClick={() =>
-                          void changeItemQuantity(item.productId, 1).catch(
-                            () => undefined,
-                          )
+                          void changeItemQuantity(item.productId, 1).catch(() => undefined)
                         }
                         disabled={isBusy || !item.available || item.quantity >= 99}
                       >
@@ -439,15 +450,39 @@ export function CartSheet({
   );
 }
 
+interface StoredCheckoutState {
+  idempotencyKey?: string;
+  addressId?: string;
+  orderId?: string;
+}
+
+function CartProductImage({ slug, name }: { slug: string | undefined; name: string }) {
+  const productQuery = useQuery({
+    queryKey: ["catalogue", "product", slug],
+    queryFn: () => catalogueApi.getProductBySlug(slug ?? ""),
+    enabled: Boolean(slug),
+    retry: false,
+  });
+  const image = productQuery.data
+    ? getAllowedProductImageUrls(productQuery.data.product.imageReferences)[0]
+    : undefined;
+
+  return image ? (
+    <img className="cart-product-image" src={image} alt={name} loading="lazy" />
+  ) : (
+    <div className="cart-product-image cart-product-image-placeholder" aria-hidden="true">
+      <ShoppingBag size={18} />
+    </div>
+  );
+}
+
 export function CartPage({
   onContinueShopping,
   onSignIn,
-  onManageAddress,
   user,
 }: {
   onContinueShopping: () => void;
   onSignIn: () => void;
-  onManageAddress: () => void;
   user: PublicUser | undefined;
 }) {
   const {
@@ -461,11 +496,19 @@ export function CartPage({
     removeItem,
     clearCart,
   } = useCart();
-  const [addressId, setAddressId] = useState("");
+  const [selectedAddress, setSelectedAddress] = useState<SelectedDeliveryAddress | null>(null);
+  const [recipientName, setRecipientName] = useState(user?.displayName ?? "");
+  const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber ?? "");
+  const [addressLine2, setAddressLine2] = useState("");
+  const [deliveryInstructions, setDeliveryInstructions] = useState("");
   const [order, setOrder] = useState<CustomerOrder | null>(null);
   const [quotes, setQuotes] = useState<ShippingQuote[] | null>(null);
   const [selectedQuote, setSelectedQuote] = useState<ShippingQuote | null>(null);
+  const [paymentCheckout, setPaymentCheckout] = useState<PayFastCheckout | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [restoringCheckout, setRestoringCheckout] = useState(false);
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [restoreOrderId, setRestoreOrderId] = useState<string | null>(null);
   const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [pendingAttempt, setPendingAttempt] = useState<{
@@ -473,21 +516,25 @@ export function CartPage({
     idempotencyKey: string;
   } | null>(null);
   const queryClient = useQueryClient();
+  const submitLockRef = useRef(false);
+  const storageKey = user ? `healthywayssa-checkout-${user.id}` : null;
 
-  function describeCheckoutError(error: unknown): string {
+  const describeCheckoutError = useCallback((error: unknown): string => {
     if (error instanceof ApiHttpError) {
       if (error.isCsrfFailure) {
         return "The security token was rejected after one refresh attempt. Refresh the page before retrying.";
       }
-      if (error.status === 401) return "Your sign-in has expired. Sign in again to continue checkout.";
-      if (error.status === 403) return "This order action is not permitted for the current account.";
+      if (error.status === 401)
+        return "Your sign-in has expired. Sign in again to continue checkout.";
+      if (error.status === 403)
+        return "This order action is not permitted for the current account.";
       if (error.status === 409) {
         return typeof error.body === "object" &&
           error.body !== null &&
           "error" in error.body &&
           typeof error.body.error === "string"
           ? error.body.error
-          : "The cart or selected address changed. Review your details and try again.";
+          : "The cart, address or delivery quote changed. Refresh delivery options and review your order.";
       }
       if (
         typeof error.body === "object" &&
@@ -504,29 +551,236 @@ export function CartPage({
       return "A security token was unavailable. Refresh the page and try again.";
     }
     return "Checkout could not be completed. Check your connection and try again.";
+  }, []);
+
+  function persistCheckout(value: StoredCheckoutState): boolean {
+    if (!storageKey) return false;
+    try {
+      window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+      return true;
+    } catch {
+      setCheckoutError(
+        "Checkout progress could not be saved in this browser. Enable session storage and try again.",
+      );
+      return false;
+    }
+  }
+
+  useEffect(() => {
+    if (!user || !storageKey) return;
+    let active = true;
+    let stored: StoredCheckoutState | null = null;
+    try {
+      const raw = window.sessionStorage.getItem(storageKey);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          const record = parsed as Record<string, unknown>;
+          stored = {
+            ...(typeof record["idempotencyKey"] === "string"
+              ? { idempotencyKey: record["idempotencyKey"] }
+              : {}),
+            ...(typeof record["addressId"] === "string" ? { addressId: record["addressId"] } : {}),
+            ...(typeof record["orderId"] === "string" ? { orderId: record["orderId"] } : {}),
+          };
+        }
+      }
+    } catch {
+      setCheckoutError("Saved checkout progress could not be read. You can start a new checkout.");
+    }
+    if (!stored) return;
+    if (stored.addressId && stored.idempotencyKey) {
+      setPendingAttempt({ addressId: stored.addressId, idempotencyKey: stored.idempotencyKey });
+      const savedAddress = user.addresses.find((address) => address.id === stored?.addressId);
+      if (savedAddress) {
+        setRecipientName(savedAddress.recipientName);
+        setPhoneNumber(savedAddress.phoneNumber);
+        setAddressLine2(savedAddress.addressLine2 ?? "");
+        setDeliveryInstructions(savedAddress.deliveryInstructions ?? "");
+        setSelectedAddress({
+          placeId: `saved:${savedAddress.id}`,
+          formattedAddress: [
+            savedAddress.addressLine1,
+            savedAddress.localArea,
+            savedAddress.city,
+            savedAddress.province,
+            savedAddress.postalCode,
+            savedAddress.country,
+          ]
+            .filter(Boolean)
+            .join(", "),
+          addressLine1: savedAddress.addressLine1,
+          localArea: savedAddress.localArea ?? "",
+          city: savedAddress.city,
+          province: savedAddress.province,
+          postalCode: savedAddress.postalCode,
+          country: "South Africa",
+        });
+      }
+    }
+    if (stored.orderId) {
+      setRestoreOrderId(stored.orderId);
+      setRestoringCheckout(true);
+      void ordersApi
+        .getCustomerOrder(stored.orderId)
+        .then((restored) => {
+          if (active) {
+            setOrder(restored);
+            setRestoreFailed(false);
+          }
+        })
+        .catch((error: unknown) => {
+          if (active) {
+            setRestoreFailed(true);
+            setCheckoutError(describeCheckoutError(error));
+            setCheckoutMessage(
+              "Your saved order could not be loaded. Retry the request before creating another order.",
+            );
+          }
+        })
+        .finally(() => {
+          if (active) setRestoringCheckout(false);
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [describeCheckoutError, storageKey, user]);
+
+  useEffect(() => {
+    if (!pendingAttempt?.addressId) {
+      setRecipientName((current) => current || user?.displayName || "");
+      setPhoneNumber((current) => current || user?.phoneNumber || "");
+    }
+  }, [pendingAttempt?.addressId, user?.displayName, user?.phoneNumber]);
+
+  const onAddressSelect = useCallback((address: SelectedDeliveryAddress | null) => {
+    setSelectedAddress(address);
+    setCheckoutError(null);
+    if (address) setCheckoutMessage(null);
+  }, []);
+
+  async function retryOrderRestore() {
+    if (!restoreOrderId || restoringCheckout) return;
+    setRestoringCheckout(true);
+    setCheckoutError(null);
+    try {
+      setOrder(await ordersApi.getCustomerOrder(restoreOrderId));
+      setRestoreFailed(false);
+    } catch (error) {
+      setCheckoutError(describeCheckoutError(error));
+    } finally {
+      setRestoringCheckout(false);
+    }
+  }
+
+  function startNewCheckout() {
+    if (!storageKey) return;
+    try {
+      window.sessionStorage.removeItem(storageKey);
+    } catch {
+      setCheckoutError(
+        "Saved checkout progress could not be cleared. Close and reopen the tab before starting a new order.",
+      );
+      return;
+    }
+    setOrder(null);
+    setRestoreOrderId(null);
+    setRestoreFailed(false);
+    setPendingAttempt(null);
+    setSelectedAddress(null);
+    setSelectedQuote(null);
+    setQuotes(null);
+    setPaymentCheckout(null);
+    setCheckoutError(null);
+    setCheckoutMessage(null);
+    void retryCart();
   }
 
   async function createOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (checkoutBusy || !user) return;
-    const selectedAddress = user.addresses.find((address) => address.id === addressId);
-    if (!selectedAddress || !selectedAddress.localArea?.trim()) {
-      setCheckoutError("Choose a saved delivery address with a suburb / local area.");
+    if (checkoutBusy || submitLockRef.current || !user || !selectedAddress) return;
+    if (!recipientName.trim() || !phoneNumber.trim()) {
+      setCheckoutError("Enter the recipient name and phone number for the delivery.");
       return;
     }
+    if (!selectedAddress.localArea.trim()) {
+      setCheckoutError("Choose a suggestion that includes a suburb or local area.");
+      return;
+    }
+    if (cart?.hasUnavailableItems) {
+      setCheckoutError("Remove unavailable or out-of-stock products before continuing.");
+      return;
+    }
+
+    submitLockRef.current = true;
     setCheckoutBusy(true);
     setCheckoutError(null);
     setCheckoutMessage(null);
-    const attempt =
-      pendingAttempt?.addressId === addressId
-        ? pendingAttempt
-        : { addressId, idempotencyKey: crypto.randomUUID() };
-    setPendingAttempt(attempt);
     try {
-      const created = await ordersApi.createCustomerOrder(addressId, attempt.idempotencyKey);
+      let addressId = pendingAttempt?.addressId ?? "";
+      let idempotencyKey = pendingAttempt?.idempotencyKey ?? "";
+      if (!addressId) {
+        idempotencyKey ||= crypto.randomUUID();
+        if (!persistCheckout({ idempotencyKey })) return;
+
+        const candidate = {
+          label: "Delivery address",
+          recipientName: recipientName.trim(),
+          phoneNumber: phoneNumber.trim(),
+          addressLine1: selectedAddress.addressLine1,
+          addressLine2: addressLine2.trim(),
+          localArea: selectedAddress.localArea,
+          city: selectedAddress.city,
+          province: selectedAddress.province,
+          postalCode: selectedAddress.postalCode,
+          country: selectedAddress.country,
+          deliveryInstructions: deliveryInstructions.trim(),
+        };
+        const matchingAddress = user.addresses.find(
+          (address) =>
+            address.addressLine1 === candidate.addressLine1 &&
+            (address.localArea ?? "") === candidate.localArea &&
+            address.city === candidate.city &&
+            address.province === candidate.province &&
+            address.postalCode === candidate.postalCode &&
+            address.country === candidate.country &&
+            address.recipientName === candidate.recipientName &&
+            address.phoneNumber === candidate.phoneNumber &&
+            (address.addressLine2 ?? "") === candidate.addressLine2 &&
+            (address.deliveryInstructions ?? "") === candidate.deliveryInstructions,
+        );
+        const updatedUser = matchingAddress ? user : await authApi.addAddress(candidate);
+        if (!matchingAddress) {
+          addressId =
+            updatedUser.addresses.find(
+              (address) =>
+                address.addressLine1 === candidate.addressLine1 &&
+                address.localArea === candidate.localArea &&
+                address.city === candidate.city &&
+                address.province === candidate.province &&
+                address.postalCode === candidate.postalCode &&
+                address.recipientName === candidate.recipientName,
+            )?.id ?? "";
+          if (!addressId)
+            throw new Error("The saved delivery address was missing from the response.");
+          queryClient.setQueryData(["session"], { status: "authenticated", user: updatedUser });
+        } else {
+          addressId = matchingAddress.id;
+        }
+        setPendingAttempt({ addressId, idempotencyKey });
+        if (!persistCheckout({ addressId, idempotencyKey })) return;
+      }
+
+      const created = await ordersApi.createCustomerOrder(addressId, idempotencyKey);
       setOrder(created);
-      setPendingAttempt(null);
-      setCheckoutMessage(`Order ${created.orderNumber} was created. Request delivery rates below.`);
+      setPendingAttempt({ addressId, idempotencyKey });
+      setSelectedQuote(null);
+      setQuotes(null);
+      if (!persistCheckout({ addressId, idempotencyKey, orderId: created.id })) return;
+      setCheckoutMessage(
+        `Order ${created.orderNumber} was created. Choose a delivery service to continue.`,
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["cart"] }),
         queryClient.invalidateQueries({ queryKey: ["orders", "customer"] }),
@@ -534,6 +788,7 @@ export function CartPage({
     } catch (error) {
       setCheckoutError(describeCheckoutError(error));
     } finally {
+      submitLockRef.current = false;
       setCheckoutBusy(false);
     }
   }
@@ -545,18 +800,21 @@ export function CartPage({
     setCheckoutMessage(null);
     setQuotes(null);
     setSelectedQuote(null);
+    setPaymentCheckout(null);
     try {
       const response = await ordersApi.requestShippingQuotes(order.id);
       setQuotes(response.rates);
       setCheckoutMessage(
         response.rates.length
-          ? "Available delivery services are shown below."
-          : "No delivery rates are available for this order right now.",
+          ? "Choose an available delivery service. Rates are provided for this address."
+          : "No delivery services are available right now. You can retry later.",
       );
     } catch (error) {
       if (error instanceof ApiHttpError && error.status === 422) {
         setQuotes([]);
-        setCheckoutMessage("No delivery rates were returned. You can retry after reviewing the order details.");
+        setCheckoutMessage(
+          "No delivery services were returned. Review the delivery address or retry later.",
+        );
       }
       setCheckoutError(describeCheckoutError(error));
     } finally {
@@ -569,12 +827,49 @@ export function CartPage({
     setCheckoutBusy(true);
     setCheckoutError(null);
     setCheckoutMessage(null);
+    setSelectedQuote(null);
+    setPaymentCheckout(null);
     try {
       await ordersApi.selectShippingQuote(order.id, quote.quoteId);
       const refreshed = await ordersApi.getCustomerOrder(order.id);
       setOrder(refreshed);
       setSelectedQuote(quote);
-      setCheckoutMessage(`${quote.serviceLevel.name} selected.`);
+      setCheckoutMessage(`${quote.serviceLevel.name} is selected. Review the order total below.`);
+    } catch (error) {
+      if (error instanceof ApiHttpError && (error.status === 409 || error.status === 422)) {
+        setQuotes(null);
+        setCheckoutMessage(
+          "That delivery rate expired or is no longer available. Refresh the rates to choose again.",
+        );
+      }
+      setCheckoutError(describeCheckoutError(error));
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
+
+  async function initiatePayment() {
+    if (!order || !selectedQuote || checkoutBusy) return;
+    setCheckoutBusy(true);
+    setCheckoutError(null);
+    setCheckoutMessage(null);
+    setPaymentCheckout(null);
+    try {
+      const response = await ordersApi.initiatePayFastCheckout(order.id);
+      if (
+        response.amountBreakdown.shippingCents !== selectedQuote.rateCents ||
+        response.amountBreakdown.productSubtotalCents !== order.subtotalCents ||
+        response.amountCents !== order.totalCents
+      ) {
+        setCheckoutError(
+          "Payment is paused because the backend payment total does not match this order and selected delivery rate. Refresh the delivery options or contact support.",
+        );
+        return;
+      }
+      setPaymentCheckout(response);
+      setCheckoutMessage(
+        "The backend confirmed the shipping-inclusive amount. Continue to PayFast to complete payment.",
+      );
     } catch (error) {
       setCheckoutError(describeCheckoutError(error));
     } finally {
@@ -582,218 +877,451 @@ export function CartPage({
     }
   }
 
+  const checkoutStep = order ? (selectedQuote ? 4 : 3) : 2;
+
   return (
     <section className="catalogue-section" aria-labelledby="cart-page-title">
       <header className="catalogue-header">
-        <span className="eyebrow">Your selections</span>
+        <span className="eyebrow">Secure checkout</span>
         <h1 id="cart-page-title" className="section-title mt-3">
-          Your cart
+          Your basket
         </h1>
       </header>
+      <ol className="checkout-progress" aria-label="Checkout progress">
+        {["Basket", "Delivery address", "Delivery service", "Review & payment"].map(
+          (label, index) => (
+            <li
+              className={index + 1 <= checkoutStep ? "checkout-progress-active" : ""}
+              key={label}
+              aria-current={index + 1 === checkoutStep ? "step" : undefined}
+            >
+              <span>{index + 1}</span>
+              {label}
+            </li>
+          ),
+        )}
+      </ol>
       {notice ? (
         <p className="cart-notice" role="status">
           {notice}
         </p>
       ) : null}
-      {isCartLoading ? (
+      {restoringCheckout ? (
         <p className="catalogue-status" role="status">
-          Loading cart…
+          Restoring your saved checkout…
         </p>
-      ) : cartError ? (
+      ) : null}
+      {!restoringCheckout && isCartLoading ? (
+        <p className="catalogue-status" role="status">
+          Loading basket…
+        </p>
+      ) : !restoringCheckout && cartError ? (
         <div className="catalogue-error" role="alert">
           <p>{getCartErrorMessage(cartError)}</p>
           {cartError instanceof ApiHttpError && cartError.status === 401 ? (
             <Button type="button" variant="outline" onClick={onSignIn}>
-              Sign in to use your cart
+              Sign in to use your basket
             </Button>
           ) : null}
           <Button type="button" variant="outline" onClick={() => void retryCart()}>
-            Retry cart
+            Retry basket
           </Button>
           <Button type="button" variant="outline" onClick={onContinueShopping}>
             Continue shopping
           </Button>
         </div>
-      ) : (!cart || cart.items.length === 0) && !order ? (
+      ) : !restoringCheckout && (!cart || cart.items.length === 0) && !order ? (
         <div className="cart-empty" role="status">
           <ShoppingBag aria-hidden="true" size={22} />
-          <p>Your cart is empty.</p>
+          <p>Your basket is empty.</p>
           <Button type="button" variant="outline" onClick={onContinueShopping}>
             Continue shopping
           </Button>
         </div>
       ) : (
         <>
-          {cart && !order ? <div className="cart-list" aria-live="polite">
-            {cart.items.map((item) => (
-              <div className="cart-item" key={item.productId}>
-                <div className="cart-item-copy">
-                  <span className="cart-item-name">{getItemLineLabel(item)}</span>
-                  {item.available && item.unitPriceCents !== null ? (
-                    <span className="cart-item-price">{formatZarCents(item.unitPriceCents)}</span>
-                  ) : (
-                    <span className="cart-item-price cart-item-unavailable">
-                      Unavailable — remove this item to continue
-                    </span>
-                  )}
-                </div>
-                <div className="cart-item-controls">
-                  <div className="cart-quantity-row">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
-                      disabled={isBusy || !item.available || item.quantity <= 1}
-                      onClick={() =>
-                        void changeItemQuantity(item.productId, -1).catch(() => undefined)
-                      }
-                    >
-                      <Minus aria-hidden="true" size={14} />
-                    </Button>
-                    <span aria-live="polite">{item.quantity}</span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
-                      disabled={isBusy || !item.available || item.quantity >= 99}
-                      onClick={() =>
-                        void changeItemQuantity(item.productId, 1).catch(() => undefined)
-                      }
-                    >
-                      <Plus aria-hidden="true" size={14} />
-                    </Button>
-                  </div>
-                  {item.available && item.lineSubtotalCents !== null ? (
-                    <span className="cart-subtotal">{formatZarCents(item.lineSubtotalCents)}</span>
-                  ) : (
-                    <span className="cart-subtotal cart-item-unavailable">—</span>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Remove ${getItemLineLabel(item)} from cart`}
-                    disabled={isBusy}
-                    onClick={() => void removeItem(item.productId).catch(() => undefined)}
-                  >
-                    <Trash2 aria-hidden="true" size={15} />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div> : null}
           {cart && !order ? (
-            <div className="cart-summary">
-              <div>
-                <span className="cart-summary-label">Merchandise subtotal</span>
-                <strong>{formatZarCents(cart.totalCents)}</strong>
+            <>
+              <div className="cart-list" aria-live="polite">
+                {cart.items.map((item) => (
+                  <div className="cart-item" key={item.productId}>
+                    <CartProductImage slug={item.product?.slug} name={getItemLineLabel(item)} />
+                    <div className="cart-item-copy">
+                      <span className="cart-item-name">{getItemLineLabel(item)}</span>
+                      {item.available && item.unitPriceCents !== null ? (
+                        <span className="cart-item-price">
+                          {formatZarCents(item.unitPriceCents)}
+                        </span>
+                      ) : (
+                        <span className="cart-item-price cart-item-unavailable">
+                          Unavailable — remove this item to continue
+                        </span>
+                      )}
+                    </div>
+                    <div className="cart-item-controls">
+                      <div className="cart-quantity-row">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
+                          disabled={isBusy || !item.available || item.quantity <= 1}
+                          onClick={() =>
+                            void changeItemQuantity(item.productId, -1).catch(() => undefined)
+                          }
+                        >
+                          <Minus aria-hidden="true" size={14} />
+                        </Button>
+                        <span aria-live="polite">{item.quantity}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
+                          disabled={isBusy || !item.available || item.quantity >= 99}
+                          onClick={() =>
+                            void changeItemQuantity(item.productId, 1).catch(() => undefined)
+                          }
+                        >
+                          <Plus aria-hidden="true" size={14} />
+                        </Button>
+                      </div>
+                      {item.available && item.lineSubtotalCents !== null ? (
+                        <span className="cart-subtotal">
+                          {formatZarCents(item.lineSubtotalCents)}
+                        </span>
+                      ) : (
+                        <span className="cart-subtotal cart-item-unavailable">—</span>
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remove ${getItemLineLabel(item)} from basket`}
+                        disabled={isBusy}
+                        onClick={() => void removeItem(item.productId).catch(() => undefined)}
+                      >
+                        <Trash2 aria-hidden="true" size={15} />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isBusy}
-                onClick={() => void clearCart().catch(() => undefined)}
-              >
-                Clear cart
-              </Button>
-            </div>
+              <div className="cart-summary">
+                <div>
+                  <span className="cart-summary-label">Merchandise subtotal</span>
+                  <strong>{formatZarCents(cart.totalCents)}</strong>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isBusy}
+                  onClick={() => void clearCart().catch(() => undefined)}
+                >
+                  Clear basket
+                </Button>
+              </div>
+            </>
           ) : null}
-          {!order ? (
-            <form className="mt-5 space-y-4 rounded-lg border border-border bg-card p-4" onSubmit={(event) => void createOrder(event)}>
-              <h2 className="text-lg font-medium">Delivery and shipping</h2>
+
+          {restoreFailed ? (
+            <section className="checkout-panel mt-5" role="alert">
+              <p>Your saved order must be recovered before another order can be created.</p>
+              <Button type="button" variant="outline" onClick={() => void retryOrderRestore()}>
+                Retry loading saved order
+              </Button>
+            </section>
+          ) : null}
+          {!order && !restoreFailed ? (
+            <section className="checkout-panel mt-5" aria-labelledby="delivery-address-title">
+              <div>
+                <span className="checkout-step-label">Step 2 of 4</span>
+                <h2 id="delivery-address-title" className="text-xl font-medium">
+                  Delivery address
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Select a verified South African address so we can request accurate delivery
+                  options.
+                </p>
+              </div>
               {!user ? (
                 <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">Sign in to choose a saved delivery address and create your order.</p>
-                  <Button type="button" variant="outline" onClick={onSignIn}>Sign in to checkout</Button>
+                  <p className="text-sm text-muted-foreground">
+                    Sign in to save your delivery address and place this order.
+                  </p>
+                  <Button type="button" variant="outline" onClick={onSignIn}>
+                    Sign in to checkout
+                  </Button>
                 </div>
-              ) : user.addresses.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Add a saved delivery address in My Account before checkout.</p>
               ) : (
-                <>
+                <form
+                  className="grid gap-4 sm:grid-cols-2"
+                  onSubmit={(event) => void createOrder(event)}
+                >
+                  {pendingAttempt?.addressId && selectedAddress ? (
+                    <div className="checkout-review-address sm:col-span-2">
+                      <strong>Verified delivery address saved</strong>
+                      <p>{selectedAddress.formattedAddress}</p>
+                      <p className="text-muted-foreground">
+                        This address is locked for the safe retry of your existing order attempt.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="sm:col-span-2">
+                      <AddressAutocomplete onSelect={onAddressSelect} />
+                    </div>
+                  )}
+                  {selectedAddress ? (
+                    <>
+                      <label className="space-y-1 text-sm">
+                        <span>Recipient name</span>
+                        <input
+                          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+                          maxLength={100}
+                          required
+                          value={recipientName}
+                          disabled={Boolean(pendingAttempt?.addressId)}
+                          onChange={(event) => setRecipientName(event.currentTarget.value)}
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm">
+                        <span>Delivery phone number</span>
+                        <input
+                          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+                          autoComplete="tel"
+                          maxLength={30}
+                          required
+                          value={phoneNumber}
+                          disabled={Boolean(pendingAttempt?.addressId)}
+                          onChange={(event) => setPhoneNumber(event.currentTarget.value)}
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm sm:col-span-2">
+                        <span>Apartment, unit or complex (optional)</span>
+                        <input
+                          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+                          maxLength={200}
+                          value={addressLine2}
+                          disabled={Boolean(pendingAttempt?.addressId)}
+                          onChange={(event) => setAddressLine2(event.currentTarget.value)}
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm sm:col-span-2">
+                        <span>Delivery instructions (optional)</span>
+                        <textarea
+                          className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2"
+                          maxLength={500}
+                          value={deliveryInstructions}
+                          disabled={Boolean(pendingAttempt?.addressId)}
+                          onChange={(event) => setDeliveryInstructions(event.currentTarget.value)}
+                        />
+                      </label>
+                      <div className="rounded-md border border-border bg-muted/30 p-3 text-sm sm:col-span-2">
+                        <strong>Selected delivery address</strong>
+                        <p>{selectedAddress.formattedAddress}</p>
+                        <p className="text-muted-foreground">
+                          {selectedAddress.localArea}, {selectedAddress.city},{" "}
+                          {selectedAddress.province} {selectedAddress.postalCode}
+                        </p>
+                      </div>
+                    </>
+                  ) : null}
                   {cart?.hasUnavailableItems ? (
-                    <p className="cart-item-unavailable" role="alert">
-                      Remove unavailable or out-of-stock items before creating this order.
+                    <p className="cart-item-unavailable sm:col-span-2" role="alert">
+                      Remove unavailable or out-of-stock products before continuing.
                     </p>
                   ) : null}
-                  <label className="block space-y-1 text-sm">
-                    <span>Delivery address</span>
-                    <select
-                      className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
-                      value={addressId}
-                      onChange={(event) => {
-                        setAddressId(event.currentTarget.value);
-                        setCheckoutError(null);
-                        setPendingAttempt(null);
-                      }}
-                      required
-                      disabled={checkoutBusy}
+                  <div className="sm:col-span-2">
+                    <Button
+                      type="submit"
+                      disabled={
+                        checkoutBusy ||
+                        restoringCheckout ||
+                        isBusy ||
+                        !selectedAddress ||
+                        !recipientName.trim() ||
+                        !phoneNumber.trim() ||
+                        Boolean(cart?.hasUnavailableItems)
+                      }
                     >
-                      <option value="">Choose a saved address</option>
-                      {user.addresses.map((address) => (
-                        <option key={address.id} value={address.id} disabled={!address.localArea?.trim()}>
-                          {address.label}{address.localArea?.trim() ? ` — ${address.localArea}` : " — add suburb/local area in My Account"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="text-xs text-muted-foreground">A suburb/local area is required for shipping quotes. Older saved addresses without one can be updated in My Account.</p>
-                      {!user.addresses.some((address) => address.localArea?.trim()) ? (
-                        <Button type="button" variant="link" className="px-0" onClick={onManageAddress}>
-                          Manage saved addresses
-                        </Button>
-                      ) : null}
-                  <Button
-                    type="submit"
-                    disabled={checkoutBusy || isBusy || !addressId || cart?.hasUnavailableItems}
-                  >
-                    {checkoutBusy ? "Creating order…" : pendingAttempt?.addressId === addressId ? "Retry order creation" : "Create order and continue"}
-                  </Button>
-                </>
+                      {checkoutBusy
+                        ? "Saving address and creating order…"
+                        : pendingAttempt?.addressId
+                          ? "Retry order creation"
+                          : "Save verified address and continue"}
+                    </Button>
+                  </div>
+                </form>
               )}
-            </form>
+            </section>
           ) : null}
-          {checkoutError ? <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{checkoutError}</p> : null}
-          {checkoutMessage ? <p className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm" role="status">{checkoutMessage}</p> : null}
+
+          {checkoutError ? (
+            <p
+              className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+              role="alert"
+            >
+              {checkoutError}
+            </p>
+          ) : null}
+          {checkoutMessage ? (
+            <p
+              className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm"
+              role="status"
+            >
+              {checkoutMessage}
+            </p>
+          ) : null}
+
           {order ? (
-            <section className="mt-5 space-y-4 rounded-lg border border-border bg-card p-4" aria-labelledby="shipping-quote-title">
+            <section className="checkout-panel mt-5" aria-labelledby="checkout-review-title">
               <div>
-                <h2 id="shipping-quote-title" className="text-lg font-medium">Order {order.orderNumber}</h2>
-                <p className="text-sm text-muted-foreground">Status: {order.status.replace(/_/g, " ")}</p>
+                <span className="checkout-step-label">
+                  {selectedQuote ? "Step 4 of 4" : "Step 3 of 4"}
+                </span>
+                <h2 id="checkout-review-title" className="text-xl font-medium">
+                  Review order {order.orderNumber}
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Order status: {order.status.replace(/_/g, " ")}
+                </p>
               </div>
-              <dl className="grid gap-2 text-sm sm:grid-cols-3">
-                <div><dt className="text-muted-foreground">Merchandise subtotal</dt><dd className="font-medium">{formatZarCents(order.subtotalCents)}</dd></div>
-                <div><dt className="text-muted-foreground">Shipping fee</dt><dd className="font-medium">{selectedQuote ? formatZarCents(selectedQuote.rateCents) : "Not selected"}</dd></div>
-                <div><dt className="text-muted-foreground">Order total</dt><dd className="font-medium">{formatZarCents(order.totalCents)}</dd></div>
+              <div className="checkout-review-address">
+                <h3 className="font-medium">Delivering to</h3>
+                <p>
+                  {order.deliveryAddress.recipientName} · {order.deliveryAddress.phoneNumber}
+                </p>
+                <p>
+                  {order.deliveryAddress.addressLine1}
+                  {order.deliveryAddress.addressLine2
+                    ? `, ${order.deliveryAddress.addressLine2}`
+                    : ""}
+                  {order.deliveryAddress.localArea ? `, ${order.deliveryAddress.localArea}` : ""},{" "}
+                  {order.deliveryAddress.city}, {order.deliveryAddress.province}{" "}
+                  {order.deliveryAddress.postalCode}, {order.deliveryAddress.country}
+                </p>
+              </div>
+              <ul className="checkout-review-items">
+                {order.items.map((item) => (
+                  <li key={`${order.id}-${item.productId}`}>
+                    <span>
+                      {item.name} × {item.quantity}
+                    </span>
+                    <strong>{formatZarCents(item.lineSubtotalCents)}</strong>
+                  </li>
+                ))}
+              </ul>
+              <div className="checkout-delivery-options">
+                <div>
+                  <h3 className="font-medium">Delivery service</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Choose a live rate from Ship Logic. Rates are refreshed on request.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={checkoutBusy}
+                  onClick={() => void requestQuotes()}
+                >
+                  {checkoutBusy && quotes === null
+                    ? "Loading delivery rates…"
+                    : quotes === null
+                      ? "Get delivery options"
+                      : "Refresh delivery options"}
+                </Button>
+                {quotes?.length === 0 ? (
+                  <p className="text-sm text-muted-foreground" role="status">
+                    No rates are available. Retry when delivery service is available.
+                  </p>
+                ) : null}
+                {quotes?.length ? (
+                  <ul className="grid gap-3">
+                    {quotes.map((quote) => (
+                      <li
+                        className={`checkout-quote ${selectedQuote?.quoteId === quote.quoteId ? "checkout-quote-selected" : ""}`}
+                        key={quote.quoteId}
+                      >
+                        <div>
+                          <strong>{quote.serviceLevel.name}</strong>
+                          {quote.serviceLevel.deliveryDateFrom ||
+                          quote.serviceLevel.deliveryDateTo ? (
+                            <p className="text-sm text-muted-foreground">
+                              Estimated delivery:{" "}
+                              {quote.serviceLevel.deliveryDateFrom &&
+                              quote.serviceLevel.deliveryDateTo
+                                ? `${quote.serviceLevel.deliveryDateFrom} – ${quote.serviceLevel.deliveryDateTo}`
+                                : (quote.serviceLevel.deliveryDateFrom ??
+                                  quote.serviceLevel.deliveryDateTo)}
+                            </p>
+                          ) : null}
+                          <p>{formatZarCents(quote.rateCents)}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant={
+                            selectedQuote?.quoteId === quote.quoteId ? "secondary" : "outline"
+                          }
+                          disabled={checkoutBusy}
+                          onClick={() => void selectQuote(quote)}
+                        >
+                          {selectedQuote?.quoteId === quote.quoteId ? "Selected" : "Select service"}
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+              <dl className="checkout-total-list">
+                <div>
+                  <dt>Merchandise subtotal</dt>
+                  <dd>{formatZarCents(order.subtotalCents)}</dd>
+                </div>
+                <div>
+                  <dt>Delivery</dt>
+                  <dd>
+                    {selectedQuote ? formatZarCents(selectedQuote.rateCents) : "Choose a service"}
+                  </dd>
+                </div>
+                <div className="checkout-grand-total">
+                  <dt>Backend order total</dt>
+                  <dd>{formatZarCents(order.totalCents)}</dd>
+                </div>
               </dl>
-              <Button type="button" variant="outline" disabled={checkoutBusy} onClick={() => void requestQuotes()}>
-                {checkoutBusy && quotes === null ? "Requesting rates…" : "Request delivery rates"}
-              </Button>
-              {quotes?.length === 0 ? <p className="text-sm text-muted-foreground">No rates were returned. You can try again later.</p> : null}
-              {quotes?.length ? (
-                <ul className="space-y-3">
-                  {quotes.map((quote) => (
-                    <li key={quote.quoteId} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
-                      <div className="text-sm">
-                        <strong>{quote.serviceLevel.name}</strong>
-                        {quote.serviceLevel.deliveryDateFrom || quote.serviceLevel.deliveryDateTo ? (
-                          <p className="text-muted-foreground">
-                            Estimated delivery: {quote.serviceLevel.deliveryDateFrom && quote.serviceLevel.deliveryDateTo
-                              ? `${quote.serviceLevel.deliveryDateFrom} – ${quote.serviceLevel.deliveryDateTo}`
-                              : quote.serviceLevel.deliveryDateFrom ?? quote.serviceLevel.deliveryDateTo}
-                          </p>
-                        ) : null}
-                        <p>{formatZarCents(quote.rateCents)}</p>
-                      </div>
-                      <Button type="button" variant={selectedQuote?.quoteId === quote.quoteId ? "secondary" : "outline"} disabled={checkoutBusy} onClick={() => void selectQuote(quote)}>
-                        {selectedQuote?.quoteId === quote.quoteId ? "Selected" : "Select service"}
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
+              {selectedQuote && !paymentCheckout ? (
+                <Button
+                  type="button"
+                  disabled={checkoutBusy}
+                  onClick={() => void initiatePayment()}
+                >
+                  {checkoutBusy ? "Preparing secure payment…" : "Continue to payment"}
+                </Button>
               ) : null}
-              <p className="text-xs text-muted-foreground">Payment is not available in this checkout stage.</p>
+              {paymentCheckout ? (
+                <div className="checkout-payment-handoff">
+                  <p>
+                    PayFast will collect{" "}
+                    <strong>{formatZarCents(paymentCheckout.amountBreakdown.totalCents)}</strong>,
+                    including {formatZarCents(paymentCheckout.amountBreakdown.shippingCents)}{" "}
+                    delivery.
+                  </p>
+                  <form method="post" action={paymentCheckout.checkoutUrl}>
+                    {Object.entries(paymentCheckout.fields).map(([name, value]) => (
+                      <input key={name} type="hidden" name={name} value={value} />
+                    ))}
+                    <Button type="submit">Continue to secure PayFast checkout</Button>
+                  </form>
+                </div>
+              ) : null}
+              {order.status === "paid" ? (
+                <Button type="button" variant="outline" onClick={startNewCheckout}>
+                  Start a new checkout
+                </Button>
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                Payment is confirmed by the backend after PayFast’s notification. Returning from
+                PayFast alone is not proof of payment.
+              </p>
             </section>
           ) : null}
           <Button type="button" variant="outline" onClick={onContinueShopping}>

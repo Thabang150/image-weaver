@@ -27,20 +27,19 @@ export type PreviewView =
   | "forgot-password"
   | "reset-password"
   | "admin-forgot-password"
-  | "admin-reset-password";
+  | "admin-reset-password"
+  | "payment-return"
+  | "payment-cancel";
 
 interface PreviewSiteProps {
   view: PreviewView;
   product: string | undefined;
   returnTo: "cart" | "account" | "admin" | undefined;
   verificationToken: string | undefined;
+  checkoutOrderId: string | undefined;
   isEmailLink: boolean;
   onClearEmailLink: () => void;
-  onNavigate: (
-    view: PreviewView,
-    returnTo?: "cart" | "account" | "admin",
-    token?: string,
-  ) => void;
+  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin", token?: string) => void;
   onSelectProduct: (slug: string) => void;
   onBackToCatalogue: () => void;
 }
@@ -70,10 +69,14 @@ function describeAuthError(error: unknown, action: string): string {
       return "The backend denied this request. Your session may have expired, or recent authentication may be required.";
     }
     if (error.status === 409) {
-      return error.message || "This account or request already exists. Check the details and try again.";
+      return (
+        error.message || "This account or request already exists. Check the details and try again."
+      );
     }
     if (error.status === 400) {
-      return error.message || `${action} was not accepted. Check the required fields and try again.`;
+      return (
+        error.message || `${action} was not accepted. Check the required fields and try again.`
+      );
     }
     if (error.status === 429) return "Too many attempts. Wait a few minutes before trying again.";
     if (error.status >= 500)
@@ -86,6 +89,114 @@ function describeAuthError(error: unknown, action: string): string {
     return "This request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
   return `${action} could not be completed. Check your connection and try again.`;
+}
+
+function PaymentResultPage({
+  orderId,
+  cancelled,
+  user,
+  sessionLoading,
+  onNavigate,
+}: {
+  orderId: string | undefined;
+  cancelled: boolean;
+  user: PublicUser | undefined;
+  sessionLoading: boolean;
+  onNavigate: PreviewSiteProps["onNavigate"];
+}) {
+  const orderQuery = useQuery({
+    queryKey: ["orders", "customer", orderId],
+    queryFn: () => ordersApi.getCustomerOrder(orderId ?? ""),
+    enabled: Boolean(orderId && user),
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.status === "pending_payment" ? 8000 : false),
+  });
+  const isPaid = orderQuery.data?.status === "paid";
+
+  return (
+    <main className="mx-auto w-full max-w-3xl space-y-5 px-5 py-12">
+      <span className="eyebrow">{cancelled ? "Payment cancelled" : "Payment status"}</span>
+      <h1 className="section-title">
+        {isPaid
+          ? "Payment confirmed"
+          : orderQuery.isLoading
+            ? "Checking your order"
+            : cancelled
+              ? "Payment was not completed"
+              : "Payment confirmation pending"}
+      </h1>
+      {!orderId ? (
+        <p className="rounded-md border border-destructive/40 p-4 text-sm" role="alert">
+          The payment return did not include an order reference. No payment status can be confirmed
+          here.
+        </p>
+      ) : sessionLoading ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Checking your customer session…
+        </p>
+      ) : !user ? (
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Sign in to retrieve the latest status of your order. A redirect from PayFast is not
+            payment confirmation.
+          </p>
+          <Button type="button" onClick={() => onNavigate("login", "cart")}>
+            Sign in to check order
+          </Button>
+        </div>
+      ) : orderQuery.isLoading ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Retrieving payment status from the store…
+        </p>
+      ) : orderQuery.isError ? (
+        <div className="space-y-3">
+          <p className="text-sm text-destructive" role="alert">
+            Order status could not be retrieved. Retry before treating this payment as complete.
+          </p>
+          <Button type="button" variant="outline" onClick={() => void orderQuery.refetch()}>
+            Retry status check
+          </Button>
+        </div>
+      ) : orderQuery.data ? (
+        <div className="space-y-3 rounded-lg border border-border bg-card p-5">
+          <p className="font-medium">Order {orderQuery.data.orderNumber}</p>
+          {isPaid ? (
+            <p className="text-sm" role="status">
+              The backend has confirmed your payment. Your order total was{" "}
+              {formatZarCents(orderQuery.data.totalCents)}.
+            </p>
+          ) : orderQuery.data.status === "pending_payment" ? (
+            <p className="text-sm" role="status">
+              The store has not received final payment confirmation yet. This page checks again
+              automatically; you can also refresh the status.
+            </p>
+          ) : (
+            <p className="text-sm" role="status">
+              The backend currently reports “{orderQuery.data.status.replace(/_/g, " ")}”. Contact
+              support if you believe payment was completed.
+            </p>
+          )}
+          {cancelled && !isPaid ? (
+            <p className="text-sm text-muted-foreground">
+              PayFast returned to the cancellation page. The order status shown above comes from the
+              store and is authoritative.
+            </p>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void orderQuery.refetch()}
+            disabled={orderQuery.isFetching}
+          >
+            {orderQuery.isFetching ? "Refreshing…" : "Refresh payment status"}
+          </Button>
+        </div>
+      ) : null}
+      <Button type="button" variant="outline" onClick={() => onNavigate("shop")}>
+        Continue shopping
+      </Button>
+    </main>
+  );
 }
 
 function FeedbackMessage({ feedback }: { feedback: Feedback | null }) {
@@ -116,11 +227,7 @@ function SiteFrame({
   user: PublicUser | undefined;
   onLogout: () => void;
   logoutBusy: boolean;
-  onNavigate: (
-    view: PreviewView,
-    returnTo?: "cart" | "account" | "admin",
-    token?: string,
-  ) => void;
+  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin", token?: string) => void;
 }) {
   const isAdmin = user ? isAdminUser(user) : false;
   return (
@@ -187,6 +294,7 @@ export function PreviewSite({
   product,
   returnTo,
   verificationToken,
+  checkoutOrderId,
   isEmailLink,
   onClearEmailLink,
   onNavigate,
@@ -250,9 +358,7 @@ export function PreviewSite({
   } else if (view === "admin-register") {
     content = <AdminRegisterPage onNavigate={onNavigate} />;
   } else if (view === "verify-email") {
-    content = (
-      <VerificationFlowChoice onNavigate={onNavigate} token={verificationToken} />
-    );
+    content = <VerificationFlowChoice onNavigate={onNavigate} token={verificationToken} />;
   } else if (view === "customer-verify-email") {
     content = (
       <CustomerEmailVerificationPage
@@ -296,8 +402,17 @@ export function PreviewSite({
       <CartPage
         onContinueShopping={() => onNavigate("shop")}
         onSignIn={() => onNavigate("login", "cart")}
-        onManageAddress={() => onNavigate("account")}
         user={user}
+      />
+    );
+  } else if (view === "payment-return" || view === "payment-cancel") {
+    content = (
+      <PaymentResultPage
+        orderId={checkoutOrderId}
+        cancelled={view === "payment-cancel"}
+        user={user}
+        sessionLoading={sessionQuery.isLoading}
+        onNavigate={onNavigate}
       />
     );
   } else {
@@ -460,25 +575,66 @@ function RegistrationInputs({
     <>
       <label className="block space-y-1 text-sm">
         <span>Name (optional)</span>
-        <input className={inputClass} autoComplete="name" maxLength={100} value={fields.displayName} onChange={(event) => setFields({ ...fields, displayName: event.currentTarget.value })} />
+        <input
+          className={inputClass}
+          autoComplete="name"
+          maxLength={100}
+          value={fields.displayName}
+          onChange={(event) => setFields({ ...fields, displayName: event.currentTarget.value })}
+        />
       </label>
       <label className="block space-y-1 text-sm">
         <span>Phone number (optional)</span>
-        <input className={inputClass} type="tel" autoComplete="tel" maxLength={30} value={fields.phoneNumber} onChange={(event) => setFields({ ...fields, phoneNumber: event.currentTarget.value })} />
+        <input
+          className={inputClass}
+          type="tel"
+          autoComplete="tel"
+          maxLength={30}
+          value={fields.phoneNumber}
+          onChange={(event) => setFields({ ...fields, phoneNumber: event.currentTarget.value })}
+        />
       </label>
       <label className="block space-y-1 text-sm">
         <span>Email</span>
-        <input className={inputClass} type="email" autoComplete="email" required maxLength={254} value={fields.email} onChange={(event) => setFields({ ...fields, email: event.currentTarget.value })} />
+        <input
+          className={inputClass}
+          type="email"
+          autoComplete="email"
+          required
+          maxLength={254}
+          value={fields.email}
+          onChange={(event) => setFields({ ...fields, email: event.currentTarget.value })}
+        />
       </label>
       <label className="block space-y-1 text-sm">
         <span>Password (12–128 characters)</span>
-        <input className={inputClass} type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={fields.password} onChange={(event) => setFields({ ...fields, password: event.currentTarget.value })} />
+        <input
+          className={inputClass}
+          type="password"
+          autoComplete="new-password"
+          required
+          minLength={12}
+          maxLength={128}
+          value={fields.password}
+          onChange={(event) => setFields({ ...fields, password: event.currentTarget.value })}
+        />
       </label>
       <label className="block space-y-1 text-sm">
         <span>Confirm password</span>
-        <input className={inputClass} type="password" autoComplete="new-password" required value={fields.confirmPassword} onChange={(event) => setFields({ ...fields, confirmPassword: event.currentTarget.value })} />
+        <input
+          className={inputClass}
+          type="password"
+          autoComplete="new-password"
+          required
+          value={fields.confirmPassword}
+          onChange={(event) => setFields({ ...fields, confirmPassword: event.currentTarget.value })}
+        />
       </label>
-      {fieldError ? <p role="alert" className="text-sm text-destructive">{fieldError}</p> : null}
+      {fieldError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {fieldError}
+        </p>
+      ) : null}
     </>
   );
 }
@@ -558,7 +714,11 @@ function CustomerRegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) 
       </p>
       <p className="mt-2 text-sm">
         Need to verify your customer email?{" "}
-        <button className="underline" type="button" onClick={() => onNavigate("customer-verify-email")}>
+        <button
+          className="underline"
+          type="button"
+          onClick={() => onNavigate("customer-verify-email")}
+        >
           Customer email verification
         </button>
       </p>
@@ -592,7 +752,9 @@ function AdminRegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => 
       return;
     }
     if (!fields.email.trim().toLowerCase().endsWith("@healtywayssa.co.za")) {
-      setFieldError("Only the exact @healtywayssa.co.za email domain is eligible for administrator registration.");
+      setFieldError(
+        "Only the exact @healtywayssa.co.za email domain is eligible for administrator registration.",
+      );
       return;
     }
     setBusy(true);
@@ -612,7 +774,10 @@ function AdminRegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => 
           : `Administrator account created for ${result.user.email}, but the backend did not accept an email for delivery. Request verification when email delivery is available. Email verification and TOTP enrollment are required.`,
       });
     } catch (error) {
-      setFeedback({ kind: "error", message: describeAuthError(error, "Administrator registration") });
+      setFeedback({
+        kind: "error",
+        message: describeAuthError(error, "Administrator registration"),
+      });
     } finally {
       setBusy(false);
     }
@@ -627,21 +792,33 @@ function AdminRegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => 
       <form className="space-y-4" onSubmit={(event) => void submit(event)}>
         <RegistrationInputs fields={fields} setFields={setFields} fieldError={fieldError} />
         <FeedbackMessage feedback={feedback} />
-        <Button type="submit" disabled={busy}>{busy ? "Creating administrator account…" : "Register administrator"}</Button>
+        <Button type="submit" disabled={busy}>
+          {busy ? "Creating administrator account…" : "Register administrator"}
+        </Button>
       </form>
-      <p className="mt-5 text-sm">Already registered? <button className="underline" type="button" onClick={() => onNavigate("admin-login")}>Administrator Login</button></p>
-      <p className="mt-2 text-sm">Need to verify your administrator email? <button className="underline" type="button" onClick={() => onNavigate("admin-verify-email")}>Administrator email verification</button></p>
+      <p className="mt-5 text-sm">
+        Already registered?{" "}
+        <button className="underline" type="button" onClick={() => onNavigate("admin-login")}>
+          Administrator Login
+        </button>
+      </p>
+      <p className="mt-2 text-sm">
+        Need to verify your administrator email?{" "}
+        <button
+          className="underline"
+          type="button"
+          onClick={() => onNavigate("admin-verify-email")}
+        >
+          Administrator email verification
+        </button>
+      </p>
     </FormPage>
   );
 }
 
 type CustomerLoginStep = "credentials" | "email-otp" | "two-factor";
 type AdminLoginStep =
-  | "credentials"
-  | "enrollment"
-  | "two-factor"
-  | "session-check"
-  | "recovery-codes";
+  "credentials" | "enrollment" | "two-factor" | "session-check" | "recovery-codes";
 
 function CustomerLoginPage({
   onNavigate,
@@ -744,10 +921,7 @@ function CustomerLoginPage({
       } else {
         const response = await authApi.verifyTwoFactor(code.trim());
         setCode("");
-        if (
-          response.user.roles.includes("customer") &&
-          !response.user.roles.includes("admin")
-        ) {
+        if (response.user.roles.includes("customer") && !response.user.roles.includes("admin")) {
           await finishCustomerLogin();
         } else {
           await rejectUnexpectedFlow(
@@ -769,7 +943,8 @@ function CustomerLoginPage({
       await authApi.resendEmailOtp();
       setFeedback({
         kind: "info",
-        message: "A new sign-in code was requested. Check your email; the previous code is no longer valid.",
+        message:
+          "A new sign-in code was requested. Check your email; the previous code is no longer valid.",
       });
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Email code resend") });
@@ -780,35 +955,104 @@ function CustomerLoginPage({
 
   return (
     <FormPage
-      title={step === "credentials" ? "Customer Login" : step === "email-otp" ? "Customer Email Verification" : "Customer Two-Factor Verification"}
+      title={
+        step === "credentials"
+          ? "Customer Login"
+          : step === "email-otp"
+            ? "Customer Email Verification"
+            : "Customer Two-Factor Verification"
+      }
       eyebrow="Customer Access"
     >
       {step === "credentials" ? (
         <form className="space-y-4" onSubmit={(event) => void submitCredentials(event)}>
           <label className="block space-y-1 text-sm">
             <span>Email</span>
-            <input className={inputClass} type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
+            <input
+              className={inputClass}
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.currentTarget.value)}
+            />
           </label>
           <label className="block space-y-1 text-sm">
             <span>Password</span>
-            <input className={inputClass} type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.currentTarget.value)} />
+            <input
+              className={inputClass}
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.currentTarget.value)}
+            />
           </label>
           <FeedbackMessage feedback={feedback} />
-          <Button type="submit" disabled={busy}>{busy ? "Signing in…" : "Customer Login"}</Button>
-          <p><button className="text-sm underline" type="button" onClick={() => onNavigate("forgot-password")}>Forgot password?</button></p>
-          <p className="text-sm">New customer? <button className="underline" type="button" onClick={() => onNavigate("register")}>Create a customer account</button></p>
-          <p className="text-sm">Administrator? <button className="underline" type="button" onClick={() => onNavigate("admin-login", "admin")}>Administrator Login</button></p>
+          <Button type="submit" disabled={busy}>
+            {busy ? "Signing in…" : "Customer Login"}
+          </Button>
+          <p>
+            <button
+              className="text-sm underline"
+              type="button"
+              onClick={() => onNavigate("forgot-password")}
+            >
+              Forgot password?
+            </button>
+          </p>
+          <p className="text-sm">
+            New customer?{" "}
+            <button className="underline" type="button" onClick={() => onNavigate("register")}>
+              Create a customer account
+            </button>
+          </p>
+          <p className="text-sm">
+            Administrator?{" "}
+            <button
+              className="underline"
+              type="button"
+              onClick={() => onNavigate("admin-login", "admin")}
+            >
+              Administrator Login
+            </button>
+          </p>
         </form>
       ) : (
         <form className="space-y-4" onSubmit={(event) => void submitChallenge(event)}>
-          <p className="text-sm">{step === "email-otp" ? "Enter the six-digit code sent to your email." : "Enter your customer authenticator or recovery code."}</p>
+          <p className="text-sm">
+            {step === "email-otp"
+              ? "Enter the six-digit code sent to your email."
+              : "Enter your customer authenticator or recovery code."}
+          </p>
           <label className="block space-y-1 text-sm">
             <span>{step === "email-otp" ? "Email code" : "Authenticator or recovery code"}</span>
-            <input className={inputClass} inputMode={step === "two-factor" ? "text" : "numeric"} autoComplete="one-time-code" minLength={6} maxLength={step === "two-factor" ? 32 : 6} pattern={step === "two-factor" ? undefined : "[0-9]{6}"} required value={code} onChange={(event) => setCode(event.currentTarget.value)} />
+            <input
+              className={inputClass}
+              inputMode={step === "two-factor" ? "text" : "numeric"}
+              autoComplete="one-time-code"
+              minLength={6}
+              maxLength={step === "two-factor" ? 32 : 6}
+              pattern={step === "two-factor" ? undefined : "[0-9]{6}"}
+              required
+              value={code}
+              onChange={(event) => setCode(event.currentTarget.value)}
+            />
           </label>
           <FeedbackMessage feedback={feedback} />
-          <Button type="submit" disabled={busy}>{busy ? "Verifying…" : "Continue customer sign-in"}</Button>
-          {step === "email-otp" ? <Button type="button" variant="outline" disabled={busy} onClick={() => void resendEmailOtp()}>{busy ? "Requesting…" : "Resend email code"}</Button> : null}
+          <Button type="submit" disabled={busy}>
+            {busy ? "Verifying…" : "Continue customer sign-in"}
+          </Button>
+          {step === "email-otp" ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void resendEmailOtp()}
+            >
+              {busy ? "Requesting…" : "Resend email code"}
+            </Button>
+          ) : null}
         </form>
       )}
     </FormPage>
@@ -920,7 +1164,11 @@ function AdminLoginPage({
         setCode("");
         setStep("recovery-codes");
         if (result.csrfRefreshFailed) {
-          setFeedback({ kind: "error", message: "Enrollment succeeded. Save your one-time recovery codes, then refresh before continuing." });
+          setFeedback({
+            kind: "error",
+            message:
+              "Enrollment succeeded. Save your one-time recovery codes, then refresh before continuing.",
+          });
         }
       } else {
         const result = await authApi.verifyTwoFactor(code.trim());
@@ -933,7 +1181,10 @@ function AdminLoginPage({
         }
       }
     } catch (error) {
-      setFeedback({ kind: "error", message: describeAuthError(error, "Administrator two-factor verification") });
+      setFeedback({
+        kind: "error",
+        message: describeAuthError(error, "Administrator two-factor verification"),
+      });
     } finally {
       setBusy(false);
     }
@@ -943,10 +1194,17 @@ function AdminLoginPage({
     return (
       <FormPage title="Save administrator recovery codes" eyebrow="Administrator Access">
         <p className="text-sm">These codes are displayed once. Save them securely.</p>
-        <ul className="my-4 list-disc pl-6">{recoveryCodes.map((entry) => <li key={entry}><code>{entry}</code></li>)}</ul>
+        <ul className="my-4 list-disc pl-6">
+          {recoveryCodes.map((entry) => (
+            <li key={entry}>
+              <code>{entry}</code>
+            </li>
+          ))}
+        </ul>
         <FeedbackMessage feedback={feedback} />
         <p className="text-sm">
-          Enrollment is complete. Sign in again with your administrator credentials and authenticator code to establish a fresh session.
+          Enrollment is complete. Sign in again with your administrator credentials and
+          authenticator code to establish a fresh session.
         </p>
         <Button type="button" onClick={() => onNavigate("admin-login")}>
           Continue to administrator login
@@ -957,23 +1215,82 @@ function AdminLoginPage({
 
   return (
     <FormPage
-      title={step === "credentials" ? "Administrator Login" : step === "enrollment" ? "Administrator Authenticator Setup" : step === "session-check" ? "Confirm Administrator Session" : "Administrator Two-Factor Verification"}
+      title={
+        step === "credentials"
+          ? "Administrator Login"
+          : step === "enrollment"
+            ? "Administrator Authenticator Setup"
+            : step === "session-check"
+              ? "Confirm Administrator Session"
+              : "Administrator Two-Factor Verification"
+      }
       eyebrow="Administrator Access"
-      description={step === "credentials" ? "Sign-in requires a backend-confirmed admin role, verified email, and mandatory authenticator verification." : undefined}
+      description={
+        step === "credentials"
+          ? "Sign-in requires a backend-confirmed admin role, verified email, and mandatory authenticator verification."
+          : undefined
+      }
     >
       {step === "credentials" ? (
         <form className="space-y-4" onSubmit={(event) => void submitCredentials(event)}>
-          <label className="block space-y-1 text-sm"><span>Administrator email</span><input className={inputClass} type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.currentTarget.value)} /></label>
-          <label className="block space-y-1 text-sm"><span>Password</span><input className={inputClass} type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.currentTarget.value)} /></label>
+          <label className="block space-y-1 text-sm">
+            <span>Administrator email</span>
+            <input
+              className={inputClass}
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.currentTarget.value)}
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span>Password</span>
+            <input
+              className={inputClass}
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.currentTarget.value)}
+            />
+          </label>
           <FeedbackMessage feedback={feedback} />
-          <Button type="submit" disabled={busy}>{busy ? "Signing in…" : "Administrator Login"}</Button>
-          <p><button className="text-sm underline" type="button" onClick={() => onNavigate("admin-forgot-password")}>Forgot administrator password?</button></p>
-          <p className="text-sm">Need administrator access? <button className="underline" type="button" onClick={() => onNavigate("admin-register")}>Administrator registration</button></p>
-          <p className="text-sm">Customer? <button className="underline" type="button" onClick={() => onNavigate("login")}>Customer Login</button></p>
+          <Button type="submit" disabled={busy}>
+            {busy ? "Signing in…" : "Administrator Login"}
+          </Button>
+          <p>
+            <button
+              className="text-sm underline"
+              type="button"
+              onClick={() => onNavigate("admin-forgot-password")}
+            >
+              Forgot administrator password?
+            </button>
+          </p>
+          <p className="text-sm">
+            Need administrator access?{" "}
+            <button
+              className="underline"
+              type="button"
+              onClick={() => onNavigate("admin-register")}
+            >
+              Administrator registration
+            </button>
+          </p>
+          <p className="text-sm">
+            Customer?{" "}
+            <button className="underline" type="button" onClick={() => onNavigate("login")}>
+              Customer Login
+            </button>
+          </p>
         </form>
       ) : step === "session-check" ? (
         <div className="space-y-4">
-          <p className="text-sm">The authenticator challenge was accepted. Confirming the backend session and administrator role before opening the dashboard.</p>
+          <p className="text-sm">
+            The authenticator challenge was accepted. Confirming the backend session and
+            administrator role before opening the dashboard.
+          </p>
           <FeedbackMessage feedback={feedback} />
           <Button
             type="button"
@@ -997,14 +1314,43 @@ function AdminLoginPage({
         <form className="space-y-4" onSubmit={(event) => void submitFactor(event)}>
           {step === "enrollment" ? (
             <div className="space-y-2 text-sm">
-              <p>Scan the provisioning URI if supported by your authenticator app, or add the account manually with this URI or secret.</p>
+              <p>
+                Scan the provisioning URI if supported by your authenticator app, or add the account
+                manually with this URI or secret.
+              </p>
               <code className="block break-all rounded bg-muted p-3">{provisioningUri}</code>
-              <p>Authenticator secret</p><code className="block break-all rounded bg-muted p-3">{secret}</code>
+              <p>Authenticator secret</p>
+              <code className="block break-all rounded bg-muted p-3">{secret}</code>
             </div>
-          ) : <p className="text-sm">Enter the current authenticator code or a recovery code.</p>}
-          <label className="block space-y-1 text-sm"><span>{step === "enrollment" ? "Six-digit authenticator code" : "Authenticator or recovery code"}</span><input className={inputClass} inputMode={step === "two-factor" ? "text" : "numeric"} autoComplete="one-time-code" minLength={6} maxLength={step === "two-factor" ? 32 : 6} pattern={step === "two-factor" ? undefined : "[0-9]{6}"} required value={code} onChange={(event) => setCode(event.currentTarget.value)} /></label>
+          ) : (
+            <p className="text-sm">Enter the current authenticator code or a recovery code.</p>
+          )}
+          <label className="block space-y-1 text-sm">
+            <span>
+              {step === "enrollment"
+                ? "Six-digit authenticator code"
+                : "Authenticator or recovery code"}
+            </span>
+            <input
+              className={inputClass}
+              inputMode={step === "two-factor" ? "text" : "numeric"}
+              autoComplete="one-time-code"
+              minLength={6}
+              maxLength={step === "two-factor" ? 32 : 6}
+              pattern={step === "two-factor" ? undefined : "[0-9]{6}"}
+              required
+              value={code}
+              onChange={(event) => setCode(event.currentTarget.value)}
+            />
+          </label>
           <FeedbackMessage feedback={feedback} />
-          <Button type="submit" disabled={busy}>{busy ? "Verifying…" : step === "enrollment" ? "Confirm administrator setup" : "Verify administrator sign-in"}</Button>
+          <Button type="submit" disabled={busy}>
+            {busy
+              ? "Verifying…"
+              : step === "enrollment"
+                ? "Confirm administrator setup"
+                : "Verify administrator sign-in"}
+          </Button>
         </form>
       )}
     </FormPage>
@@ -1023,11 +1369,7 @@ function VerificationFlowChoice({
   onNavigate,
   token,
 }: {
-  onNavigate: (
-    view: PreviewView,
-    returnTo?: "cart" | "account" | "admin",
-    token?: string,
-  ) => void;
+  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin", token?: string) => void;
   token: string | undefined;
 }) {
   return (
@@ -1366,11 +1708,7 @@ function ResetPasswordFlowChoice({
   onNavigate,
   token,
 }: {
-  onNavigate: (
-    view: PreviewView,
-    returnTo?: "cart" | "account" | "admin",
-    token?: string,
-  ) => void;
+  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin", token?: string) => void;
   token: string | undefined;
 }) {
   return (
@@ -1418,11 +1756,7 @@ function AdminResetPasswordPage({
   verificationToken: string | undefined;
 }) {
   return (
-    <PasswordResetForm
-      onNavigate={onNavigate}
-      verificationToken={verificationToken}
-      isAdminFlow
-    />
+    <PasswordResetForm onNavigate={onNavigate} verificationToken={verificationToken} isAdminFlow />
   );
 }
 

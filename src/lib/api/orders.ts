@@ -327,7 +327,10 @@ export function createOrdersApi(client: OrdersApiClient) {
 
     async getCustomerOrder(orderId: string): Promise<CustomerOrder> {
       const response = await client.request<unknown>(`/orders/${encodeURIComponent(orderId)}`);
-      return parseOrder(response);
+      if (!isRecord(response) || !("order" in response)) {
+        return invalidResponse();
+      }
+      return parseOrder(response["order"]);
     },
 
     async requestShippingQuotes(orderId: string): Promise<ShippingQuoteResponse> {

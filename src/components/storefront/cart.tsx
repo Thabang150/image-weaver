@@ -13,7 +13,7 @@ import {
 } from "react";
 
 import {
-  AddressAutocomplete,
+  ManualDeliveryAddressForm,
   type SelectedDeliveryAddress,
 } from "@/components/storefront/address-autocomplete";
 import { Button } from "@/components/ui/button";
@@ -512,6 +512,7 @@ export function CartPage({
   const [restoreOrderId, setRestoreOrderId] = useState<string | null>(null);
   const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [addressValidationRequested, setAddressValidationRequested] = useState(false);
   const [pendingAttempt, setPendingAttempt] = useState<{
     addressId: string;
     idempotencyKey: string;
@@ -599,7 +600,6 @@ export function CartPage({
         setAddressLine2(savedAddress.addressLine2 ?? "");
         setDeliveryInstructions(savedAddress.deliveryInstructions ?? "");
         setSelectedAddress({
-          placeId: `saved:${savedAddress.id}`,
           formattedAddress: [
             savedAddress.addressLine1,
             savedAddress.localArea,
@@ -657,7 +657,11 @@ export function CartPage({
 
   const onAddressSelect = useCallback((address: SelectedDeliveryAddress | null) => {
     setSelectedAddress(address);
+    setQuotes(null);
+    setSelectedQuote(null);
+    setPaymentCheckout(null);
     setCheckoutError(null);
+    if (address) setAddressValidationRequested(false);
     if (address) setCheckoutMessage(null);
   }, []);
 
@@ -690,6 +694,7 @@ export function CartPage({
     setRestoreFailed(false);
     setPendingAttempt(null);
     setSelectedAddress(null);
+    setAddressValidationRequested(false);
     setSelectedQuote(null);
     setQuotes(null);
     setPaymentCheckout(null);
@@ -700,13 +705,18 @@ export function CartPage({
 
   async function createOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (checkoutBusy || submitLockRef.current || !user || !selectedAddress) return;
+    setAddressValidationRequested(true);
+    if (checkoutBusy || submitLockRef.current || !user) return;
+    if (!selectedAddress) {
+      setCheckoutError("Complete the required delivery address fields before continuing.");
+      return;
+    }
     if (!recipientName.trim() || !phoneNumber.trim()) {
       setCheckoutError("Enter the recipient name and phone number for the delivery.");
       return;
     }
     if (!selectedAddress.localArea.trim()) {
-      setCheckoutError("Choose a suggestion that includes a suburb or local area.");
+      setCheckoutError("Enter a suburb or local area for delivery.");
       return;
     }
     if (cart?.hasUnavailableItems) {
@@ -1040,10 +1050,6 @@ export function CartPage({
                 <h2 id="delivery-address-title" className="text-xl font-medium">
                   Delivery address
                 </h2>
-                <p className="text-sm text-muted-foreground">
-                  Select a verified South African address so we can request accurate delivery
-                  options.
-                </p>
               </div>
               {!user ? (
                 <div className="space-y-3">
@@ -1061,7 +1067,7 @@ export function CartPage({
                 >
                   {pendingAttempt?.addressId && selectedAddress ? (
                     <div className="checkout-review-address sm:col-span-2">
-                      <strong>Verified delivery address saved</strong>
+                      <strong>Delivery address saved</strong>
                       <p>{selectedAddress.formattedAddress}</p>
                       <p className="text-muted-foreground">
                         This address is locked for the safe retry of your existing order attempt.
@@ -1069,7 +1075,11 @@ export function CartPage({
                     </div>
                   ) : (
                     <div className="sm:col-span-2">
-                      <AddressAutocomplete onSelect={onAddressSelect} />
+                      <ManualDeliveryAddressForm
+                        onSelect={onAddressSelect}
+                        showValidationErrors={addressValidationRequested}
+                        disabled={Boolean(pendingAttempt?.addressId)}
+                      />
                     </div>
                   )}
                   {selectedAddress ? (
@@ -1101,7 +1111,7 @@ export function CartPage({
                         <span>Apartment, unit or complex (optional)</span>
                         <input
                           className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
-                          maxLength={200}
+                          maxLength={120}
                           value={addressLine2}
                           disabled={Boolean(pendingAttempt?.addressId)}
                           onChange={(event) => setAddressLine2(event.currentTarget.value)}
@@ -1111,14 +1121,14 @@ export function CartPage({
                         <span>Delivery instructions (optional)</span>
                         <textarea
                           className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2"
-                          maxLength={500}
+                          maxLength={300}
                           value={deliveryInstructions}
                           disabled={Boolean(pendingAttempt?.addressId)}
                           onChange={(event) => setDeliveryInstructions(event.currentTarget.value)}
                         />
                       </label>
                       <div className="rounded-md border border-border bg-muted/30 p-3 text-sm sm:col-span-2">
-                        <strong>Selected delivery address</strong>
+                        <strong>Entered delivery address</strong>
                         <p>{selectedAddress.formattedAddress}</p>
                         <p className="text-muted-foreground">
                           {selectedAddress.localArea}, {selectedAddress.city},{" "}
@@ -1139,9 +1149,6 @@ export function CartPage({
                         checkoutBusy ||
                         restoringCheckout ||
                         isBusy ||
-                        !selectedAddress ||
-                        !recipientName.trim() ||
-                        !phoneNumber.trim() ||
                         Boolean(cart?.hasUnavailableItems)
                       }
                     >
@@ -1149,7 +1156,7 @@ export function CartPage({
                         ? "Saving address and creating order…"
                         : pendingAttempt?.addressId
                           ? "Retry order creation"
-                          : "Save verified address and continue"}
+                          : "Save delivery address and continue"}
                     </Button>
                   </div>
                 </form>

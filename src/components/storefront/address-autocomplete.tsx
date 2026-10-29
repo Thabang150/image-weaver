@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 export interface SelectedDeliveryAddress {
-  placeId: string;
+  placeId?: string;
   formattedAddress: string;
   addressLine1: string;
   localArea: string;
@@ -134,7 +134,7 @@ function resolveAddress(place: Place): SelectedDeliveryAddress | null {
   };
 }
 
-export function AddressAutocomplete({
+export function GooglePlacesAddressAutocomplete({
   onSelect,
 }: {
   onSelect: (address: SelectedDeliveryAddress | null) => void;
@@ -145,12 +145,13 @@ export function AddressAutocomplete({
   const [selectedAddress, setSelectedAddress] = useState<SelectedDeliveryAddress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const isEnabled = false; // Re-enable only as an intentional checkout integration change.
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? "";
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
   useEffect(() => {
-    if (!apiKey) return;
+    if (!isEnabled || !apiKey) return;
     let active = true;
     const previousAuthFailure = window.gm_authFailure;
     window.gm_authFailure = () => {
@@ -196,7 +197,9 @@ export function AddressAutocomplete({
       listenerRef.current = null;
       window.gm_authFailure = previousAuthFailure;
     };
-  }, [apiKey]);
+  }, [apiKey, isEnabled]);
+
+  if (!isEnabled) return null;
 
   return (
     <div className="space-y-2">
@@ -224,7 +227,7 @@ export function AddressAutocomplete({
             }
           }}
           placeholder="Start typing a street address"
-          disabled={!apiKey || loading}
+          disabled={!isEnabled || !apiKey || loading}
           aria-describedby="checkout-address-help"
         />
       </label>
@@ -233,9 +236,11 @@ export function AddressAutocomplete({
           ? `Selected: ${selectedAddress.formattedAddress}`
           : loading
             ? "Loading address search…"
-            : apiKey
-              ? "Choose an address from the suggestions. Typed text alone cannot be used for delivery."
-              : "Address search is not configured. The store administrator must add a restricted Places API key."}
+            : !isEnabled
+              ? "Address lookup is temporarily paused. Verified address selection is unavailable right now."
+              : apiKey
+                ? "Choose an address from the suggestions. Typed text alone cannot be used for delivery."
+                : "Address search is not configured. The store administrator must add a restricted Places API key."}
       </p>
       {selectedAddress ? (
         <button
@@ -256,6 +261,199 @@ export function AddressAutocomplete({
           {error}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+interface DeliveryAddressFields {
+  addressLine1: string;
+  localArea: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  country: string;
+}
+
+const emptyDeliveryAddress: DeliveryAddressFields = {
+  addressLine1: "",
+  localArea: "",
+  city: "",
+  province: "",
+  postalCode: "",
+  country: "South Africa",
+};
+
+const addressFieldLimits: Partial<Record<keyof DeliveryAddressFields, number>> = {
+  addressLine1: 120,
+  city: 80,
+  province: 80,
+  postalCode: 12,
+  country: 80,
+};
+
+function getDeliveryAddressErrors(
+  fields: DeliveryAddressFields,
+): Partial<Record<keyof DeliveryAddressFields, string>> {
+  const errors: Partial<Record<keyof DeliveryAddressFields, string>> = {};
+  const labels: Record<keyof DeliveryAddressFields, string> = {
+    addressLine1: "Street address and number",
+    localArea: "Suburb or local area",
+    city: "City",
+    province: "Province",
+    postalCode: "Postal code",
+    country: "Country",
+  };
+
+  const requiredFields: (keyof DeliveryAddressFields)[] = [
+    "addressLine1",
+    "localArea",
+    "city",
+    "province",
+    "postalCode",
+    "country",
+  ];
+  for (const key of requiredFields) {
+    const value = fields[key].trim();
+    if (!value) {
+      errors[key] = `${labels[key]} is required.`;
+    } else {
+      const maxLength = addressFieldLimits[key];
+      if (maxLength !== undefined && value.length > maxLength) {
+        errors[key] = `${labels[key]} must be ${maxLength} characters or fewer.`;
+      }
+    }
+  }
+  if (fields.country.trim().toLowerCase() !== "south africa") {
+    errors.country = "Delivery is currently available in South Africa only.";
+  }
+  return errors;
+}
+
+export function ManualDeliveryAddressForm({
+  onSelect,
+  showValidationErrors = false,
+  disabled = false,
+}: {
+  onSelect: (address: SelectedDeliveryAddress | null) => void;
+  showValidationErrors?: boolean;
+  disabled?: boolean;
+}) {
+  const [fields, setFields] = useState<DeliveryAddressFields>(emptyDeliveryAddress);
+  const [touched, setTouched] = useState<Partial<Record<keyof DeliveryAddressFields, boolean>>>({});
+  const errors = getDeliveryAddressErrors(fields);
+
+  function updateField(key: keyof DeliveryAddressFields, value: string) {
+    const updated = { ...fields, [key]: value };
+    setFields(updated);
+    const nextErrors = getDeliveryAddressErrors(updated);
+    if (Object.keys(nextErrors).length === 0) {
+      const formattedAddress = [
+        updated.addressLine1,
+        updated.localArea,
+        updated.city,
+        updated.province,
+        updated.postalCode,
+        updated.country,
+      ]
+        .map((part) => part.trim())
+        .join(", ");
+      onSelect({
+        formattedAddress,
+        addressLine1: updated.addressLine1.trim(),
+        localArea: updated.localArea.trim(),
+        city: updated.city.trim(),
+        province: updated.province.trim(),
+        postalCode: updated.postalCode.trim(),
+        country: "South Africa",
+      });
+    } else {
+      onSelect(null);
+    }
+  }
+
+  function renderFieldError(key: keyof DeliveryAddressFields) {
+    const message = (showValidationErrors || touched[key]) && errors[key];
+    return message ? (
+      <span className="text-sm text-destructive" role="alert">
+        {message}
+      </span>
+    ) : null;
+  }
+
+  function fieldProps(key: keyof DeliveryAddressFields) {
+    return {
+      value: fields[key],
+      disabled,
+      maxLength: addressFieldLimits[key],
+      onChange: (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+        updateField(key, event.currentTarget.value),
+      onBlur: () => setTouched((current) => ({ ...current, [key]: true })),
+      "aria-invalid": Boolean((showValidationErrors || touched[key]) && errors[key]),
+    };
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2" aria-label="Manual delivery address">
+      <p className="text-sm text-muted-foreground sm:col-span-2">
+        Copy your address from Google Maps if needed, then enter your street address, suburb, city
+        and postal code below. Please check your details carefully before continuing.
+      </p>
+      <label className="space-y-1 text-sm sm:col-span-2">
+        <span>Street address and number</span>
+        <input
+          {...fieldProps("addressLine1")}
+          autoComplete="address-line1"
+          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+          placeholder="Paste or enter your street address"
+        />
+        {renderFieldError("addressLine1")}
+      </label>
+      <label className="space-y-1 text-sm">
+        <span>Suburb or local area</span>
+        <input
+          {...fieldProps("localArea")}
+          autoComplete="address-level3"
+          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+        />
+        {renderFieldError("localArea")}
+      </label>
+      <label className="space-y-1 text-sm">
+        <span>City</span>
+        <input
+          {...fieldProps("city")}
+          autoComplete="address-level2"
+          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+        />
+        {renderFieldError("city")}
+      </label>
+      <label className="space-y-1 text-sm">
+        <span>Province</span>
+        <input
+          {...fieldProps("province")}
+          autoComplete="address-level1"
+          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+        />
+        {renderFieldError("province")}
+      </label>
+      <label className="space-y-1 text-sm">
+        <span>Postal code</span>
+        <input
+          {...fieldProps("postalCode")}
+          autoComplete="postal-code"
+          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+        />
+        {renderFieldError("postalCode")}
+      </label>
+      <label className="space-y-1 text-sm">
+        <span>Country</span>
+        <select
+          {...fieldProps("country")}
+          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+        >
+          <option value="South Africa">South Africa</option>
+        </select>
+        {renderFieldError("country")}
+      </label>
     </div>
   );
 }

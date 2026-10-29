@@ -246,6 +246,12 @@ interface ProductFormState {
   lowStockThreshold: string;
   packagingAmount: string;
   packagingUnit: string;
+  shippingParcelLengthCm: string;
+  shippingParcelWidthCm: string;
+  shippingParcelHeightCm: string;
+  shippingParcelWeightGrams: string;
+  shippingParcelVerified: boolean;
+  shippingParcelRemoved: boolean;
   status: ProductStatus;
   imageReferences: string[];
   primaryImageReference: string;
@@ -273,6 +279,12 @@ const emptyProductForm: ProductFormState = {
   lowStockThreshold: "",
   packagingAmount: "",
   packagingUnit: "",
+  shippingParcelLengthCm: "",
+  shippingParcelWidthCm: "",
+  shippingParcelHeightCm: "",
+  shippingParcelWeightGrams: "",
+  shippingParcelVerified: false,
+  shippingParcelRemoved: false,
   status: "draft",
   imageReferences: [],
   primaryImageReference: "",
@@ -294,6 +306,20 @@ function productToForm(product: AdminProduct): ProductFormState {
     packagingAmount:
       product.packaging === undefined ? "" : String(product.packaging.amount),
     packagingUnit: product.packaging?.unit ?? "",
+    shippingParcelLengthCm: product.shippingParcel
+      ? String(product.shippingParcel.lengthCm)
+      : "",
+    shippingParcelWidthCm: product.shippingParcel
+      ? String(product.shippingParcel.widthCm)
+      : "",
+    shippingParcelHeightCm: product.shippingParcel
+      ? String(product.shippingParcel.heightCm)
+      : "",
+    shippingParcelWeightGrams: product.shippingParcel
+      ? String(product.shippingParcel.weightGrams)
+      : "",
+    shippingParcelVerified: product.shippingParcel?.verified ?? false,
+    shippingParcelRemoved: false,
     status: product.status,
     imageReferences: [...product.imageReferences],
     primaryImageReference: product.primaryImageReference ?? "",
@@ -609,6 +635,12 @@ function ProductEditor({
   const uploadLockRef = useRef(false);
   const setField = <K extends keyof ProductFormState>(key: K, value: ProductFormState[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
+  const hasShippingParcelFormValues = [
+    form.shippingParcelLengthCm,
+    form.shippingParcelWidthCm,
+    form.shippingParcelHeightCm,
+    form.shippingParcelWeightGrams,
+  ].some((value) => value.trim());
 
   useEffect(
     () => () => previewUrlsRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl)),
@@ -805,6 +837,58 @@ function ProductEditor({
       setError("Enter both packaging amount and unit, or leave both empty.");
       return;
     }
+    const shippingParcelFields = [
+      form.shippingParcelLengthCm.trim(),
+      form.shippingParcelWidthCm.trim(),
+      form.shippingParcelHeightCm.trim(),
+      form.shippingParcelWeightGrams.trim(),
+    ];
+    const hasShippingParcelValues = shippingParcelFields.some(Boolean);
+    if (form.shippingParcelVerified && !hasShippingParcelValues) {
+      setError("Enter packed parcel measurements before verifying them.");
+      return;
+    }
+    let shippingParcel:
+      | {
+          lengthCm: number;
+          widthCm: number;
+          heightCm: number;
+          weightGrams: number;
+          verified: boolean;
+        }
+      | undefined;
+    if (hasShippingParcelValues) {
+      if (shippingParcelFields.some((value) => !value)) {
+        setError("Enter length, width, height and packed weight to configure shipping.");
+        return;
+      }
+      const lengthCm = Number(form.shippingParcelLengthCm);
+      const widthCm = Number(form.shippingParcelWidthCm);
+      const heightCm = Number(form.shippingParcelHeightCm);
+      const weightGrams = Number(form.shippingParcelWeightGrams);
+      if (
+        !Number.isFinite(lengthCm) ||
+        lengthCm <= 0 ||
+        !Number.isFinite(widthCm) ||
+        widthCm <= 0 ||
+        !Number.isFinite(heightCm) ||
+        heightCm <= 0
+      ) {
+        setError("Parcel length, width and height must be positive measurements in centimetres.");
+        return;
+      }
+      if (!Number.isSafeInteger(weightGrams) || weightGrams <= 0) {
+        setError("Packed weight must be a positive whole number of grams.");
+        return;
+      }
+      shippingParcel = {
+        lengthCm,
+        widthCm,
+        heightCm,
+        weightGrams,
+        verified: form.shippingParcelVerified,
+      };
+    }
     const baseline = product ? productToForm(product) : null;
     const payload: Record<string, unknown> = {};
     const putChanged = (key: keyof ProductFormState, apiKey: string, value: unknown) => {
@@ -840,6 +924,21 @@ function ProductEditor({
       form.packagingUnit !== baseline?.packagingUnit) {
       if (packagingAmount !== undefined && form.packagingUnit.trim()) {
         payload["packaging"] = { amount: packagingAmount, unit: form.packagingUnit.trim() };
+      }
+    }
+    if (form.shippingParcelRemoved && product?.shippingParcel) {
+      payload["shippingParcel"] = null;
+    } else if (shippingParcel) {
+      const previousParcel = product?.shippingParcel;
+      if (
+        !previousParcel ||
+        previousParcel.lengthCm !== shippingParcel.lengthCm ||
+        previousParcel.widthCm !== shippingParcel.widthCm ||
+        previousParcel.heightCm !== shippingParcel.heightCm ||
+        previousParcel.weightGrams !== shippingParcel.weightGrams ||
+        previousParcel.verified !== shippingParcel.verified
+      ) {
+        payload["shippingParcel"] = shippingParcel;
       }
     }
     if (!product) payload["currency"] = "ZAR";
@@ -899,6 +998,126 @@ function ProductEditor({
         <label>Packaging amount<input type="number" min="0.01" step="any" value={form.packagingAmount} onChange={(event) => setField("packagingAmount", event.currentTarget.value)} /></label>
         <label>Packaging unit<input maxLength={40} value={form.packagingUnit} onChange={(event) => setField("packagingUnit", event.currentTarget.value)} /></label>
         </div>
+      </fieldset>
+      <fieldset className="admin-editor-section">
+        <legend>Shipping &amp; Packaging</legend>
+        <p className="admin-muted">
+          Measure the complete packed unit for this SKU, including its shipping packaging—not just
+          the empty bottle. Enter dimensions in centimetres and packed weight in grams. Measurements
+          can be saved before they are verified.
+        </p>
+        <div className="admin-editor-grid">
+          <label>
+            Length (cm)
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              value={form.shippingParcelLengthCm}
+              disabled={saving}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  shippingParcelLengthCm: event.currentTarget.value,
+                  shippingParcelRemoved: false,
+                }))
+              }
+            />
+          </label>
+          <label>
+            Width (cm)
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              value={form.shippingParcelWidthCm}
+              disabled={saving}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  shippingParcelWidthCm: event.currentTarget.value,
+                  shippingParcelRemoved: false,
+                }))
+              }
+            />
+          </label>
+          <label>
+            Height (cm)
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              value={form.shippingParcelHeightCm}
+              disabled={saving}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  shippingParcelHeightCm: event.currentTarget.value,
+                  shippingParcelRemoved: false,
+                }))
+              }
+            />
+          </label>
+          <label>
+            Packed weight (grams)
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={form.shippingParcelWeightGrams}
+              disabled={saving}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  shippingParcelWeightGrams: event.currentTarget.value,
+                  shippingParcelRemoved: false,
+                }))
+              }
+            />
+          </label>
+        </div>
+        <label className="admin-checkbox-label">
+          <input
+            type="checkbox"
+            checked={form.shippingParcelVerified}
+            disabled={saving}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                shippingParcelVerified: event.currentTarget.checked,
+                shippingParcelRemoved: false,
+              }))
+            }
+          />
+          Parcel measurements verified
+        </label>
+        {product?.shippingParcel ? (
+          <p className="admin-muted">
+            {product.shippingParcel.verified
+              ? "Saved parcel measurements are verified."
+              : "Saved parcel measurements are not verified."}
+          </p>
+        ) : null}
+        {product?.shippingParcel || hasShippingParcelFormValues ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saving}
+            onClick={() =>
+              setForm((current) => ({
+                ...current,
+                shippingParcelLengthCm: "",
+                shippingParcelWidthCm: "",
+                shippingParcelHeightCm: "",
+                shippingParcelWeightGrams: "",
+                shippingParcelVerified: false,
+                shippingParcelRemoved: true,
+              }))
+            }
+          >
+            Remove shipping configuration
+          </Button>
+        ) : null}
       </fieldset>
       <fieldset className="admin-editor-section">
         <legend>Product Images</legend>

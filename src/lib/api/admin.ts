@@ -21,6 +21,14 @@ export interface AdminUploadedImage {
   bytes: number;
 }
 
+export interface AdminShippingParcel {
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+  weightGrams: number;
+  verified: boolean;
+}
+
 export interface AdminCategory {
   id: string;
   name: string;
@@ -47,6 +55,7 @@ export interface AdminProduct {
   priceConfirmed?: boolean;
   primaryImageReference?: string;
   packaging?: { amount: number; unit: string };
+  shippingParcel?: AdminShippingParcel | null;
   lowStockThreshold?: number;
   status: "draft" | "active" | "inactive" | "archived";
   imageReferences: string[];
@@ -273,6 +282,21 @@ function parseAdminProduct(value: unknown): AdminProduct {
         !Number.isFinite(product["packaging"]["amount"]) ||
         product["packaging"]["amount"] <= 0 ||
         typeof product["packaging"]["unit"] !== "string")) ||
+    (product["shippingParcel"] !== undefined &&
+      product["shippingParcel"] !== null &&
+      (!isRecord(product["shippingParcel"]) ||
+        typeof product["shippingParcel"]["lengthCm"] !== "number" ||
+        !Number.isFinite(product["shippingParcel"]["lengthCm"]) ||
+        product["shippingParcel"]["lengthCm"] <= 0 ||
+        typeof product["shippingParcel"]["widthCm"] !== "number" ||
+        !Number.isFinite(product["shippingParcel"]["widthCm"]) ||
+        product["shippingParcel"]["widthCm"] <= 0 ||
+        typeof product["shippingParcel"]["heightCm"] !== "number" ||
+        !Number.isFinite(product["shippingParcel"]["heightCm"]) ||
+        product["shippingParcel"]["heightCm"] <= 0 ||
+        !isSafeInteger(product["shippingParcel"]["weightGrams"]) ||
+        product["shippingParcel"]["weightGrams"] <= 0 ||
+        typeof product["shippingParcel"]["verified"] !== "boolean")) ||
     (product["isMockData"] !== undefined && typeof product["isMockData"] !== "boolean") ||
     (product["requiresConfirmation"] !== undefined &&
       (!Array.isArray(product["requiresConfirmation"]) ||
@@ -313,6 +337,19 @@ function parseAdminProduct(value: unknown): AdminProduct {
           },
         }
       : {}),
+    ...(product["shippingParcel"] === null
+      ? { shippingParcel: null }
+      : isRecord(product["shippingParcel"])
+        ? {
+            shippingParcel: {
+              lengthCm: Number(product["shippingParcel"]["lengthCm"]),
+              widthCm: Number(product["shippingParcel"]["widthCm"]),
+              heightCm: Number(product["shippingParcel"]["heightCm"]),
+              weightGrams: Number(product["shippingParcel"]["weightGrams"]),
+              verified: Boolean(product["shippingParcel"]["verified"]),
+            },
+          }
+        : {}),
     ...(isSafeInteger(product["lowStockThreshold"])
       ? { lowStockThreshold: product["lowStockThreshold"] }
       : {}),

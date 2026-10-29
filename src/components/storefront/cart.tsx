@@ -684,20 +684,22 @@ export function CartPage({
               </div>
             ))}
           </div> : null}
-          {cart && !order ? <div className="cart-summary">
-            <div>
-              <span className="cart-summary-label">Merchandise subtotal</span>
-              <strong>{formatZarCents(cart.totalCents)}</strong>
-            </div> : null}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isBusy}
-              onClick={() => void clearCart().catch(() => undefined)}
-            >
-              Clear cart
-            </Button>
-          </div>
+          {cart && !order ? (
+            <div className="cart-summary">
+              <div>
+                <span className="cart-summary-label">Merchandise subtotal</span>
+                <strong>{formatZarCents(cart.totalCents)}</strong>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isBusy}
+                onClick={() => void clearCart().catch(() => undefined)}
+              >
+                Clear cart
+              </Button>
+            </div>
+          ) : null}
           {!order ? (
             <form className="mt-5 space-y-4 rounded-lg border border-border bg-card p-4" onSubmit={(event) => void createOrder(event)}>
               <h2 className="text-lg font-medium">Delivery and shipping</h2>

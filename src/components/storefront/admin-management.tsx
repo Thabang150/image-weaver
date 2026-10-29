@@ -760,11 +760,14 @@ function ProductEditor({
       return;
     }
     const imageReferences = form.imageReferences;
-    if (
-      imageReferences.length > 10 ||
-      !imageReferences.every(isAllowedProductImageUrl)
-    ) {
-      setError("Use up to 10 HTTPS image references from the configured approved image hosts.");
+    if (imageReferences.length > 10) {
+      setError("A product can have up to 10 images.");
+      return;
+    }
+    if (!imageReferences.every(isAllowedProductImageUrl)) {
+      setError(
+        "One or more image hosts are not approved for display. Configure VITE_PRODUCT_IMAGE_ALLOWED_HOSTS to match the backend image host allowlist.",
+      );
       return;
     }
     if (

@@ -1,10 +1,9 @@
 function getAllowedHosts() {
-  return new Set(
-    (import.meta.env.VITE_PRODUCT_IMAGE_ALLOWED_HOSTS ?? "")
-      .split(",")
-      .map((host) => host.trim().toLowerCase())
-      .filter(Boolean),
-  );
+  const configuredHosts = (import.meta.env.VITE_PRODUCT_IMAGE_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set(["res.cloudinary.com", ...configuredHosts]);
 }
 
 export function isAllowedProductImageUrl(value: string): boolean {

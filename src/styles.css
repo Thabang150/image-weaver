@@ -1091,6 +1091,15 @@ body {
   border-radius: 8px;
   padding: 14px;
 }
+.admin-editor-form .admin-image-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .admin-upload-preview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

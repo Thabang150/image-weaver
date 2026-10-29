@@ -12,7 +12,6 @@ import {
   type AdminCategory,
   type AdminInventoryItem,
   type AdminProduct,
-  type AdminUploadedImage,
   type InventoryList,
 } from "@/lib/api/admin";
 import { isAllowedProductImageUrl } from "@/lib/image-url";
@@ -248,7 +247,7 @@ interface ProductFormState {
   packagingAmount: string;
   packagingUnit: string;
   status: ProductStatus;
-  imageReferencesText: string;
+  imageReferences: string[];
   primaryImageReference: string;
 }
 
@@ -275,7 +274,7 @@ const emptyProductForm: ProductFormState = {
   packagingAmount: "",
   packagingUnit: "",
   status: "draft",
-  imageReferencesText: "",
+  imageReferences: [],
   primaryImageReference: "",
 };
 
@@ -296,7 +295,7 @@ function productToForm(product: AdminProduct): ProductFormState {
       product.packaging === undefined ? "" : String(product.packaging.amount),
     packagingUnit: product.packaging?.unit ?? "",
     status: product.status,
-    imageReferencesText: product.imageReferences.join("\n"),
+    imageReferences: [...product.imageReferences],
     primaryImageReference: product.primaryImageReference ?? "",
   };
 }
@@ -607,6 +606,7 @@ function ProductEditor({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlsRef = useRef(new Set<string>());
   const saveLockRef = useRef(false);
+  const uploadLockRef = useRef(false);
   const setField = <K extends keyof ProductFormState>(key: K, value: ProductFormState[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
 
@@ -618,10 +618,7 @@ function ProductEditor({
   function chooseImages(files: FileList | null) {
     if (!files?.length) return;
     const selected = Array.from(files);
-    const references = form.imageReferencesText
-      .split(/\r?\n/)
-      .map((reference) => reference.trim())
-      .filter(Boolean);
+    const references = form.imageReferences;
     const issues: string[] = [];
     if (selected.length > 10) issues.push("Select no more than 10 files per upload.");
     if (selected.some((file) => !supportedImageTypes.has(file.type))) {
@@ -661,18 +658,16 @@ function ProductEditor({
   }
 
   function removeImageReference(reference: string) {
-    const nextReferences = form.imageReferencesText
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .filter((entry) => entry && entry !== reference);
-    setField("imageReferencesText", nextReferences.join("\n"));
+    const nextReferences = form.imageReferences.filter((entry) => entry !== reference);
+    setField("imageReferences", nextReferences);
     if (form.primaryImageReference.trim() === reference) {
       setField("primaryImageReference", nextReferences[0] ?? "");
     }
   }
 
   async function uploadSelectedImages() {
-    if (!pendingImages.length || uploading) return;
+    if (!pendingImages.length || uploadLockRef.current || uploading) return;
+    uploadLockRef.current = true;
     setUploading(true);
     setUploadFeedback(null);
     try {
@@ -696,16 +691,16 @@ function ProductEditor({
       });
       const successfulImages = pendingImages.filter((image) => successfulIds.has(image.id));
       const failedCount = pendingImages.length - successfulImages.length;
-      const newReferences = uploaded.map((image: AdminUploadedImage) => image.url);
+      const failedNames = pendingImages
+        .filter((image) => !successfulIds.has(image.id))
+        .map((image) => image.file.name);
+      const newReferences = uploaded.map((image) => image.url);
       setForm((current) => {
-        const references = current.imageReferencesText
-          .split(/\r?\n/)
-          .map((reference) => reference.trim())
-          .filter(Boolean);
+        const references = current.imageReferences;
         const mergedReferences = [...references, ...newReferences.filter((url) => !references.includes(url))];
         return {
           ...current,
-          imageReferencesText: mergedReferences.join("\n"),
+          imageReferences: mergedReferences,
           primaryImageReference:
             current.primaryImageReference.trim() || mergedReferences[0] || "",
         };
@@ -717,8 +712,10 @@ function ProductEditor({
       });
       if (failedCount) {
         setUploadFeedback({
-          kind: "partial",
-          message: `${successfulImages.length} image${successfulImages.length === 1 ? "" : "s"} uploaded. ${failedCount} failed and remain selected so you can retry them.`,
+          kind: successfulImages.length ? "partial" : "error",
+          message: successfulImages.length
+            ? `${successfulImages.length} image${successfulImages.length === 1 ? "" : "s"} uploaded. Retry failed file${failedCount === 1 ? "" : "s"}: ${failedNames.join(", ")}.`
+            : `No images uploaded. These files remain selected for retry: ${failedNames.join(", ")}.`,
         });
       } else {
         setUploadFeedback({
@@ -732,13 +729,14 @@ function ProductEditor({
         message: safeAdminError(uploadError, "Image upload"),
       });
     } finally {
+      uploadLockRef.current = false;
       setUploading(false);
     }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saveLockRef.current || saving) return;
+    if (saveLockRef.current || uploadLockRef.current || saving) return;
     setError(null);
     if (pendingImages.length || uploading) {
       setError("Upload or remove the selected image files before saving the product.");
@@ -761,10 +759,7 @@ function ProductEditor({
       setError("Enter a valid non-negative product cost in ZAR.");
       return;
     }
-    const imageReferences = form.imageReferencesText
-      .split(/\r?\n/)
-      .map((reference) => reference.trim())
-      .filter(Boolean);
+    const imageReferences = form.imageReferences;
     if (
       imageReferences.length > 10 ||
       !imageReferences.every(isAllowedProductImageUrl)
@@ -779,11 +774,7 @@ function ProductEditor({
       setError("The primary image must be one of the image references.");
       return;
     }
-    if (
-      product?.primaryImageReference &&
-      !imageReferences.length &&
-      !form.imageReferencesText.trim()
-    ) {
+    if (product?.primaryImageReference && imageReferences.length === 0) {
       setError("Choose a replacement primary image before removing all image references.");
       return;
     }
@@ -815,7 +806,14 @@ function ProductEditor({
     const payload: Record<string, unknown> = {};
     const putChanged = (key: keyof ProductFormState, apiKey: string, value: unknown) => {
       if (value === undefined || value === "") return;
-      if (!baseline || form[key] !== baseline[key]) payload[apiKey] = value;
+      const currentValue = form[key];
+      const previousValue = baseline?.[key];
+      const isEqual =
+        Array.isArray(value) && Array.isArray(previousValue)
+          ? value.length === previousValue.length &&
+            value.every((entry, index) => entry === previousValue[index])
+          : currentValue === previousValue;
+      if (!baseline || !isEqual) payload[apiKey] = value;
     };
 
     putChanged("name", "name", form.name.trim());
@@ -829,11 +827,11 @@ function ProductEditor({
     putChanged("cost", "costCents", costCents);
     putChanged("lowStockThreshold", "lowStockThreshold", lowStockThreshold);
     putChanged("status", "status", form.status);
-    putChanged("imageReferencesText", "imageReferences", imageReferences);
+    putChanged("imageReferences", "imageReferences", imageReferences);
     putChanged(
       "primaryImageReference",
       "primaryImageReference",
-      form.primaryImageReference.trim() || imageReferences[0] || undefined,
+      form.primaryImageReference.trim(),
     );
     if (form.packagingAmount !== baseline?.packagingAmount ||
       form.packagingUnit !== baseline?.packagingUnit) {
@@ -900,65 +898,95 @@ function ProductEditor({
         </div>
       </fieldset>
       <fieldset className="admin-editor-section">
-        <legend>Images</legend>
-        <label>Image references (one HTTPS URL per line)<textarea rows={4} value={form.imageReferencesText} disabled={uploading} onChange={(event) => setField("imageReferencesText", event.currentTarget.value)} /></label>
-      <section className="admin-image-upload" aria-labelledby="product-image-upload-title">
-        <h5 id="product-image-upload-title">Upload product images</h5>
-        <p className="admin-muted">Choose up to 10 JPEG, PNG, WebP or GIF files (maximum 5 MiB each). Upload them first, then save the product to persist their URLs. Uploading is separate from product saving: successful URLs stay in this form if saving fails, and only failed files remain selected for retry.</p>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/gif"
-          multiple
-          disabled={uploading || saving}
-          onChange={(event) => chooseImages(event.currentTarget.files)}
-          aria-label="Choose product images"
-        />
-        {pendingImages.length ? (
-          <>
-            <div className="admin-upload-preview-grid">
-              {pendingImages.map((image) => (
-                <div className="admin-upload-preview" key={image.id}>
-                  <img src={image.previewUrl} alt={`Preview of ${image.file.name}`} />
-                  <span>{image.file.name}</span>
-                  <Button type="button" variant="outline" disabled={uploading} onClick={() => removePendingImage(image.id)}>
-                    Remove
-                  </Button>
-                </div>
-              ))}
-            </div>
-            <Button type="button" disabled={uploading || saving} onClick={() => void uploadSelectedImages()}>
-              {uploading ? "Uploading images…" : `Upload ${pendingImages.length} selected image${pendingImages.length === 1 ? "" : "s"}`}
-            </Button>
-          </>
-        ) : null}
-        {uploadFeedback ? (
-          <p
-            className={uploadFeedback.kind === "error" ? "admin-field-error" : "admin-upload-feedback"}
-            role={uploadFeedback.kind === "error" ? "alert" : "status"}
-          >
-            {uploadFeedback.message}
-          </p>
-        ) : null}
-      </section>
-      {form.imageReferencesText.split(/\r?\n/).map((reference) => reference.trim()).filter(Boolean).map((reference) => (
-        <div className="admin-image-preview" key={reference}>
-          {isAllowedProductImageUrl(reference)
-            ? <img src={reference} alt="Product image preview" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
-            : <span className="admin-image-placeholder">Image preview unavailable</span>}
-          <span>{reference}</span>
+        <legend>Product Images</legend>
+        <p className="admin-muted">
+          Select JPEG, PNG, WebP or GIF images up to 5 MiB each. You can choose up to 10 images
+          total. Upload selected images, then save the product.
+        </p>
+        <div className="admin-image-upload">
+          <input
+            ref={fileInputRef}
+            className="admin-image-file-input"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            multiple
+            disabled={uploading || saving}
+            onChange={(event) => chooseImages(event.currentTarget.files)}
+            aria-label="Choose product image files"
+            tabIndex={-1}
+          />
           <Button
             type="button"
-            variant="outline"
-            disabled={saving || uploading}
-            onClick={() => removeImageReference(reference)}
+            variant="secondary"
+            disabled={uploading || saving || form.imageReferences.length + pendingImages.length >= 10}
+            onClick={() => fileInputRef.current?.click()}
           >
-            Remove image
+            Choose Images
           </Button>
+          <p className="admin-muted">
+            {form.imageReferences.length} uploaded or saved · {pendingImages.length} selected
+          </p>
+          {pendingImages.length ? (
+            <>
+              <div className="admin-upload-preview-grid">
+                {pendingImages.map((image) => (
+                  <div className="admin-upload-preview" key={image.id}>
+                    <img src={image.previewUrl} alt={`Preview of ${image.file.name}`} />
+                    <span>{image.file.name}</span>
+                    <Button type="button" variant="outline" disabled={uploading} onClick={() => removePendingImage(image.id)}>
+                      Remove before upload
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button type="button" disabled={uploading || saving} onClick={() => void uploadSelectedImages()}>
+                {uploading ? "Uploading images…" : `Upload ${pendingImages.length} selected image${pendingImages.length === 1 ? "" : "s"}`}
+              </Button>
+            </>
+          ) : null}
+          {uploadFeedback ? (
+            <p
+              className={uploadFeedback.kind === "error" ? "admin-field-error" : "admin-upload-feedback"}
+              role={uploadFeedback.kind === "error" ? "alert" : "status"}
+            >
+              {uploadFeedback.message}
+            </p>
+          ) : null}
         </div>
-      ))}
-      <label>Primary image reference (must match an image above)<input value={form.primaryImageReference} onChange={(event) => setField("primaryImageReference", event.currentTarget.value)} /></label>
-      <p className="admin-muted">Images must use an approved HTTPS host configured by the backend and frontend.</p>
+        {form.imageReferences.length ? (
+          <div className="admin-upload-preview-grid" aria-label="Product image previews">
+            {form.imageReferences.map((reference, index) => (
+              <div className="admin-upload-preview admin-saved-image" key={reference}>
+                {isAllowedProductImageUrl(reference) ? (
+                  <img src={reference} alt={`Product image ${index + 1}`} loading="lazy" />
+                ) : (
+                  <span className="admin-image-placeholder">Image preview unavailable</span>
+                )}
+                <span>Image {index + 1}{form.primaryImageReference === reference ? " · Primary" : ""}</span>
+                <div className="admin-row-actions">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={saving || uploading || form.primaryImageReference === reference}
+                    onClick={() => setField("primaryImageReference", reference)}
+                  >
+                    Set as primary
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={saving || uploading}
+                    onClick={() => removeImageReference(reference)}
+                  >
+                    Remove image
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="admin-image-placeholder">No product images selected.</p>
+        )}
       </fieldset>
       <fieldset className="admin-editor-section">
         <legend>Inventory settings</legend>

@@ -11,6 +11,47 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe("administrator API contract", () => {
+  it.each([201, 207])(
+    "uploads successful images from HTTP %i without overriding multipart headers",
+    async (status) => {
+      const uploadedImage = {
+        url: "https://images.example.test/product.webp",
+        publicId: "products/example",
+        originalFilename: "product.webp",
+        format: "webp",
+        width: 640,
+        height: 480,
+        bytes: 42_000,
+      };
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ images: [uploadedImage] }), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const api = createAdminApi(
+        createApiClient({
+          baseUrl: "https://api.example.test",
+          csrfTokenProvider: async () => "csrf-token",
+          fetcher,
+        }),
+      );
+      const file = new File(["image data"], "product.webp", { type: "image/webp" });
+      const failedFile = new File(["other image"], "other.png", { type: "image/png" });
+      const files = status === 207 ? [file, failedFile] : [file];
+
+      await expect(api.uploadProductImages(files)).resolves.toEqual([uploadedImage]);
+      expect(fetcher).toHaveBeenCalledOnce();
+      const [input, init] = fetcher.mock.calls[0] ?? [];
+      expect(new URL(String(input)).pathname).toBe("/api/v1/admin/uploads/images");
+      expect(init?.credentials).toBe("include");
+      expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-token");
+      expect(new Headers(init?.headers).has("Content-Type")).toBe(false);
+      expect(init?.body).toBeInstanceOf(FormData);
+      expect((init?.body as FormData).getAll("images")).toEqual(files);
+    },
+  );
+
   it("validates inventory response fields and constructs only documented filters", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({

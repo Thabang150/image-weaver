@@ -115,12 +115,22 @@ function invalidAdminResponse(): never {
   throw new ApiResponseError(200, "Backend returned an invalid administrator response.");
 }
 
+function isHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 function parseUploadedImages(value: unknown): AdminUploadedImage[] {
   if (!isRecord(value) || !Array.isArray(value["images"])) return invalidAdminResponse();
   return value["images"].map((entry) => {
     if (
       !isRecord(entry) ||
       typeof entry["url"] !== "string" ||
+      !isHttpsUrl(entry["url"]) ||
       typeof entry["publicId"] !== "string" ||
       typeof entry["originalFilename"] !== "string" ||
       typeof entry["format"] !== "string" ||

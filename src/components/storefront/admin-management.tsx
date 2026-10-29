@@ -1015,13 +1015,14 @@ function ProductEditor({
               step="any"
               value={form.shippingParcelLengthCm}
               disabled={saving}
-              onChange={(event) =>
+              onChange={(event) => {
+                const value = event.currentTarget.value;
                 setForm((current) => ({
                   ...current,
-                  shippingParcelLengthCm: event.currentTarget.value,
+                  shippingParcelLengthCm: value,
                   shippingParcelRemoved: false,
-                }))
-              }
+                }));
+              }}
             />
           </label>
           <label>
@@ -1032,13 +1033,14 @@ function ProductEditor({
               step="any"
               value={form.shippingParcelWidthCm}
               disabled={saving}
-              onChange={(event) =>
+              onChange={(event) => {
+                const value = event.currentTarget.value;
                 setForm((current) => ({
                   ...current,
-                  shippingParcelWidthCm: event.currentTarget.value,
+                  shippingParcelWidthCm: value,
                   shippingParcelRemoved: false,
-                }))
-              }
+                }));
+              }}
             />
           </label>
           <label>
@@ -1049,13 +1051,14 @@ function ProductEditor({
               step="any"
               value={form.shippingParcelHeightCm}
               disabled={saving}
-              onChange={(event) =>
+              onChange={(event) => {
+                const value = event.currentTarget.value;
                 setForm((current) => ({
                   ...current,
-                  shippingParcelHeightCm: event.currentTarget.value,
+                  shippingParcelHeightCm: value,
                   shippingParcelRemoved: false,
-                }))
-              }
+                }));
+              }}
             />
           </label>
           <label>
@@ -1066,13 +1069,14 @@ function ProductEditor({
               step="1"
               value={form.shippingParcelWeightGrams}
               disabled={saving}
-              onChange={(event) =>
+              onChange={(event) => {
+                const value = event.currentTarget.value;
                 setForm((current) => ({
                   ...current,
-                  shippingParcelWeightGrams: event.currentTarget.value,
+                  shippingParcelWeightGrams: value,
                   shippingParcelRemoved: false,
-                }))
-              }
+                }));
+              }}
             />
           </label>
         </div>
@@ -1081,13 +1085,14 @@ function ProductEditor({
             type="checkbox"
             checked={form.shippingParcelVerified}
             disabled={saving}
-            onChange={(event) =>
+            onChange={(event) => {
+              const checked = event.currentTarget.checked;
               setForm((current) => ({
                 ...current,
-                shippingParcelVerified: event.currentTarget.checked,
+                shippingParcelVerified: checked,
                 shippingParcelRemoved: false,
-              }))
-            }
+              }));
+            }}
           />
           Parcel measurements verified
         </label>

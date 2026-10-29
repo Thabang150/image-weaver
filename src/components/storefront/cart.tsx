@@ -299,11 +299,11 @@ export function CartSheet({
 
         {notice ? <p className="cart-notice">{notice}</p> : null}
 
-        {isCartLoading && !order ? (
+        {isCartLoading ? (
           <p className="cart-status" role="status">
             Loading cart…
           </p>
-        ) : cartError && !order ? (
+        ) : cartError ? (
           <div className="cart-error" role="alert">
             <p>{getCartErrorMessage(cartError)}</p>
             {cartError instanceof ApiHttpError && cartError.status === 401 && onSignIn ? (

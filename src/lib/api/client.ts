@@ -252,10 +252,10 @@ export function createApiClient(options: ApiClientOptions) {
     await acquireCsrfToken(true);
   }
 
-  async function request<T = unknown>(
+  async function requestWithStatus<T = unknown>(
     endpoint: string,
     requestOptions: ApiRequestOptions = {},
-  ): Promise<T | undefined> {
+  ): Promise<{ body: T | undefined; status: number }> {
     const method = (requestOptions.method ?? "GET").toUpperCase();
     const headers = new Headers(requestOptions.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
@@ -319,11 +319,20 @@ export function createApiClient(options: ApiClientOptions) {
       await refreshCsrfTokenAfterSessionTransition();
     }
 
-    return responseBody as T | undefined;
+    return { body: responseBody as T | undefined, status: response.status };
+  }
+
+  async function request<T = unknown>(
+    endpoint: string,
+    requestOptions: ApiRequestOptions = {},
+  ): Promise<T | undefined> {
+    const result = await requestWithStatus<T>(endpoint, requestOptions);
+    return result.body;
   }
 
   return {
     request,
+    requestWithStatus,
     refreshCsrfToken: async () => {
       await refreshCsrfTokenAfterSessionTransition();
     },

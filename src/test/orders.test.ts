@@ -44,6 +44,49 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe("customer order history API", () => {
+  it("parses the documented order-creation envelope and preserves its HTTP status on invalid data", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      if (url.pathname.endsWith("/orders")) {
+        expect(init?.method).toBe("POST");
+        expect(new Headers(init?.headers).get("Idempotency-Key")).toBe(
+          "order-submit-test-0001",
+        );
+        expect(JSON.parse(String(init?.body))).toEqual({ addressId: "address-1" });
+        return new Response(JSON.stringify({ order, replayed: false }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    await expect(api.createCustomerOrder("address-1", "order-submit-test-0001")).resolves.toEqual(
+      order,
+    );
+
+    const invalidFetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      return new Response(JSON.stringify({ order: { id: order.id }, replayed: false }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const invalidApi = createOrdersApi(
+      createApiClient({ baseUrl: "https://api.example.test", fetcher: invalidFetcher }),
+    );
+
+    await expect(
+      invalidApi.createCustomerOrder("address-1", "order-submit-test-0001"),
+    ).rejects.toMatchObject({
+      name: "ApiResponseError",
+      status: 201,
+    });
+  });
+
   it("validates the documented list response and keeps pending payment explicit", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({

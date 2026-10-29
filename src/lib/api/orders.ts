@@ -76,7 +76,7 @@ export interface PayFastCheckout {
   fields: Record<string, string>;
 }
 
-type OrdersApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
+type OrdersApiClient = Pick<ReturnType<typeof createApiClient>, "request" | "requestWithStatus">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -86,11 +86,11 @@ function isSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value);
 }
 
-function invalidResponse(): never {
-  throw new ApiResponseError(200, "Backend returned an invalid order or shipping response.");
+function invalidResponse(status = 200): never {
+  throw new ApiResponseError(status, "Backend returned an invalid order or shipping response.");
 }
 
-function parseCancellation(value: unknown): CustomerOrder["cancellation"] {
+function parseCancellation(value: unknown, status: number): CustomerOrder["cancellation"] {
   if (value === undefined) return undefined;
   if (
     !isRecord(value) ||
@@ -98,15 +98,15 @@ function parseCancellation(value: unknown): CustomerOrder["cancellation"] {
     typeof value["cancelledAt"] !== "string" ||
     (value["cancelledBy"] !== undefined && typeof value["cancelledBy"] !== "string")
   ) {
-    return invalidResponse();
+    return invalidResponse(status);
   }
   return { reason: value["reason"], cancelledAt: value["cancelledAt"] };
 }
 
-function parseOrder(value: unknown): CustomerOrder {
+function parseOrder(value: unknown, status = 200): CustomerOrder {
   const address = isRecord(value) ? value["deliveryAddress"] : undefined;
   const cancellation = isRecord(value) ? value["cancellation"] : undefined;
-  const parsedCancellation = parseCancellation(cancellation);
+  const parsedCancellation = parseCancellation(cancellation, status);
   if (
     !isRecord(value) ||
     typeof value["id"] !== "string" ||
@@ -135,7 +135,7 @@ function parseOrder(value: unknown): CustomerOrder {
     typeof value["createdAt"] !== "string" ||
     typeof value["updatedAt"] !== "string"
   ) {
-    return invalidResponse();
+    return invalidResponse(status);
   }
 
   const items = value["items"].map((entry) => {
@@ -150,7 +150,7 @@ function parseOrder(value: unknown): CustomerOrder {
       !isSafeInteger(entry["unitPriceCents"]) ||
       !isSafeInteger(entry["lineSubtotalCents"])
     ) {
-      return invalidResponse();
+      return invalidResponse(status);
     }
     return {
       productId: entry["productId"],
@@ -193,6 +193,13 @@ function parseOrder(value: unknown): CustomerOrder {
     createdAt: value["createdAt"],
     updatedAt: value["updatedAt"],
   };
+}
+
+function parseCreatedOrder(value: unknown, status: number): CustomerOrder {
+  if (!isRecord(value) || typeof value["replayed"] !== "boolean" || !("order" in value)) {
+    return invalidResponse(status);
+  }
+  return parseOrder(value["order"], status);
 }
 
 function parseShippingQuote(value: unknown): ShippingQuote {
@@ -310,12 +317,12 @@ function parsePayFastCheckout(value: unknown): PayFastCheckout {
 export function createOrdersApi(client: OrdersApiClient) {
   return {
     async createCustomerOrder(addressId: string, idempotencyKey: string): Promise<CustomerOrder> {
-      const response = await client.request<unknown>("/orders", {
+      const response = await client.requestWithStatus<unknown>("/orders", {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
         json: { addressId },
       });
-      return parseOrder(response);
+      return parseCreatedOrder(response.body, response.status);
     },
 
     async getCustomerOrder(orderId: string): Promise<CustomerOrder> {

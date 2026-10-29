@@ -553,6 +553,9 @@ export function CartPage({
       return "A security token was unavailable. Refresh the page and try again.";
     }
     if (error instanceof ApiResponseError) {
+      if (action === "creating your order") {
+        return `The order request returned an unexpected response (HTTP ${error.status}). The order may already have been created. Check your orders before retrying.`;
+      }
       return `The backend returned an unexpected response while ${action}. Refresh your account details before retrying.`;
     }
     if (error instanceof TypeError) {

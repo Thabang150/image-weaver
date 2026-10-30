@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sheet";
 import { ApiHttpError, CsrfTokenError } from "@/lib/api/client";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
+import { authApi } from "@/lib/api/auth";
 import { formatZarCents } from "@/lib/money";
 
 interface CartContextValue {
@@ -67,13 +68,25 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("healthyways.cart.snapshot", JSON.stringify({ savedAt: new Date().toISOString() }));
+  }, []);
+
+  const sessionQuery = useQuery({
+    queryKey: ["session"],
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+  const cartUserId = sessionQuery.data?.status === "authenticated" ? sessionQuery.data.user.id : "anonymous";
+
   const {
     data: cart,
     isPending: isCartLoading,
     error: cartError,
     refetch: retryCart,
   } = useQuery({
-    queryKey: ["cart"],
+    queryKey: ["cart", cartUserId],
     queryFn: () => cartApi.getCart(),
     retry: false,
     staleTime: 30_000,
@@ -81,53 +94,77 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
 
+  const currentCartUserId = () => {
+    const session = queryClient.getQueryData<{ status: string; user?: { id: string } }>(["session"]);
+    return session?.status === "authenticated" ? session.user?.id : "anonymous";
+  };
+
   const addItemMutation = useMutation({
-    mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
-      cartApi.addItem(productId, quantity),
-    onSuccess: (updatedCart, variables) => {
-      queryClient.setQueryData(["cart"], updatedCart);
-      setNotice(
-        `Added ${variables.quantity} item${variables.quantity > 1 ? "s" : ""} to your cart.`,
-      );
-      setIsOpen(true);
+    mutationFn: async ({ productId, quantity }: { productId: string; quantity: number }) => {
+      const mutationUserId = cartUserId;
+      try {
+        return { cart: await cartApi.addItem(productId, quantity), mutationUserId };
+      } catch (error) {
+        throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId });
+      }
     },
-    onError: (error) => {
-      setNotice(getCartErrorMessage(error));
-      setIsOpen(true);
+    onSuccess: ({ cart: updatedCart, mutationUserId }, variables) => {
+      queryClient.setQueryData(["cart", mutationUserId], updatedCart);
+      if (currentCartUserId() === mutationUserId) {
+        setNotice(`Added ${variables.quantity} item${variables.quantity > 1 ? "s" : ""} to your cart.`);
+        setIsOpen(true);
+      }
+    },
+    onError: (error: Error & { mutationUserId?: string }) => {
+      if (error.mutationUserId && currentCartUserId() === error.mutationUserId) {
+        setNotice(getCartErrorMessage(error));
+        setIsOpen(true);
+      }
     },
   });
 
   const updateItemMutation = useMutation({
-    mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
-      cartApi.updateItem(productId, quantity),
-    onSuccess: (updatedCart, variables) => {
-      queryClient.setQueryData(["cart"], updatedCart);
-      setNotice(`Updated quantity to ${variables.quantity}.`);
+    mutationFn: async ({ productId, quantity }: { productId: string; quantity: number }) => {
+      const mutationUserId = cartUserId;
+      try { return { cart: await cartApi.updateItem(productId, quantity), mutationUserId }; }
+      catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId }); }
     },
-    onError: (error) => {
-      setNotice(getCartErrorMessage(error));
+    onSuccess: ({ cart: updatedCart, mutationUserId }, variables) => {
+      queryClient.setQueryData(["cart", mutationUserId], updatedCart);
+      if (currentCartUserId() === mutationUserId) setNotice(`Updated quantity to ${variables.quantity}.`);
+    },
+    onError: (error: Error & { mutationUserId?: string }) => {
+      if (error.mutationUserId && currentCartUserId() === error.mutationUserId) setNotice(getCartErrorMessage(error));
     },
   });
 
   const removeItemMutation = useMutation({
-    mutationFn: ({ productId }: { productId: string }) => cartApi.removeItem(productId),
-    onSuccess: (updatedCart) => {
-      queryClient.setQueryData(["cart"], updatedCart);
-      setNotice("Item removed from your cart.");
+    mutationFn: async ({ productId }: { productId: string }) => {
+      const mutationUserId = cartUserId;
+      try { return { cart: await cartApi.removeItem(productId), mutationUserId }; }
+      catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId }); }
     },
-    onError: (error) => {
-      setNotice(getCartErrorMessage(error));
+    onSuccess: ({ cart: updatedCart, mutationUserId }) => {
+      queryClient.setQueryData(["cart", mutationUserId], updatedCart);
+      if (currentCartUserId() === mutationUserId) setNotice("Item removed from your cart.");
+    },
+    onError: (error: Error & { mutationUserId?: string }) => {
+      if (error.mutationUserId && currentCartUserId() === error.mutationUserId) setNotice(getCartErrorMessage(error));
     },
   });
 
   const clearCartMutation = useMutation({
-    mutationFn: () => cartApi.clearCart(),
-    onSuccess: (updatedCart) => {
-      queryClient.setQueryData(["cart"], updatedCart);
-      setNotice("Your cart has been cleared.");
+    mutationFn: async () => {
+      const mutationUserId = cartUserId;
+      try { return { cart: await cartApi.clearCart(), mutationUserId }; }
+      catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId }); }
     },
-    onError: (error) => {
-      setNotice(getCartErrorMessage(error));
+    onSuccess: ({ cart: updatedCart, mutationUserId }) => {
+      queryClient.setQueryData(["cart", mutationUserId], updatedCart);
+      if (currentCartUserId() === mutationUserId) setNotice("Your cart has been cleared.");
+    },
+    onError: (error: Error & { mutationUserId?: string }) => {
+      if (error.mutationUserId && currentCartUserId() === error.mutationUserId) setNotice(getCartErrorMessage(error));
     },
   });
 
@@ -217,7 +254,7 @@ export function CartTrigger() {
   );
 }
 
-export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
+export function CartSheet({ onSignIn, onCheckout }: { onSignIn?: () => void; onCheckout?: () => void } = {}) {
   const {
     isOpen,
     setIsOpen,
@@ -376,8 +413,8 @@ export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
                 Clear cart
               </Button>
             </div>
-            <Button className="cart-checkout-disabled" type="button" variant="default" disabled>
-              Checkout — coming next
+            <Button type="button" variant="default" disabled={isBusy || cart.hasUnavailableItems} onClick={() => { setIsOpen(false); onCheckout?.(); }}>
+              Continue to checkout
             </Button>
           </>
         )}
@@ -389,9 +426,11 @@ export function CartSheet({ onSignIn }: { onSignIn?: () => void } = {}) {
 export function CartPage({
   onContinueShopping,
   onSignIn,
+  onCheckout,
 }: {
   onContinueShopping: () => void;
   onSignIn: () => void;
+  onCheckout: () => void;
 }) {
   const {
     cart,
@@ -521,9 +560,9 @@ export function CartPage({
               Clear cart
             </Button>
           </div>
-          <p className="cart-checkout-disabled" role="note">
-            Checkout is coming next. No order or payment will be submitted from this cart.
-          </p>
+          <Button type="button" disabled={isBusy || cart.hasUnavailableItems} onClick={onCheckout}>
+            Continue to checkout
+          </Button>
           <Button type="button" variant="outline" onClick={onContinueShopping}>
             Continue shopping
           </Button>

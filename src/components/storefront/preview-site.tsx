@@ -11,6 +11,9 @@ import { isAdminUser } from "@/lib/auth/authorization";
 import { ordersApi } from "@/lib/api/orders";
 import { formatZarCents } from "@/lib/money";
 import { Brand, ContactActions } from "@/components/wellness";
+import { CheckoutPage } from "@/components/storefront/customer-checkout";
+import { AddressesPage, OrderDetailPage, OrdersPage, TrackingPage } from "@/components/storefront/customer-pages";
+import { PaymentStatePage } from "@/components/storefront/payment-state";
 
 export type PreviewView =
   | "shop"
@@ -18,6 +21,13 @@ export type PreviewView =
   | "register"
   | "verify-email"
   | "account"
+  | "addresses"
+  | "orders"
+  | "order-detail"
+  | "tracking-detail"
+  | "checkout"
+  | "payment-return"
+  | "payment-cancel"
   | "cart"
   | "admin"
   | "forgot-password"
@@ -28,9 +38,10 @@ interface PreviewSiteProps {
   product: string | undefined;
   returnTo: "cart" | "account" | "admin" | undefined;
   verificationToken: string | undefined;
+  orderId: string | undefined;
   isEmailLink: boolean;
   onClearEmailLink: () => void;
-  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
+  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin", orderId?: string) => void;
   onSelectProduct: (slug: string) => void;
   onBackToCatalogue: () => void;
 }
@@ -42,6 +53,17 @@ interface Feedback {
 
 const inputClass =
   "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+function authenticatedUserId(queryClient: ReturnType<typeof useQueryClient>) {
+  const session = queryClient.getQueryData<{ status: string; user?: { id: string } }>(["session"]);
+  return session?.status === "authenticated" ? session.user?.id : undefined;
+}
+
+function updateSessionForUser(queryClient: ReturnType<typeof useQueryClient>, initiatingUserId: string, user: PublicUser) {
+  if (authenticatedUserId(queryClient) === initiatingUserId) {
+    queryClient.setQueryData(["session"], { status: "authenticated", user });
+  }
+}
 
 function describeAuthError(error: unknown, action: string): string {
   if (error instanceof ApiHttpError) {
@@ -123,6 +145,12 @@ function SiteFrame({
             >
               My Account
             </Button>
+            {user ? (
+              <>
+                <Button type="button" variant="ghost" onClick={() => onNavigate("addresses")}>My Addresses</Button>
+                <Button type="button" variant="ghost" onClick={() => onNavigate("orders")}>My Orders</Button>
+              </>
+            ) : null}
             <Button type="button" variant="ghost" onClick={() => onNavigate("cart")}>
               Cart
             </Button>
@@ -160,6 +188,7 @@ export function PreviewSite({
   product,
   returnTo,
   verificationToken,
+  orderId,
   isEmailLink,
   onClearEmailLink,
   onNavigate,
@@ -167,14 +196,30 @@ export function PreviewSite({
   onBackToCatalogue,
 }: PreviewSiteProps) {
   const queryClient = useQueryClient();
+  const activeOrderId = orderId;
   const sessionQuery = useQuery({
     queryKey: ["session"],
     queryFn: () => authApi.getSession(),
     retry: false,
   });
   const user = sessionQuery.data?.status === "authenticated" ? sessionQuery.data.user : undefined;
+  const previousUserIdRef = useRef<string | undefined>(undefined);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const previousUserId = previousUserIdRef.current;
+    const currentUserId = user?.id;
+    previousUserIdRef.current = currentUserId;
+    if (previousUserId !== undefined && previousUserId !== currentUserId) {
+      queryClient.removeQueries({ queryKey: ["orders"] });
+      queryClient.removeQueries({ queryKey: ["order"] });
+      queryClient.removeQueries({ queryKey: ["tracking"] });
+      queryClient.removeQueries({ queryKey: ["cart"] });
+      sessionStorage.removeItem("healthyways.checkout.orderId");
+      sessionStorage.removeItem("healthyways.checkout.idempotencyKeys");
+    }
+  }, [queryClient, user?.id]);
 
   async function logout() {
     setLogoutBusy(true);
@@ -184,6 +229,10 @@ export function PreviewSite({
       queryClient.setQueryData(["session"], { status: "unauthenticated" });
       queryClient.removeQueries({ queryKey: ["cart"] });
       queryClient.removeQueries({ queryKey: ["orders"] });
+      queryClient.removeQueries({ queryKey: ["order"] });
+      queryClient.removeQueries({ queryKey: ["tracking"] });
+      sessionStorage.removeItem("healthyways.checkout.orderId");
+      sessionStorage.removeItem("healthyways.checkout.idempotencyKeys");
       onNavigate("shop");
     } catch (error) {
       setLogoutError(describeAuthError(error, "Sign out"));
@@ -228,11 +277,24 @@ export function PreviewSite({
         action="Go to login"
       />
     );
+  } else if (view === "addresses") {
+    content = user ? <AddressesPage user={user} applyUser={(updated, initiatingUserId) => updateSessionForUser(queryClient, initiatingUserId, updated)} /> : <AccessMessage title="Sign in to manage addresses" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+  } else if (view === "orders") {
+    content = user ? <OrdersPage userId={user.id} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId)} /> : <AccessMessage title="Sign in to view your orders" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+  } else if (view === "order-detail") {
+    content = user && activeOrderId ? <OrderDetailPage userId={user.id} orderId={activeOrderId} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? activeOrderId)} /> : <AccessMessage title="Sign in to view this order" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+  } else if (view === "tracking-detail") {
+    content = user && activeOrderId ? <TrackingPage userId={user.id} orderId={activeOrderId} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? activeOrderId)} /> : <AccessMessage title="Sign in to view tracking" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+  } else if (view === "checkout") {
+    content = user ? <CheckoutPage user={user} onNavigate={(next) => onNavigate(next as PreviewView)} /> : <AccessMessage title="Sign in to checkout" onAction={() => onNavigate("login", "cart")} action="Go to login" />;
+  } else if (view === "payment-return" || view === "payment-cancel") {
+    content = user ? <PaymentStatePage userId={user.id} orderId={orderId} cancelled={view === "payment-cancel"} onNavigate={(next, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? orderId)} /> : <AccessMessage title="Sign in to view payment status" onAction={() => onNavigate("login", "account")} action="Go to login" />;
   } else if (view === "cart") {
     content = (
       <CartPage
         onContinueShopping={() => onNavigate("shop")}
         onSignIn={() => onNavigate("login", "cart")}
+        onCheckout={() => onNavigate(user ? "checkout" : "login", user ? undefined : "cart")}
       />
     );
   } else {
@@ -286,6 +348,7 @@ export function PreviewSite({
       }
       view={view}
       onSignIn={() => onNavigate("login", "cart")}
+      onCheckout={() => onNavigate(user ? "checkout" : "login", user ? undefined : "cart")}
     />
   );
 }
@@ -294,10 +357,12 @@ function CartProviderView({
   content,
   view,
   onSignIn,
+  onCheckout,
 }: {
   content: ReactNode;
   view: PreviewView;
   onSignIn: () => void;
+  onCheckout: () => void;
 }) {
   return (
     <>
@@ -307,7 +372,7 @@ function CartProviderView({
           <CartTrigger />
         </div>
       ) : null}
-      <CartSheet onSignIn={onSignIn} />
+      <CartSheet onSignIn={onSignIn} onCheckout={onCheckout} />
     </>
   );
 }
@@ -1032,6 +1097,7 @@ const emptyAddress: Omit<PublicAddress, "id"> = {
   postalCode: "",
   country: "South Africa",
   deliveryInstructions: "",
+  localArea: "",
 };
 
 function AccountPage({ user }: { user: PublicUser }) {
@@ -1045,30 +1111,33 @@ function AccountPage({ user }: { user: PublicUser }) {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const ordersQuery = useQuery({
-    queryKey: ["orders", "customer"],
+    queryKey: ["orders", user.id],
     queryFn: () => ordersApi.listCustomerOrders(),
     retry: false,
   });
 
-  function applyUser(updated: PublicUser) {
-    queryClient.setQueryData(["session"], { status: "authenticated", user: updated });
+  function applyUser(updated: PublicUser, initiatingUserId = user.id) {
+    updateSessionForUser(queryClient, initiatingUserId, updated);
   }
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setFeedback(null);
+    const initiatingUserId = user.id;
     try {
       const updated = await authApi.updateProfile({
         ...(profile.displayName.trim() ? { displayName: profile.displayName.trim() } : {}),
         ...(profile.phoneNumber.trim() ? { phoneNumber: profile.phoneNumber.trim() } : {}),
       });
-      applyUser(updated);
-      setFeedback({ kind: "success", message: "Profile updated." });
+      applyUser(updated, initiatingUserId);
+      if (authenticatedUserId(queryClient) === initiatingUserId) setFeedback({ kind: "success", message: "Profile updated." });
     } catch (error) {
-      setFeedback({ kind: "error", message: describeAuthError(error, "Profile update") });
+      if (authenticatedUserId(queryClient) === initiatingUserId) {
+        setFeedback({ kind: "error", message: describeAuthError(error, "Profile update") });
+      }
     } finally {
-      setBusy(false);
+      if (authenticatedUserId(queryClient) === initiatingUserId) setBusy(false);
     }
   }
 
@@ -1076,6 +1145,7 @@ function AccountPage({ user }: { user: PublicUser }) {
     event.preventDefault();
     setBusy(true);
     setFeedback(null);
+    const initiatingUserId = user.id;
     try {
       const payload: Omit<PublicAddress, "id"> = {
         label: address.label.trim(),
@@ -1087,36 +1157,61 @@ function AccountPage({ user }: { user: PublicUser }) {
         postalCode: address.postalCode.trim(),
         country: address.country.trim(),
         addressLine2: address.addressLine2?.trim() ?? "",
+        ...(address.localArea?.trim() ? { localArea: address.localArea.trim() } : {}),
         deliveryInstructions: address.deliveryInstructions?.trim() ?? "",
       };
       const updated = editingId
         ? await authApi.updateAddress(editingId, payload)
         : await authApi.addAddress(payload);
-      applyUser(updated);
-      setAddress(emptyAddress);
-      setEditingId(null);
-      setFeedback({ kind: "success", message: editingId ? "Address updated." : "Address saved." });
+      applyUser(updated, initiatingUserId);
+      if (authenticatedUserId(queryClient) === initiatingUserId) {
+        setAddress(emptyAddress);
+        setEditingId(null);
+        setFeedback({ kind: "success", message: editingId ? "Address updated." : "Address saved." });
+      }
     } catch (error) {
-      setFeedback({ kind: "error", message: describeAuthError(error, "Address save") });
+      if (authenticatedUserId(queryClient) === initiatingUserId) {
+        setFeedback({ kind: "error", message: describeAuthError(error, "Address save") });
+      }
     } finally {
-      setBusy(false);
+      if (authenticatedUserId(queryClient) === initiatingUserId) setBusy(false);
     }
   }
 
   async function deleteAddress(addressId: string) {
+    const initiatingUserId = user.id;
     setBusy(true);
     setFeedback(null);
     try {
-      applyUser(await authApi.deleteAddress(addressId));
+      const updated = await authApi.deleteAddress(addressId);
+      applyUser(updated, initiatingUserId);
+      if (authenticatedUserId(queryClient) !== initiatingUserId) return;
       setFeedback({ kind: "success", message: "Address removed." });
       if (editingId === addressId) {
         setEditingId(null);
         setAddress(emptyAddress);
       }
     } catch (error) {
-      setFeedback({ kind: "error", message: describeAuthError(error, "Address removal") });
+      if (authenticatedUserId(queryClient) === initiatingUserId) {
+        setFeedback({ kind: "error", message: describeAuthError(error, "Address removal") });
+      }
     } finally {
-      setBusy(false);
+      if (authenticatedUserId(queryClient) === initiatingUserId) setBusy(false);
+    }
+  }
+
+  async function setDefaultAddress(addressId: string) {
+    const initiatingUserId = user.id;
+    try {
+      const updated = await authApi.setDefaultAddress(addressId);
+      applyUser(updated, initiatingUserId);
+      if (authenticatedUserId(queryClient) === initiatingUserId) {
+        setFeedback({ kind: "success", message: "Default address updated." });
+      }
+    } catch (error) {
+      if (authenticatedUserId(queryClient) === initiatingUserId) {
+        setFeedback({ kind: "error", message: describeAuthError(error, "Default address") });
+      }
     }
   }
 
@@ -1128,6 +1223,7 @@ function AccountPage({ user }: { user: PublicUser }) {
       phoneNumber: entry.phoneNumber,
       addressLine1: entry.addressLine1,
       addressLine2: entry.addressLine2 ?? "",
+      localArea: entry.localArea ?? "",
       city: entry.city,
       province: entry.province,
       postalCode: entry.postalCode,
@@ -1210,7 +1306,8 @@ function AccountPage({ user }: { user: PublicUser }) {
                   </p>
                   <p>
                     {entry.addressLine1}
-                    {entry.addressLine2 ? `, ${entry.addressLine2}` : ""}, {entry.city},{" "}
+                    {entry.addressLine2 ? `, ${entry.addressLine2}` : ""}
+                    {entry.localArea ? `, ${entry.localArea}` : ""}, {entry.city},{" "}
                     {entry.province}, {entry.postalCode}, {entry.country}
                   </p>
                 </div>
@@ -1223,6 +1320,7 @@ function AccountPage({ user }: { user: PublicUser }) {
                   >
                     Edit
                   </Button>
+                  {!entry.isDefault ? <Button type="button" variant="outline" disabled={busy} onClick={() => void setDefaultAddress(entry.id)}>Set default</Button> : null}
                   <Button
                     type="button"
                     variant="outline"
@@ -1250,6 +1348,7 @@ function AccountPage({ user }: { user: PublicUser }) {
               ["phoneNumber", "Phone number", true],
               ["addressLine1", "Address line 1", true],
               ["addressLine2", "Address line 2", false],
+              ["localArea", "Local area (optional)", false],
               ["city", "City", true],
               ["province", "Province", true],
               ["postalCode", "Postal code", true],
@@ -1262,7 +1361,7 @@ function AccountPage({ user }: { user: PublicUser }) {
                 className={inputClass}
                 required={required}
                 maxLength={
-                  key === "addressLine1" || key === "addressLine2"
+                  key === "addressLine1" || key === "addressLine2" || key === "localArea"
                     ? 120
                     : key === "postalCode"
                       ? 12
@@ -1327,7 +1426,7 @@ function AccountPage({ user }: { user: PublicUser }) {
               <div className="flex flex-wrap justify-between gap-2">
                 <strong>{order.orderNumber}</strong>
                 <span>
-                  {order.status === "pending_payment" ? "Pending payment — not paid" : "Cancelled"}
+                  {order.status.replaceAll("_", " ")}
                 </span>
               </div>
               <p className="mt-1">

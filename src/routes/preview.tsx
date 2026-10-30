@@ -11,6 +11,13 @@ const previewViews: PreviewView[] = [
   "register",
   "verify-email",
   "account",
+  "addresses",
+  "orders",
+  "order-detail",
+  "tracking-detail",
+  "checkout",
+  "payment-return",
+  "payment-cancel",
   "cart",
   "admin",
   "forgot-password",
@@ -34,11 +41,13 @@ export const Route = createFileRoute("/preview")({
     const returnTo = search["returnTo"];
     const token = search["token"];
     const emailLink = search["emailLink"];
+    const orderId = search["orderId"];
     return {
       ...(typeof product === "string" && productSlugPattern.test(product) ? { product } : {}),
       ...(isPreviewView(view) ? { view } : {}),
       ...(isPreviewReturnTarget(returnTo) ? { returnTo } : {}),
       ...(typeof token === "string" ? { token } : {}),
+      ...(typeof orderId === "string" && /^[a-f\d]{24}$/i.test(orderId) ? { orderId } : {}),
       ...(emailLink === 1 || emailLink === "1" ? { emailLink: 1 as const } : {}),
     };
   },
@@ -91,7 +100,8 @@ function Preview() {
     });
   }, [navigate, search.emailLink]);
 
-  function navigateTo(nextView: PreviewView, returnTo?: "cart" | "account" | "admin") {
+  function navigateTo(nextView: PreviewView, returnTo?: "cart" | "account" | "admin", orderId?: string) {
+    const resolvedOrderId = orderId ?? search.orderId;
     void navigate({
       search:
         nextView === "shop" && search.product
@@ -100,6 +110,8 @@ function Preview() {
             ? {}
             : returnTo
               ? { view: nextView, returnTo }
+            : nextView === "order-detail" || nextView === "tracking-detail" || nextView === "payment-return" || nextView === "payment-cancel"
+              ? { view: nextView, ...(resolvedOrderId ? { orderId: resolvedOrderId } : {}) }
               : { view: nextView },
     });
   }
@@ -111,6 +123,7 @@ function Preview() {
         product={search.product}
         returnTo={search.returnTo}
         verificationToken={search.token}
+        orderId={search.orderId}
         isEmailLink={search.emailLink === 1}
         onClearEmailLink={() => {
           void navigate({

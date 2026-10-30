@@ -7,11 +7,13 @@ import {
 
 export interface PublicAddress {
   id: string;
+  isDefault?: boolean;
   label: string;
   recipientName: string;
   phoneNumber: string;
   addressLine1: string;
   addressLine2?: string;
+  localArea?: string;
   city: string;
   province: string;
   postalCode: string;
@@ -54,11 +56,13 @@ function isPublicAddress(value: unknown): value is PublicAddress {
   return (
     isRecord(value) &&
     typeof value["id"] === "string" &&
+    (value["isDefault"] === undefined || typeof value["isDefault"] === "boolean") &&
     typeof value["label"] === "string" &&
     typeof value["recipientName"] === "string" &&
     typeof value["phoneNumber"] === "string" &&
     typeof value["addressLine1"] === "string" &&
     (value["addressLine2"] === undefined || typeof value["addressLine2"] === "string") &&
+    (value["localArea"] === undefined || typeof value["localArea"] === "string") &&
     typeof value["city"] === "string" &&
     typeof value["province"] === "string" &&
     typeof value["postalCode"] === "string" &&
@@ -233,6 +237,15 @@ export function createAuthApi(client: AuthApiClient) {
       return response["user"];
     },
 
+    async setDefaultAddress(addressId: string) {
+      const response = await client.request<unknown>(
+        `/users/me/addresses/${encodeURIComponent(addressId)}/default`,
+        { method: "PATCH", json: {} },
+      );
+      if (!isRecord(response) || !isPublicUser(response["user"])) return invalidAuthResponse();
+      return response["user"];
+    },
+
     logout() {
       return client.request<void>("/auth/logout", {
         method: "POST",
@@ -313,6 +326,7 @@ export const authApi = {
   updateAddress: (addressId: string, input: Partial<Omit<PublicAddress, "id">>) =>
     getConfiguredAuthApi().updateAddress(addressId, input),
   deleteAddress: (addressId: string) => getConfiguredAuthApi().deleteAddress(addressId),
+  setDefaultAddress: (addressId: string) => getConfiguredAuthApi().setDefaultAddress(addressId),
   logout: () => getConfiguredAuthApi().logout(),
   verifyTwoFactor: (code: string) => getConfiguredAuthApi().verifyTwoFactor(code),
   confirmTwoFactor: (code: string) => getConfiguredAuthApi().confirmTwoFactor(code),

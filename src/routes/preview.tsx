@@ -8,6 +8,8 @@ const productSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const previewViews: PreviewView[] = [
   "shop",
   "login",
+  "customer-login",
+  "admin-login",
   "register",
   "verify-email",
   "account",
@@ -102,6 +104,10 @@ function Preview() {
 
   function navigateTo(nextView: PreviewView, returnTo?: "cart" | "account" | "admin", orderId?: string) {
     const resolvedOrderId = orderId ?? search.orderId;
+    if (nextView === "login") {
+      void navigate({ to: returnTo === "admin" ? "/admin/login" : "/account/login" });
+      return;
+    }
     void navigate({
       search:
         nextView === "shop" && search.product

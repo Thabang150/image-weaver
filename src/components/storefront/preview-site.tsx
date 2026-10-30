@@ -18,6 +18,8 @@ import { PaymentStatePage } from "@/components/storefront/payment-state";
 export type PreviewView =
   | "shop"
   | "login"
+  | "customer-login"
+  | "admin-login"
   | "register"
   | "verify-email"
   | "account"
@@ -154,6 +156,9 @@ function SiteFrame({
             <Button type="button" variant="ghost" onClick={() => onNavigate("cart")}>
               Cart
             </Button>
+            {!user ? (
+              <Button type="button" variant="ghost" onClick={() => onNavigate("login", "admin")}>Admin sign-in</Button>
+            ) : null}
             {isAdmin ? (
               <Button type="button" variant="ghost" onClick={() => onNavigate("admin")}>
                 Admin
@@ -251,7 +256,13 @@ export function PreviewSite({
       />
     );
   } else if (view === "login") {
-    content = <LoginPage onNavigate={onNavigate} returnTo={returnTo} />;
+    content = returnTo === "admin"
+      ? <AdminLoginPage onNavigate={onNavigate} />
+      : <CustomerLoginPage onNavigate={onNavigate} returnTo={returnTo} />;
+  } else if (view === "customer-login") {
+    content = <CustomerLoginPage onNavigate={onNavigate} />;
+  } else if (view === "admin-login") {
+    content = <AdminLoginPage onNavigate={onNavigate} />;
   } else if (view === "register") {
     content = <RegisterPage onNavigate={onNavigate} />;
   } else if (view === "verify-email") {
@@ -548,11 +559,32 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
 }
 
 type LoginStep = "credentials" | "email-otp" | "two-factor" | "enrollment" | "recovery-codes";
+type LoginExperience = "customer" | "admin";
 
-function LoginPage({
+function CustomerLoginPage({
   onNavigate,
   returnTo,
 }: {
+  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
+  returnTo?: "cart" | "account" | "admin";
+}) {
+  return <LoginPage experience="customer" onNavigate={onNavigate} returnTo={returnTo} />;
+}
+
+function AdminLoginPage({
+  onNavigate,
+}: {
+  onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
+}) {
+  return <LoginPage experience="admin" onNavigate={onNavigate} returnTo="admin" />;
+}
+
+function LoginPage({
+  experience,
+  onNavigate,
+  returnTo,
+}: {
+  experience: LoginExperience;
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
   returnTo: "cart" | "account" | "admin" | undefined;
 }) {
@@ -573,8 +605,12 @@ function LoginPage({
     try {
       const response = await authApi.login({ email: email.trim(), password });
       setPassword("");
-      if ("emailOtpRequired" in response) {
-        setStep("email-otp");
+      if (experience === "customer") {
+        if ("emailOtpRequired" in response) {
+          setStep("email-otp");
+        } else {
+          throw new ApiResponseError(200, "Customer login returned an unexpected authentication challenge.");
+        }
       } else if ("twoFactorRequired" in response) {
         setStep("two-factor");
       } else if ("twoFactorEnrollmentRequired" in response) {
@@ -582,8 +618,7 @@ function LoginPage({
         setProvisioningUri(setup.provisioningUri);
         setStep("enrollment");
       } else {
-        await refreshSession(queryClient);
-        onNavigate(returnTo ?? "account");
+        throw new ApiResponseError(200, "Administrator login returned an unexpected authentication response.");
       }
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Sign in") });
@@ -598,24 +633,28 @@ function LoginPage({
     setFeedback(null);
     try {
       if (step === "email-otp") {
-        const result = await authApi.verifyLoginEmailOtp(code.trim());
-        if ("twoFactorRequired" in result) {
-          setCode("");
-          setStep("two-factor");
-        } else {
-          await refreshSession(queryClient);
-          onNavigate(returnTo ?? "account");
+        if (experience !== "customer") {
+          throw new ApiResponseError(200, "Unexpected customer verification challenge in administrator login.");
         }
-      } else if (step === "two-factor") {
-        await authApi.verifyTwoFactor(code.trim());
-        await refreshSession(queryClient);
+        const result = await authApi.verifyLoginEmailOtp(code.trim());
+        if (!("user" in result)) {
+          throw new ApiResponseError(200, "Customer verification returned an unexpected authentication challenge.");
+        }
+        await refreshSession(queryClient, "customer");
         onNavigate(returnTo ?? "account");
+      } else if (step === "two-factor") {
+        if (experience !== "admin") {
+          throw new ApiResponseError(200, "Unexpected administrator verification challenge in customer login.");
+        }
+        await authApi.verifyTwoFactor(code.trim());
+        await refreshSession(queryClient, "admin");
+        onNavigate("admin");
       } else {
         const result = await authApi.confirmTwoFactor(code.trim());
         setRecoveryCodes(result.recoveryCodes);
         setCode("");
         setStep("recovery-codes");
-        await refreshSession(queryClient);
+        await refreshSession(queryClient, "admin");
       }
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Two-factor verification") });
@@ -682,15 +721,17 @@ function LoginPage({
           <Button type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Log in"}
           </Button>
-          <p>
-            <button
-              className="text-sm underline"
-              type="button"
-              onClick={() => onNavigate("forgot-password")}
-            >
-              Forgot password?
-            </button>
-          </p>
+          {experience === "customer" ? (
+            <p>
+              <button
+                className="text-sm underline"
+                type="button"
+                onClick={() => onNavigate("forgot-password")}
+              >
+                Forgot password?
+              </button>
+            </p>
+          ) : null}
         </form>
       ) : (
         <form className="space-y-4" onSubmit={(event) => void submitFactor(event)}>
@@ -746,7 +787,7 @@ function LoginPage({
           ) : null}
         </form>
       )}
-      {step === "credentials" ? (
+      {step === "credentials" && experience === "customer" ? (
         <p className="mt-5 text-sm">
           No account yet?{" "}
           <button className="underline" type="button" onClick={() => onNavigate("register")}>
@@ -758,12 +799,21 @@ function LoginPage({
   );
 }
 
-async function refreshSession(queryClient: ReturnType<typeof useQueryClient>) {
+async function refreshSession(
+  queryClient: ReturnType<typeof useQueryClient>,
+  experience?: LoginExperience,
+) {
   const session = await authApi.getSession();
-  queryClient.setQueryData(["session"], session);
   if (session.status !== "authenticated") {
     throw new Error("Sign in could not be completed because the authenticated session was not established.");
   }
+  if (experience === "customer" && isAdminUser(session.user)) {
+    throw new ApiResponseError(200, "Customer login resolved to an administrator account.");
+  }
+  if (experience === "admin" && !isAdminUser(session.user)) {
+    throw new ApiResponseError(200, "Administrator login resolved to a non-administrator account.");
+  }
+  queryClient.setQueryData(["session"], session);
   await queryClient.invalidateQueries({ queryKey: ["cart"] });
 }
 

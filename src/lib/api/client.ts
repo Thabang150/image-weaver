@@ -12,6 +12,7 @@ export interface ApiRequestOptions {
   method?: string;
   headers?: HeadersInit;
   json?: unknown;
+  body?: BodyInit;
   signal?: AbortSignal;
   regeneratesSession?: boolean;
 }
@@ -251,83 +252,87 @@ export function createApiClient(options: ApiClientOptions) {
     await acquireCsrfToken(true);
   }
 
-  async function request<T = unknown>(
+  async function requestWithStatus<T = unknown>(
     endpoint: string,
     requestOptions: ApiRequestOptions = {},
-  ): Promise<T | undefined> {
+  ): Promise<{ body: T | undefined; status: number }> {
     const method = (requestOptions.method ?? "GET").toUpperCase();
     const headers = new Headers(requestOptions.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
-    let body: string | undefined;
+    let body: BodyInit | undefined;
+    if (requestOptions.body !== undefined) {
+      if (Object.prototype.hasOwnProperty.call(requestOptions, "json")) {
+        throw new TypeError("Provide either a raw request body or a JSON body, not both.");
+      }
+      body = requestOptions.body;
+    }
     if (Object.prototype.hasOwnProperty.call(requestOptions, "json")) {
-      body = JSON.stringify(requestOptions.json);
-      if (body === undefined) {
+      const jsonBody = JSON.stringify(requestOptions.json);
+      if (jsonBody === undefined) {
         throw new TypeError("JSON request body must be serializable.");
       }
+      body = jsonBody;
       if (!headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
     }
 
-    let csrfRetryAttempted = false;
-    while (true) {
-      let requestCsrfToken: string | undefined;
-      if (isUnsafeMethod(method)) {
-        requestCsrfToken = await acquireCsrfToken();
-        headers.set("X-CSRF-Token", requestCsrfToken);
-      }
+    let requestCsrfToken: string | undefined;
+    if (isUnsafeMethod(method)) {
+      requestCsrfToken = await acquireCsrfToken();
+      headers.set("X-CSRF-Token", requestCsrfToken);
+    }
 
-      const init: RequestInit = {
-        method,
-        headers: new Headers(headers),
-        credentials: "include",
-      };
-      if (body !== undefined) init.body = body;
-      if (requestOptions.signal) init.signal = requestOptions.signal;
+    const init: RequestInit = {
+      method,
+      headers: new Headers(headers),
+      credentials: "include",
+    };
+    if (body !== undefined) init.body = body;
+    if (requestOptions.signal) init.signal = requestOptions.signal;
 
-      const response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
-      const responseBody = await readResponseBody(response);
+    const response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
+    const responseBody = await readResponseBody(response);
 
-      if (!response.ok) {
-        const apiError = new ApiHttpError(
-          response.status,
-          responseBody,
-          getErrorMessage(responseBody, response),
-        );
+    if (!response.ok) {
+      const apiError = new ApiHttpError(
+        response.status,
+        responseBody,
+        getErrorMessage(responseBody, response),
+      );
 
-        if (apiError.isCsrfFailure && isUnsafeMethod(method)) {
-          if (!csrfRetryAttempted) {
-            csrfRetryAttempted = true;
-            try {
-              if (csrfToken === requestCsrfToken) {
-                await acquireCsrfToken(true);
-              } else if (!csrfToken) {
-                await acquireCsrfToken(true);
-              }
-              continue;
-            } catch (error) {
-              apiError.csrfRefreshError = error;
-            }
-          } else if (csrfToken === requestCsrfToken) {
-            csrfGeneration += 1;
-            csrfToken = undefined;
+      if (apiError.isCsrfFailure && isUnsafeMethod(method)) {
+        if (csrfToken === requestCsrfToken || !csrfToken) {
+          try {
+            await acquireCsrfToken(true);
+          } catch (error) {
+            apiError.csrfRefreshError = error;
           }
         }
-
-        throw apiError;
       }
 
-      if (requestOptions.regeneratesSession) {
-        await refreshCsrfTokenAfterSessionTransition();
-      }
-
-      return responseBody as T | undefined;
+      throw apiError;
     }
+
+    if (requestOptions.regeneratesSession) {
+      await refreshCsrfTokenAfterSessionTransition();
+    }
+
+    return { body: responseBody as T | undefined, status: response.status };
+  }
+
+  async function request<T = unknown>(
+    endpoint: string,
+    requestOptions: ApiRequestOptions = {},
+  ): Promise<T | undefined> {
+    const result = await requestWithStatus<T>(endpoint, requestOptions);
+    return result.body;
   }
 
   return {
     request,
+    requestWithStatus,
     refreshCsrfToken: async () => {
       await refreshCsrfTokenAfterSessionTransition();
     },

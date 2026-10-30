@@ -44,6 +44,49 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe("customer order history API", () => {
+  it("parses the documented order-creation envelope and preserves its HTTP status on invalid data", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      if (url.pathname.endsWith("/orders")) {
+        expect(init?.method).toBe("POST");
+        expect(new Headers(init?.headers).get("Idempotency-Key")).toBe(
+          "order-submit-test-0001",
+        );
+        expect(JSON.parse(String(init?.body))).toEqual({ addressId: "address-1" });
+        return new Response(JSON.stringify({ order, replayed: false }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    await expect(api.createCustomerOrder("address-1", "order-submit-test-0001")).resolves.toEqual(
+      order,
+    );
+
+    const invalidFetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      return new Response(JSON.stringify({ order: { id: order.id }, replayed: false }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const invalidApi = createOrdersApi(
+      createApiClient({ baseUrl: "https://api.example.test", fetcher: invalidFetcher }),
+    );
+
+    await expect(
+      invalidApi.createCustomerOrder("address-1", "order-submit-test-0001"),
+    ).rejects.toMatchObject({
+      name: "ApiResponseError",
+      status: 201,
+    });
+  });
+
   it("validates the documented list response and keeps pending payment explicit", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({
@@ -74,6 +117,84 @@ describe("customer order history API", () => {
     await expect(api.listCustomerOrders()).rejects.toMatchObject({
       name: "ApiResponseError",
       message: "Backend returned an invalid order history response.",
+    });
+  });
+
+  it("uses the documented PayFast endpoint and validates its signed shipping-inclusive response", async () => {
+    const checkout = {
+      paymentAttemptId: "attempt-1",
+      merchantReference: "HW-2026-000001-attempt-1",
+      amountCents: 3300,
+      currency: "ZAR",
+      amountBreakdown: {
+        productSubtotalCents: 2500,
+        discountCents: 0,
+        shippingCents: 800,
+        additionalChargesCents: 0,
+        totalCents: 3300,
+      },
+      checkoutUrl: "https://sandbox.payfast.co.za/eng/process",
+      method: "POST",
+      fields: {
+        merchant_id: "merchant",
+        merchant_key: "key",
+        return_url: "https://store.example.test/payment/return?orderId=order-1",
+        cancel_url: "https://store.example.test/payment/cancel?orderId=order-1",
+        notify_url: "https://api.example.test/api/v1/payments/payfast/itn",
+        email_address: "customer@example.test",
+        m_payment_id: "HW-2026-000001-attempt-1",
+        amount: "33.00",
+        item_name: "Healthy Ways SA HW-2026-000001",
+        signature: "signed-value",
+      },
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      if (url.pathname.endsWith("/payfast/checkout")) return jsonResponse(checkout);
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    const result = await api.initiatePayFastCheckout("order-1");
+
+    expect(result.amountBreakdown.shippingCents).toBe(800);
+    expect(result.amountCents).toBe(3300);
+    expect(result.method).toBe("POST");
+    const request = fetcher.mock.calls.find(([input]) =>
+      String(input).endsWith("/orders/order-1/payfast/checkout"),
+    );
+    expect(request?.[1]?.method).toBe("POST");
+    expect(request?.[1]?.credentials).toBe("include");
+    expect(new Headers(request?.[1]?.headers).get("X-CSRF-Token")).toBe("csrf");
+  });
+
+  it("rejects a PayFast response whose shipping-inclusive breakdown is inconsistent", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      return jsonResponse({
+        paymentAttemptId: "attempt-1",
+        merchantReference: "HW-1",
+        amountCents: 3300,
+        currency: "ZAR",
+        amountBreakdown: {
+          productSubtotalCents: 2500,
+          discountCents: 0,
+          shippingCents: 700,
+          additionalChargesCents: 0,
+          totalCents: 3300,
+        },
+        checkoutUrl: "https://sandbox.payfast.co.za/eng/process",
+        method: "POST",
+        fields: { amount: "33.00", signature: "signed" },
+      });
+    });
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    await expect(api.initiatePayFastCheckout("order-1")).rejects.toMatchObject({
+      name: "ApiResponseError",
+      message: "Backend returned an invalid order or shipping response.",
     });
   });
 });

@@ -122,6 +122,20 @@ describe("App routing", () => {
     expect(router.state.location.search).toEqual({ view: "login" });
   }, 15000);
 
+  it("resolves PayFast return paths through the existing preview route", async () => {
+    const router = await renderPreviewAt(
+      "/payment/cancel?orderId=order-123",
+      createPreviewFetcher({}),
+    );
+
+    expect(await screen.findByRole("button", { name: "Sign in to check order" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/preview");
+    expect(router.state.location.search).toEqual({
+      view: "payment-cancel",
+      orderId: "order-123",
+    });
+  });
+
   it("shows a missing-token state with resend controls and does not call verification", async () => {
     const fetcher = createPreviewFetcher({});
     const router = await renderPreviewAt("/verify-email", fetcher);

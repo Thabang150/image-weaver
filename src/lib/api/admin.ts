@@ -1,5 +1,4 @@
 import { ApiResponseError, createConfiguredApiClient, type createApiClient } from "./client";
-import type { PublicCategory } from "./catalogue";
 
 export interface AdminInventoryItem {
   productId: string;
@@ -7,8 +6,38 @@ export interface AdminInventoryItem {
   slug: string;
   sku: string;
   categoryId: string;
-  status: "draft" | "active" | "inactive";
+  status: "draft" | "active" | "inactive" | "archived";
   stockQuantity: number;
+  updatedAt: string;
+}
+
+export interface AdminUploadedImage {
+  url: string;
+  publicId: string;
+  originalFilename: string;
+  format: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
+export interface AdminShippingParcel {
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+  weightGrams: number;
+  verified: boolean;
+}
+
+export interface AdminCategory {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  displayOrder?: number;
+  isActive: boolean;
+  imageReference?: string;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -19,13 +48,26 @@ export interface AdminProduct {
   sku: string;
   description: string;
   categoryId: string;
-  priceCents: number;
-  status: "draft" | "active" | "inactive";
+  shortDescription?: string;
+  priceCents: number | null;
+  salePriceCents?: number;
+  costCents?: number;
+  priceConfirmed?: boolean;
+  primaryImageReference?: string;
+  packaging?: { amount: number; unit: string };
+  shippingParcel?: AdminShippingParcel | null;
+  lowStockThreshold?: number;
+  status: "draft" | "active" | "inactive" | "archived";
   imageReferences: string[];
-  isMockData: boolean;
-  requiresConfirmation: string[];
+  isMockData?: boolean;
+  requiresConfirmation?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AdminProductList {
+  products: AdminProduct[];
+  pagination: InventoryList["pagination"];
 }
 
 export interface InventoryList {
@@ -64,7 +106,12 @@ function isSafeInteger(value: unknown): value is number {
 }
 
 function isAdminStatus(value: unknown): value is AdminInventoryItem["status"] {
-  return value === "draft" || value === "active" || value === "inactive";
+  return (
+    value === "draft" ||
+    value === "active" ||
+    value === "inactive" ||
+    value === "archived"
+  );
 }
 
 function isInventoryMovementType(
@@ -77,9 +124,46 @@ function invalidAdminResponse(): never {
   throw new ApiResponseError(200, "Backend returned an invalid administrator response.");
 }
 
-function parseCategories(value: unknown): PublicCategory[] {
+function isHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function parseUploadedImages(value: unknown): AdminUploadedImage[] {
+  if (!isRecord(value) || !Array.isArray(value["images"])) return invalidAdminResponse();
+  return value["images"].map((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry["url"] !== "string" ||
+      !isHttpsUrl(entry["url"]) ||
+      typeof entry["publicId"] !== "string" ||
+      typeof entry["originalFilename"] !== "string" ||
+      typeof entry["format"] !== "string" ||
+      !isSafeInteger(entry["width"]) ||
+      !isSafeInteger(entry["height"]) ||
+      !isSafeInteger(entry["bytes"])
+    ) {
+      return invalidAdminResponse();
+    }
+    return {
+      url: entry["url"],
+      publicId: entry["publicId"],
+      originalFilename: entry["originalFilename"],
+      format: entry["format"],
+      width: entry["width"],
+      height: entry["height"],
+      bytes: entry["bytes"],
+    };
+  });
+}
+
+function parseCategories(value: unknown): AdminCategory[] {
   if (!isRecord(value) || !Array.isArray(value["categories"])) return invalidAdminResponse();
-  return value["categories"].map((category): PublicCategory => {
+  return value["categories"].map((category): AdminCategory => {
     if (
       !isRecord(category) ||
       typeof category["id"] !== "string" ||
@@ -88,7 +172,10 @@ function parseCategories(value: unknown): PublicCategory[] {
       typeof category["isActive"] !== "boolean" ||
       typeof category["createdAt"] !== "string" ||
       typeof category["updatedAt"] !== "string" ||
-      (category["description"] !== undefined && typeof category["description"] !== "string")
+      (category["description"] !== undefined && typeof category["description"] !== "string") ||
+      (category["displayOrder"] !== undefined && !isSafeInteger(category["displayOrder"])) ||
+      (category["imageReference"] !== undefined &&
+        typeof category["imageReference"] !== "string")
     ) {
       invalidAdminResponse();
     }
@@ -101,6 +188,12 @@ function parseCategories(value: unknown): PublicCategory[] {
       updatedAt: category["updatedAt"],
       ...(typeof category["description"] === "string"
         ? { description: category["description"] }
+        : {}),
+      ...(isSafeInteger(category["displayOrder"])
+        ? { displayOrder: category["displayOrder"] }
+        : {}),
+      ...(typeof category["imageReference"] === "string"
+        ? { imageReference: category["imageReference"] }
         : {}),
     };
   });
@@ -166,14 +259,48 @@ function parseAdminProduct(value: unknown): AdminProduct {
     typeof product["sku"] !== "string" ||
     typeof product["description"] !== "string" ||
     typeof product["categoryId"] !== "string" ||
-    !isSafeInteger(product["priceCents"]) ||
-    product["priceCents"] <= 0 ||
+    (product["priceCents"] !== null &&
+      (!isSafeInteger(product["priceCents"]) || product["priceCents"] <= 0)) ||
     !isAdminStatus(product["status"]) ||
     !Array.isArray(product["imageReferences"]) ||
     !product["imageReferences"].every((entry) => typeof entry === "string") ||
-    typeof product["isMockData"] !== "boolean" ||
-    !Array.isArray(product["requiresConfirmation"]) ||
-    !product["requiresConfirmation"].every((entry) => typeof entry === "string") ||
+    (product["shortDescription"] !== undefined &&
+      typeof product["shortDescription"] !== "string") ||
+    (product["salePriceCents"] !== undefined &&
+      (!isSafeInteger(product["salePriceCents"]) || product["salePriceCents"] <= 0)) ||
+    (product["costCents"] !== undefined &&
+      (!isSafeInteger(product["costCents"]) || product["costCents"] < 0)) ||
+    (product["priceConfirmed"] !== undefined &&
+      typeof product["priceConfirmed"] !== "boolean") ||
+    (product["primaryImageReference"] !== undefined &&
+      typeof product["primaryImageReference"] !== "string") ||
+    (product["lowStockThreshold"] !== undefined &&
+      (!isSafeInteger(product["lowStockThreshold"]) || product["lowStockThreshold"] < 0)) ||
+    (product["packaging"] !== undefined &&
+      (!isRecord(product["packaging"]) ||
+        typeof product["packaging"]["amount"] !== "number" ||
+        !Number.isFinite(product["packaging"]["amount"]) ||
+        product["packaging"]["amount"] <= 0 ||
+        typeof product["packaging"]["unit"] !== "string")) ||
+    (product["shippingParcel"] !== undefined &&
+      product["shippingParcel"] !== null &&
+      (!isRecord(product["shippingParcel"]) ||
+        typeof product["shippingParcel"]["lengthCm"] !== "number" ||
+        !Number.isFinite(product["shippingParcel"]["lengthCm"]) ||
+        product["shippingParcel"]["lengthCm"] <= 0 ||
+        typeof product["shippingParcel"]["widthCm"] !== "number" ||
+        !Number.isFinite(product["shippingParcel"]["widthCm"]) ||
+        product["shippingParcel"]["widthCm"] <= 0 ||
+        typeof product["shippingParcel"]["heightCm"] !== "number" ||
+        !Number.isFinite(product["shippingParcel"]["heightCm"]) ||
+        product["shippingParcel"]["heightCm"] <= 0 ||
+        !isSafeInteger(product["shippingParcel"]["weightGrams"]) ||
+        product["shippingParcel"]["weightGrams"] <= 0 ||
+        typeof product["shippingParcel"]["verified"] !== "boolean")) ||
+    (product["isMockData"] !== undefined && typeof product["isMockData"] !== "boolean") ||
+    (product["requiresConfirmation"] !== undefined &&
+      (!Array.isArray(product["requiresConfirmation"]) ||
+        !product["requiresConfirmation"].every((entry) => typeof entry === "string"))) ||
     typeof product["createdAt"] !== "string" ||
     typeof product["updatedAt"] !== "string"
   ) {
@@ -186,14 +313,94 @@ function parseAdminProduct(value: unknown): AdminProduct {
     sku: product["sku"],
     description: product["description"],
     categoryId: product["categoryId"],
-    priceCents: product["priceCents"],
+    priceCents: typeof product["priceCents"] === "number" ? product["priceCents"] : null,
     status: product["status"],
     imageReferences: product["imageReferences"],
-    isMockData: product["isMockData"],
-    requiresConfirmation: product["requiresConfirmation"],
+    ...(typeof product["shortDescription"] === "string"
+      ? { shortDescription: product["shortDescription"] }
+      : {}),
+    ...(isSafeInteger(product["salePriceCents"])
+      ? { salePriceCents: product["salePriceCents"] }
+      : {}),
+    ...(isSafeInteger(product["costCents"]) ? { costCents: product["costCents"] } : {}),
+    ...(typeof product["priceConfirmed"] === "boolean"
+      ? { priceConfirmed: product["priceConfirmed"] }
+      : {}),
+    ...(typeof product["primaryImageReference"] === "string"
+      ? { primaryImageReference: product["primaryImageReference"] }
+      : {}),
+    ...(isRecord(product["packaging"])
+      ? {
+          packaging: {
+            amount: Number(product["packaging"]["amount"]),
+            unit: String(product["packaging"]["unit"]),
+          },
+        }
+      : {}),
+    ...(product["shippingParcel"] === null
+      ? { shippingParcel: null }
+      : isRecord(product["shippingParcel"])
+        ? {
+            shippingParcel: {
+              lengthCm: Number(product["shippingParcel"]["lengthCm"]),
+              widthCm: Number(product["shippingParcel"]["widthCm"]),
+              heightCm: Number(product["shippingParcel"]["heightCm"]),
+              weightGrams: Number(product["shippingParcel"]["weightGrams"]),
+              verified: Boolean(product["shippingParcel"]["verified"]),
+            },
+          }
+        : {}),
+    ...(isSafeInteger(product["lowStockThreshold"])
+      ? { lowStockThreshold: product["lowStockThreshold"] }
+      : {}),
+    ...(typeof product["isMockData"] === "boolean"
+      ? { isMockData: product["isMockData"] }
+      : {}),
+    ...(Array.isArray(product["requiresConfirmation"])
+      ? {
+          requiresConfirmation: product["requiresConfirmation"].filter(
+            (entry): entry is string => typeof entry === "string",
+          ),
+        }
+      : {}),
     createdAt: product["createdAt"],
     updatedAt: product["updatedAt"],
   };
+}
+
+function parsePagination(value: unknown): InventoryList["pagination"] {
+  if (
+    !isRecord(value) ||
+    !isSafeInteger(value["page"]) ||
+    !isSafeInteger(value["limit"]) ||
+    !isSafeInteger(value["total"]) ||
+    !isSafeInteger(value["totalPages"])
+  ) {
+    return invalidAdminResponse();
+  }
+  return {
+    page: value["page"],
+    limit: value["limit"],
+    total: value["total"],
+    totalPages: value["totalPages"],
+  };
+}
+
+function parseProducts(value: unknown): AdminProductList {
+  if (!isRecord(value) || !Array.isArray(value["products"])) return invalidAdminResponse();
+  return {
+    products: value["products"].map((product) => parseAdminProduct({ product })),
+    pagination: parsePagination(value["pagination"]),
+  };
+}
+
+function buildQuery(options: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  const serialized = query.toString();
+  return serialized ? `?${serialized}` : "";
 }
 
 function parseInventoryAdjustment(value: unknown): InventoryAdjustmentResult {
@@ -239,24 +446,108 @@ export function createAdminApi(client: AdminApiClient) {
     async getCategories() {
       return parseCategories(await client.request<unknown>("/admin/categories"));
     },
+    async getProducts(options: {
+      page: number;
+      limit?: number;
+      q?: string;
+      categoryId?: string;
+      status?: AdminProduct["status"];
+    }) {
+      return parseProducts(
+        await client.request<unknown>(
+          `/admin/products${buildQuery({
+            page: options.page,
+            limit: options.limit ?? 20,
+            q: options.q,
+            categoryId: options.categoryId,
+            status: options.status,
+          })}`,
+        ),
+      );
+    },
+    async getProduct(productId: string) {
+      return parseAdminProduct(
+        await client.request<unknown>(`/admin/products/${encodeURIComponent(productId)}`),
+      );
+    },
+    async uploadProductImages(files: File[]): Promise<AdminUploadedImage[]> {
+      const body = new FormData();
+      for (const file of files) body.append("images", file);
+      const response = await client.request<unknown>("/admin/uploads/images", {
+        method: "POST",
+        body,
+      });
+      return parseUploadedImages(response);
+    },
     async getInventory(options: {
       page: number;
+      limit?: number;
       q?: string;
       categoryId?: string;
       status?: AdminInventoryItem["status"];
+      lowStockBelow?: number;
       sortBy?: "updatedAt" | "name" | "stockQuantity";
       sortOrder?: "asc" | "desc";
     }) {
-      const query = new URLSearchParams({
-        page: String(options.page),
-        limit: "20",
-        sortBy: options.sortBy ?? "updatedAt",
-        sortOrder: options.sortOrder ?? "desc",
-      });
-      if (options.q) query.set("q", options.q);
-      if (options.categoryId) query.set("categoryId", options.categoryId);
-      if (options.status) query.set("status", options.status);
-      return parseInventory(await client.request<unknown>(`/admin/inventory?${query.toString()}`));
+      return parseInventory(
+        await client.request<unknown>(
+          `/admin/inventory${buildQuery({
+            page: options.page,
+            limit: options.limit ?? 20,
+            q: options.q,
+            categoryId: options.categoryId,
+            status: options.status,
+            lowStockBelow: options.lowStockBelow,
+            sortBy: options.sortBy ?? "updatedAt",
+            sortOrder: options.sortOrder ?? "desc",
+          })}`,
+        ),
+      );
+    },
+    async getInventoryAdjustments(options: { page?: number; limit?: number } = {}) {
+      return client.request<unknown>(
+        `/admin/inventory/adjustments${buildQuery({
+          page: options.page ?? 1,
+          limit: options.limit ?? 20,
+        })}`,
+      );
+    },
+    async getProductInventoryAdjustments(
+      productId: string,
+      options: { page?: number; limit?: number } = {},
+    ) {
+      return client.request<unknown>(
+        `/admin/products/${encodeURIComponent(productId)}/inventory-adjustments${buildQuery({
+          page: options.page ?? 1,
+          limit: options.limit ?? 20,
+        })}`,
+      );
+    },
+    async getAnalytics(
+      report: "overview" | "sales" | "products" | "inventory" | "categories",
+      options: {
+        start?: string;
+        end?: string;
+        groupBy?: "day" | "week" | "month";
+        page?: number;
+        limit?: number;
+        q?: string;
+        categoryId?: string;
+        status?: AdminProduct["status"];
+      } = {},
+    ) {
+      return client.request<unknown>(
+        `/admin/analytics/${report}${buildQuery({
+          start: options.start,
+          end: options.end,
+          groupBy: options.groupBy,
+          page: options.page,
+          limit: options.limit,
+          q: options.q,
+          categoryId: options.categoryId,
+          status: options.status,
+        })}`,
+      );
     },
     async createProduct(payload: Record<string, unknown>) {
       return parseAdminProduct(
@@ -291,13 +582,17 @@ export function createAdminApi(client: AdminApiClient) {
       if (!category) return invalidAdminResponse();
       return category;
     },
-    async adjustInventory(productId: string, payload: { quantityDelta: number; reason: string }) {
+    async adjustInventory(
+      productId: string,
+      payload: { quantityDelta: number; reason: string },
+      idempotencyKey = crypto.randomUUID(),
+    ) {
       return parseInventoryAdjustment(
         await client.request<unknown>(
           `/admin/products/${encodeURIComponent(productId)}/inventory-adjustments`,
           {
             method: "POST",
-            headers: { "Idempotency-Key": crypto.randomUUID() },
+            headers: { "Idempotency-Key": idempotencyKey },
             json: payload,
           },
         ),
@@ -315,8 +610,23 @@ function getConfiguredAdminApi() {
 
 export const adminApi = {
   getCategories: () => getConfiguredAdminApi().getCategories(),
+  getProducts: (options: Parameters<ReturnType<typeof createAdminApi>["getProducts"]>[0]) =>
+    getConfiguredAdminApi().getProducts(options),
+  getProduct: (productId: string) => getConfiguredAdminApi().getProduct(productId),
+  uploadProductImages: (files: File[]) => getConfiguredAdminApi().uploadProductImages(files),
   getInventory: (options: Parameters<ReturnType<typeof createAdminApi>["getInventory"]>[0]) =>
     getConfiguredAdminApi().getInventory(options),
+  getInventoryAdjustments: (
+    options?: Parameters<ReturnType<typeof createAdminApi>["getInventoryAdjustments"]>[0],
+  ) => getConfiguredAdminApi().getInventoryAdjustments(options),
+  getProductInventoryAdjustments: (
+    productId: string,
+    options?: Parameters<ReturnType<typeof createAdminApi>["getProductInventoryAdjustments"]>[1],
+  ) => getConfiguredAdminApi().getProductInventoryAdjustments(productId, options),
+  getAnalytics: (
+    report: Parameters<ReturnType<typeof createAdminApi>["getAnalytics"]>[0],
+    options?: Parameters<ReturnType<typeof createAdminApi>["getAnalytics"]>[1],
+  ) => getConfiguredAdminApi().getAnalytics(report, options),
   createProduct: (payload: Record<string, unknown>) =>
     getConfiguredAdminApi().createProduct(payload),
   updateProduct: (productId: string, payload: Record<string, unknown>) =>
@@ -325,6 +635,9 @@ export const adminApi = {
     getConfiguredAdminApi().createCategory(payload),
   updateCategory: (categoryId: string, payload: Record<string, unknown>) =>
     getConfiguredAdminApi().updateCategory(categoryId, payload),
-  adjustInventory: (productId: string, payload: { quantityDelta: number; reason: string }) =>
-    getConfiguredAdminApi().adjustInventory(productId, payload),
+  adjustInventory: (
+    productId: string,
+    payload: { quantityDelta: number; reason: string },
+    idempotencyKey?: string,
+  ) => getConfiguredAdminApi().adjustInventory(productId, payload, idempotencyKey),
 };

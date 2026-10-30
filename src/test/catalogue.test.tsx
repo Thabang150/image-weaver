@@ -332,6 +332,36 @@ describe("public catalogue", () => {
     expect(screen.getByRole("img", { name: "Aloe product image 2" })).toBeVisible();
   });
 
+  it("renders the standard Cloudinary image host without requiring a frontend host entry", async () => {
+    vi.stubEnv("VITE_PRODUCT_IMAGE_ALLOWED_HOSTS", "");
+    const cloudinaryProduct = {
+      ...product,
+      imageReferences: ["https://res.cloudinary.com/healthyways/image/upload/aloe.jpg"],
+    };
+    installApi(() => jsonResponse({ product: cloudinaryProduct }));
+    renderCatalogue(product.slug);
+
+    expect(await screen.findByRole("img", { name: "Aloe product image 1" })).toHaveAttribute(
+      "src",
+      "https://res.cloudinary.com/healthyways/image/upload/aloe.jpg",
+    );
+  });
+
+  it("accepts configured approved hosts when they are supplied as full HTTPS URLs", async () => {
+    vi.stubEnv("VITE_PRODUCT_IMAGE_ALLOWED_HOSTS", "https://images.example.test, https://cdn.example.test");
+    const configuredHostProduct = {
+      ...product,
+      imageReferences: ["https://images.example.test/aloe-front.jpg"],
+    };
+    installApi(() => jsonResponse({ product: configuredHostProduct }));
+    renderCatalogue(product.slug);
+
+    expect(await screen.findByRole("img", { name: "Aloe product image 1" })).toHaveAttribute(
+      "src",
+      "https://images.example.test/aloe-front.jpg",
+    );
+  });
+
   it("rejects malformed packaging values instead of displaying them", async () => {
     const malformedProduct = { ...product, packaging: { amount: -1, unit: "ml" } };
     installApi(() => jsonResponse({ product: malformedProduct }));

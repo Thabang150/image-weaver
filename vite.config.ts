@@ -11,7 +11,7 @@ const developmentEnv = loadEnv("development", process.cwd(), "VITE_");
 const configuredBackendUrl = developmentEnv["VITE_BACKEND_BASE_URL"]?.trim();
 const developmentApiTarget = configuredBackendUrl
   ? new URL(configuredBackendUrl).origin
-  : "https://heathywayssa-backend.onrender.com";
+  : "http://localhost:3000";
 
 export default defineConfig({
   vite: {

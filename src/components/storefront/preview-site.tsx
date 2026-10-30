@@ -761,6 +761,9 @@ function LoginPage({
 async function refreshSession(queryClient: ReturnType<typeof useQueryClient>) {
   const session = await authApi.getSession();
   queryClient.setQueryData(["session"], session);
+  if (session.status !== "authenticated") {
+    throw new Error("Sign in could not be completed because the authenticated session was not established.");
+  }
   await queryClient.invalidateQueries({ queryKey: ["cart"] });
 }
 

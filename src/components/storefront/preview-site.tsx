@@ -547,7 +547,7 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
   );
 }
 
-type LoginStep = "credentials" | "two-factor" | "enrollment" | "recovery-codes";
+type LoginStep = "credentials" | "email-otp" | "two-factor" | "enrollment" | "recovery-codes";
 
 function LoginPage({
   onNavigate,
@@ -573,7 +573,9 @@ function LoginPage({
     try {
       const response = await authApi.login({ email: email.trim(), password });
       setPassword("");
-      if ("twoFactorRequired" in response) {
+      if ("emailOtpRequired" in response) {
+        setStep("email-otp");
+      } else if ("twoFactorRequired" in response) {
         setStep("two-factor");
       } else if ("twoFactorEnrollmentRequired" in response) {
         const setup = await authApi.enrollTwoFactor();
@@ -595,7 +597,16 @@ function LoginPage({
     setBusy(true);
     setFeedback(null);
     try {
-      if (step === "two-factor") {
+      if (step === "email-otp") {
+        const result = await authApi.verifyLoginEmailOtp(code.trim());
+        if ("twoFactorRequired" in result) {
+          setCode("");
+          setStep("two-factor");
+        } else {
+          await refreshSession(queryClient);
+          onNavigate(returnTo ?? "account");
+        }
+      } else if (step === "two-factor") {
         await authApi.verifyTwoFactor(code.trim());
         await refreshSession(queryClient);
         onNavigate(returnTo ?? "account");
@@ -636,9 +647,11 @@ function LoginPage({
       title={
         step === "credentials"
           ? "Log in"
-          : step === "enrollment"
-            ? "Set up two-factor authentication"
-            : "Verify sign-in"
+          : step === "email-otp"
+            ? "Check your email"
+            : step === "enrollment"
+              ? "Set up two-factor authentication"
+              : "Verify sign-in"
       }
     >
       {step === "credentials" ? (
@@ -686,6 +699,8 @@ function LoginPage({
               <p>Add this setup URI to your authenticator app. It is shown only during setup.</p>
               <code className="block break-all rounded bg-muted p-3">{provisioningUri}</code>
             </div>
+          ) : step === "email-otp" ? (
+            <p className="text-sm">Enter the six-digit code sent to your email to finish signing in.</p>
           ) : (
             <p className="text-sm">
               Enter the authenticator code or a recovery code to finish signing in.
@@ -693,8 +708,8 @@ function LoginPage({
           )}
           <label className="block space-y-1 text-sm">
             <span>
-              {step === "enrollment"
-                ? "Six-digit authenticator code"
+              {step === "enrollment" || step === "email-otp"
+                ? "Six-digit code"
                 : "Authenticator or recovery code"}
             </span>
             <input
@@ -712,6 +727,23 @@ function LoginPage({
           <Button type="submit" disabled={busy}>
             {busy ? "Verifying…" : step === "enrollment" ? "Confirm setup" : "Verify and continue"}
           </Button>
+          {step === "email-otp" ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void (async () => {
+                try {
+                  await authApi.resendLoginEmailOtp();
+                  setFeedback({ kind: "success", message: "A new sign-in code has been sent." });
+                } catch (error) {
+                  setFeedback({ kind: "error", message: describeAuthError(error, "Resending the sign-in code") });
+                }
+              })()}
+            >
+              Resend code
+            </Button>
+          ) : null}
         </form>
       )}
       {step === "credentials" ? (

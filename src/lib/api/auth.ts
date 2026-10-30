@@ -36,7 +36,10 @@ export interface PublicUser {
 }
 
 export type LoginResponse =
-  { user: PublicUser } | { twoFactorRequired: true } | { twoFactorEnrollmentRequired: true };
+  | { user: PublicUser }
+  | { twoFactorRequired: true }
+  | { twoFactorEnrollmentRequired: true }
+  | { emailOtpRequired: true };
 
 export interface RegistrationResult {
   user: PublicUser;
@@ -127,6 +130,13 @@ export function createAuthApi(client: AuthApiClient) {
         Object.keys(response).length === 1
       ) {
         return { twoFactorEnrollmentRequired: true };
+      }
+      if (
+        isRecord(response) &&
+        response["emailOtpRequired"] === true &&
+        Object.keys(response).length === 1
+      ) {
+        return { emailOtpRequired: true };
       }
       if (isRecord(response) && isPublicUser(response["user"])) {
         return { user: response["user"] };
@@ -246,6 +256,28 @@ export function createAuthApi(client: AuthApiClient) {
       return response["user"];
     },
 
+    async verifyLoginEmailOtp(code: string): Promise<LoginResponse> {
+      const response = await client.request<unknown>("/auth/login/verify-email-otp", {
+        method: "POST",
+        json: { code },
+        regeneratesSession: true,
+      });
+      if (isRecord(response) && response["twoFactorRequired"] === true && Object.keys(response).length === 1) {
+        return { twoFactorRequired: true };
+      }
+      if (isRecord(response) && isPublicUser(response["user"])) {
+        return { user: response["user"] };
+      }
+      return invalidAuthResponse();
+    },
+
+    resendLoginEmailOtp() {
+      return client.request<unknown>("/auth/login/resend-email-otp", {
+        method: "POST",
+        json: {},
+      });
+    },
+
     logout() {
       return client.request<void>("/auth/logout", {
         method: "POST",
@@ -328,6 +360,8 @@ export const authApi = {
   deleteAddress: (addressId: string) => getConfiguredAuthApi().deleteAddress(addressId),
   setDefaultAddress: (addressId: string) => getConfiguredAuthApi().setDefaultAddress(addressId),
   logout: () => getConfiguredAuthApi().logout(),
+  verifyLoginEmailOtp: (code: string) => getConfiguredAuthApi().verifyLoginEmailOtp(code),
+  resendLoginEmailOtp: () => getConfiguredAuthApi().resendLoginEmailOtp(),
   verifyTwoFactor: (code: string) => getConfiguredAuthApi().verifyTwoFactor(code),
   confirmTwoFactor: (code: string) => getConfiguredAuthApi().confirmTwoFactor(code),
   enrollTwoFactor: () => getConfiguredAuthApi().enrollTwoFactor(),

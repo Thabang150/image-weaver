@@ -21,6 +21,7 @@ export type PreviewView =
   | "customer-login"
   | "admin-login"
   | "register"
+  | "admin-register"
   | "verify-email"
   | "account"
   | "addresses"
@@ -264,7 +265,9 @@ export function PreviewSite({
   } else if (view === "admin-login") {
     content = <AdminLoginPage onNavigate={onNavigate} />;
   } else if (view === "register") {
-    content = <RegisterPage onNavigate={onNavigate} />;
+    content = <RegisterPage experience="customer" onNavigate={onNavigate} />;
+  } else if (view === "admin-register") {
+    content = <RegisterPage experience="admin" onNavigate={onNavigate} />;
   } else if (view === "verify-email") {
     content = (
       <VerifyEmailPage
@@ -432,7 +435,13 @@ function FormPage({
   );
 }
 
-function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void }) {
+function RegisterPage({
+  experience,
+  onNavigate,
+}: {
+  experience: "customer" | "admin";
+  onNavigate: (view: PreviewView) => void;
+}) {
   const queryClient = useQueryClient();
   const [fields, setFields] = useState({
     displayName: "",
@@ -458,11 +467,14 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
     }
     setBusy(true);
     try {
-      const result = await authApi.register({
+      const registration = {
         email: fields.email.trim(),
         password: fields.password,
         ...(fields.displayName.trim() ? { displayName: fields.displayName.trim() } : {}),
-      });
+      };
+      const result = experience === "admin"
+        ? await authApi.registerAdmin(registration)
+        : await authApi.register(registration);
       setFields({ displayName: "", email: "", password: "", confirmPassword: "" });
       await queryClient.invalidateQueries({ queryKey: ["session"] });
       setFeedback({
@@ -480,8 +492,10 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
 
   return (
     <FormPage
-      title="Create an account"
-      description="Customer registration. Email verification is required before login."
+      title={experience === "admin" ? "Create an administrator account" : "Create an account"}
+      description={experience === "admin"
+        ? "Administrator registration requires an @healtywayssa.co.za email. Email verification and two-factor setup are required before login."
+        : "Customer registration. Email verification is required before login."}
     >
       <form className="space-y-4" onSubmit={(event) => void submit(event)}>
         <label className="block space-y-1 text-sm">
@@ -544,7 +558,11 @@ function RegisterPage({ onNavigate }: { onNavigate: (view: PreviewView) => void 
       </form>
       <p className="mt-5 text-sm">
         Already registered?{" "}
-        <button className="underline" type="button" onClick={() => onNavigate("login")}>
+        <button
+          className="underline"
+          type="button"
+          onClick={() => onNavigate(experience === "admin" ? "admin-login" : "customer-login")}
+        >
           Log in
         </button>
       </p>
@@ -790,8 +808,14 @@ function LoginPage({
       {step === "credentials" && experience === "customer" ? (
         <p className="mt-5 text-sm">
           No account yet?{" "}
-          <button className="underline" type="button" onClick={() => onNavigate("register")}>
-            Register
+          <button className="underline" type="button" onClick={() => onNavigate("register")}>Register</button>
+        </p>
+      ) : null}
+      {step === "credentials" && experience === "admin" ? (
+        <p className="mt-5 text-sm">
+          Need an administrator account?{" "}
+          <button className="underline" type="button" onClick={() => onNavigate("admin-register")}>
+            Register as administrator
           </button>
         </p>
       ) : null}

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createAuthApi, type PublicUser } from "@/lib/api/auth";
+import { createAuthApi, type PublicUser, type UserRole } from "@/lib/api/auth";
 import { createApiClient } from "@/lib/api/client";
 
 const user: PublicUser = {
@@ -173,6 +173,33 @@ describe("session foundation", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[0]?.[1]?.credentials).toBe("include");
     expect(fetcher.mock.calls[1]?.[1]?.credentials).toBe("include");
+  });
+
+  it("keeps customer and administrator registration endpoints separate", async () => {
+    const admin = { ...user, email: "admin@healtywayssa.co.za", roles: ["admin"] as UserRole[] };
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/admin/register")) {
+        return jsonResponse({ user: admin, emailVerificationEmailSent: true }, 201);
+      }
+      return jsonResponse({ user, emailVerificationEmailSent: true }, 201);
+    });
+    const auth = createAuthApi(
+      createApiClient({
+        baseUrl: "https://api.example.test",
+        csrfTokenProvider: vi.fn().mockResolvedValue("csrf-admin-register"),
+        fetcher,
+      }),
+    );
+
+    await expect(auth.registerAdmin({
+      email: admin.email,
+      password: "administrator-password",
+    })).resolves.toEqual({ user: admin, emailVerificationEmailSent: true });
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe(
+      "https://api.example.test/api/v1/auth/admin/register",
+    );
   });
 
   it("uses the documented registration and email verification contracts", async () => {

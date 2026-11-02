@@ -11,6 +11,7 @@ const previewViews: PreviewView[] = [
   "customer-login",
   "admin-login",
   "register",
+  "admin-register",
   "verify-email",
   "account",
   "addresses",

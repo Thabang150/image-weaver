@@ -96,6 +96,20 @@ function invalidAuthResponse(): never {
   throw new ApiResponseError(200, "Backend returned an invalid authentication response.");
 }
 
+function parseRegistrationResult(response: unknown): RegistrationResult {
+  if (
+    !isRecord(response) ||
+    !isPublicUser(response["user"]) ||
+    typeof response["emailVerificationEmailSent"] !== "boolean"
+  ) {
+    return invalidAuthResponse();
+  }
+  return {
+    user: response["user"],
+    emailVerificationEmailSent: response["emailVerificationEmailSent"],
+  };
+}
+
 export function createAuthApi(client: AuthApiClient) {
   return {
     async getSession(): Promise<SessionState> {
@@ -154,17 +168,20 @@ export function createAuthApi(client: AuthApiClient) {
         method: "POST",
         json: input,
       });
-      if (
-        !isRecord(response) ||
-        !isPublicUser(response["user"]) ||
-        typeof response["emailVerificationEmailSent"] !== "boolean"
-      ) {
-        return invalidAuthResponse();
-      }
-      return {
-        user: response["user"],
-        emailVerificationEmailSent: response["emailVerificationEmailSent"],
-      };
+      return parseRegistrationResult(response);
+    },
+
+    async registerAdmin(input: {
+      email: string;
+      password: string;
+      displayName?: string;
+      phoneNumber?: string;
+    }): Promise<RegistrationResult> {
+      const response = await client.request<unknown>("/auth/admin/register", {
+        method: "POST",
+        json: input,
+      });
+      return parseRegistrationResult(response);
     },
 
     async requestVerification(email: string): Promise<{ message: string }> {

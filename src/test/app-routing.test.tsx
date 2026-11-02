@@ -685,7 +685,7 @@ describe("App routing", () => {
       target: { value: "a-strong-test-password" },
     });
     fireEvent.click(screen.getAllByRole("button", { name: "Log in" })[1]!);
-    expect(await screen.findByRole("heading", { name: "Verify sign-in" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Verify administrator sign-in" })).toBeVisible();
     expect(router.state.location.search).toEqual({ view: "login", returnTo: "admin" });
     expect(
       screen.queryByRole("heading", { name: "Administrator workspace" }),

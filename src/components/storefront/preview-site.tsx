@@ -670,12 +670,17 @@ function LoginPage({
         await authApi.verifyTwoFactor(code.trim());
         await refreshSession(queryClient, "admin");
         onNavigate("admin");
-      } else {
+      } else if (step === "enrollment") {
+        if (experience !== "admin") {
+          throw new ApiResponseError(200, "Unexpected administrator enrollment in customer login.");
+        }
         const result = await authApi.confirmTwoFactor(code.trim());
         setRecoveryCodes(result.recoveryCodes);
         setCode("");
         setStep("recovery-codes");
         await refreshSession(queryClient, "admin");
+      } else {
+        throw new ApiResponseError(200, "Unexpected login verification step.");
       }
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Two-factor verification") });
@@ -697,7 +702,9 @@ function LoginPage({
             </li>
           ))}
         </ul>
-        <Button onClick={() => onNavigate("account")}>Continue to account</Button>
+        <Button onClick={() => onNavigate(experience === "admin" ? "admin" : "account")}>
+          {experience === "admin" ? "Continue to administrator workspace" : "Continue to account"}
+        </Button>
       </FormPage>
     );
   }
@@ -710,8 +717,12 @@ function LoginPage({
           : step === "email-otp"
             ? "Check your email"
             : step === "enrollment"
-              ? "Set up two-factor authentication"
-              : "Verify sign-in"
+              ? experience === "admin"
+                ? "Set up administrator authentication"
+                : "Set up two-factor authentication"
+              : experience === "admin"
+                ? "Verify administrator sign-in"
+                : "Verify sign-in"
       }
     >
       {step === "credentials" ? (
@@ -765,7 +776,9 @@ function LoginPage({
             <p className="text-sm">Enter the six-digit code sent to your email to finish signing in.</p>
           ) : (
             <p className="text-sm">
-              Enter the authenticator code or a recovery code to finish signing in.
+              {experience === "admin"
+                ? "Enter the six-digit code from your authenticator app, or an administrator recovery code, to finish signing in."
+                : "Enter the six-digit email sign-in code to finish signing in."}
             </p>
           )}
           <label className="block space-y-1 text-sm">

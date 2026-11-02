@@ -292,11 +292,11 @@ export function createApiClient(options: ApiClientOptions) {
     if (body !== undefined) init.body = body;
     if (requestOptions.signal) init.signal = requestOptions.signal;
 
-    const response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
-    const responseBody = await readResponseBody(response);
+    let response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
+    let responseBody = await readResponseBody(response);
 
     if (!response.ok) {
-      const apiError = new ApiHttpError(
+      let apiError = new ApiHttpError(
         response.status,
         responseBody,
         getErrorMessage(responseBody, response),
@@ -305,14 +305,28 @@ export function createApiClient(options: ApiClientOptions) {
       if (apiError.isCsrfFailure && isUnsafeMethod(method)) {
         if (csrfToken === requestCsrfToken || !csrfToken) {
           try {
-            await acquireCsrfToken(true);
+            const refreshedToken = await acquireCsrfToken(true);
+            const retryHeaders = new Headers(init.headers);
+            retryHeaders.set("X-CSRF-Token", refreshedToken);
+            response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), {
+              ...init,
+              headers: retryHeaders,
+            });
+            responseBody = await readResponseBody(response);
+            if (!response.ok) {
+              apiError = new ApiHttpError(
+                response.status,
+                responseBody,
+                getErrorMessage(responseBody, response),
+              );
+            }
           } catch (error) {
             apiError.csrfRefreshError = error;
           }
         }
       }
 
-      throw apiError;
+      if (!response.ok) throw apiError;
     }
 
     if (requestOptions.regeneratesSession) {
@@ -346,8 +360,22 @@ export function createConfiguredApiClient() {
       ? new URL(normalizeApiBaseUrl(API_PREFIX), window.location.origin).toString()
       : configuredBaseUrl;
 
+  async function resilientFetch(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await globalThis.fetch(input, init);
+      } catch (error) {
+        lastError = error;
+        if (attempt === 0 && init?.signal?.aborted) throw error;
+        if (attempt === 0) await new Promise((resolve) => globalThis.setTimeout(resolve, 750));
+      }
+    }
+    throw lastError;
+  }
+
   return createApiClient({
     baseUrl,
-    fetcher: (input, init) => globalThis.fetch(input, init),
+    fetcher: resilientFetch,
   });
 }

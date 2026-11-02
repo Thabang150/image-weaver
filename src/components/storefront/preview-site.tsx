@@ -84,7 +84,10 @@ function describeAuthError(error: unknown, action: string): string {
     if (error.status === 409)
       return "This account or request already exists. Check the details and try again.";
     if (error.status === 400) {
-      return `${action} was not accepted. Check the required fields, password length, or token format and try again.`;
+      const backendMessage = error.message?.trim();
+      return backendMessage
+        ? `${action} was not accepted: ${backendMessage}`
+        : `${action} was not accepted. Check the required fields, password length, or token format and try again.`;
     }
     if (error.status === 429) return "Too many attempts. Wait a few minutes before trying again.";
     if (error.status >= 500)

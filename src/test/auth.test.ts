@@ -193,13 +193,17 @@ describe("session foundation", () => {
     );
 
     await expect(auth.registerAdmin({
-      email: admin.email,
+      email: `  ${admin.email.toUpperCase()}  `,
       password: "administrator-password",
     })).resolves.toEqual({ user: admin, emailVerificationEmailSent: true });
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe(
       "https://api.example.test/api/v1/auth/admin/register",
     );
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      email: admin.email,
+      password: "administrator-password",
+    });
   });
 
   it("uses the documented registration and email verification contracts", async () => {

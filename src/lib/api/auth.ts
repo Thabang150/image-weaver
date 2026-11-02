@@ -179,7 +179,10 @@ export function createAuthApi(client: AuthApiClient) {
     }): Promise<RegistrationResult> {
       const response = await client.request<unknown>("/auth/admin/register", {
         method: "POST",
-        json: input,
+        json: {
+          ...input,
+          email: input.email.trim().toLowerCase(),
+        },
       });
       return parseRegistrationResult(response);
     },

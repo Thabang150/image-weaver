@@ -99,6 +99,9 @@ function describeAuthError(error: unknown, action: string): string {
   if (error instanceof CsrfTokenError) {
     return "This request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
+  if (error instanceof TypeError) {
+    return `${action} could not be completed because the backend could not be reached. Check your connection, disable blockers for this site, then try again.`;
+  }
   return `${action} could not be completed. Check your connection and try again.`;
 }
 
@@ -468,10 +471,15 @@ function RegisterPage({
       setFieldError("Passwords do not match.");
       return;
     }
+    const email = fields.email.trim().toLowerCase();
+    if (experience === "admin" && !email.endsWith("@healtywayssa.co.za")) {
+      setFieldError("Administrator accounts must use an @healtywayssa.co.za email address.");
+      return;
+    }
     setBusy(true);
     try {
       const registration = {
-        email: fields.email.trim(),
+        email,
         password: fields.password,
         ...(fields.displayName.trim() ? { displayName: fields.displayName.trim() } : {}),
       };

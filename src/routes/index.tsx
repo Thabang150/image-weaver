@@ -11,12 +11,12 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "A new Healthy Ways SA online wellness experience launches on 1 November 2026. Organic natural wellness, rooted in care.",
+          "A new Healthy Ways SA online wellness experience launches at the end of 3 November 2026. Organic natural wellness, rooted in care.",
       },
       { property: "og:title", content: "Healthy Ways SA — A Natural New Chapter" },
       {
         property: "og:description",
-        content: "A new Healthy Ways SA online experience arrives 1 November 2026.",
+        content: "A new Healthy Ways SA online experience arrives at the end of 3 November 2026.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -72,9 +72,9 @@ export function LaunchExperience() {
         <div className="reveal" style={d(900)}>
           <span className="eyebrow">Launching</span>
           <p className="launch-date">
-            <time dateTime="2026-11-01T00:00:00+02:00">1 NOVEMBER 2026</time>
+            <time dateTime="2026-11-03T23:59:59+02:00">3 NOVEMBER 2026</time>
             <span className="mt-2 block text-[10px] text-muted-foreground">
-              Midnight · South Africa
+              End of day · South Africa
             </span>
           </p>
         </div>

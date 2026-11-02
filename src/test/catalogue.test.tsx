@@ -399,7 +399,7 @@ describe("public catalogue", () => {
     expect(
       screen.getByRole("heading", { name: /Natural wellness, beautifully renewed/i }),
     ).toBeVisible();
-    expect(screen.getByText("1 NOVEMBER 2026")).toBeVisible();
+    expect(screen.getByText("3 NOVEMBER 2026")).toBeVisible();
     expect(screen.getByRole("timer")).toBeVisible();
     expect(screen.getByRole("img", { name: /Sunlit green botanical leaves/i })).toBeVisible();
     expect(screen.getByRole("link", { name: "Chat on WhatsApp" })).toHaveAttribute(

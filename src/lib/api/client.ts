@@ -280,7 +280,25 @@ export function createApiClient(options: ApiClientOptions) {
 
     let requestCsrfToken: string | undefined;
     if (isUnsafeMethod(method)) {
-      requestCsrfToken = await acquireCsrfToken();
+      const isAdminRegistration = endpoint === "/auth/admin/register";
+      if (isAdminRegistration) {
+        console.info("[admin-registration] CSRF acquisition started.");
+      }
+      try {
+        requestCsrfToken = await acquireCsrfToken();
+        if (isAdminRegistration) {
+          console.info("[admin-registration] CSRF acquisition succeeded.");
+        }
+      } catch (error) {
+        if (isAdminRegistration) {
+          console.info(
+            "[admin-registration] CSRF acquisition failed.",
+            error instanceof Error ? error.name : typeof error,
+            error instanceof Error ? error.message : "",
+          );
+        }
+        throw error;
+      }
       headers.set("X-CSRF-Token", requestCsrfToken);
     }
 
@@ -292,7 +310,25 @@ export function createApiClient(options: ApiClientOptions) {
     if (body !== undefined) init.body = body;
     if (requestOptions.signal) init.signal = requestOptions.signal;
 
-    let response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
+    if (endpoint === "/auth/admin/register") {
+      console.info("[admin-registration] Registration POST about to be sent.");
+    }
+    let response: Response;
+    try {
+      response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
+    } catch (error) {
+      if (endpoint === "/auth/admin/register") {
+        console.info(
+          "[admin-registration] Registration fetch threw.",
+          error instanceof Error ? error.name : typeof error,
+          error instanceof Error ? error.message : "",
+        );
+      }
+      throw error;
+    }
+    if (endpoint === "/auth/admin/register") {
+      console.info("[admin-registration] Registration response received.", response.status);
+    }
     let responseBody = await readResponseBody(response);
 
     if (!response.ok) {

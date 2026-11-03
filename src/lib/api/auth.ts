@@ -179,6 +179,7 @@ export function createAuthApi(client: AuthApiClient) {
       displayName?: string;
       phoneNumber?: string;
     }): Promise<RegistrationResult> {
+      console.info("[admin-registration] Starting admin registration API call.");
       const { body, status } = await client.requestWithStatus<unknown>("/auth/admin/register", {
         method: "POST",
         json: {

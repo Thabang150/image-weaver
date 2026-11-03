@@ -465,21 +465,26 @@ function RegisterPage({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    console.info("[admin-registration] Registration submit handler entered.");
     setFeedback(null);
     setFieldError(null);
     if (fields.password.length < 12 || fields.password.length > 128) {
+      console.info("[admin-registration] Client-side validation failed: password length.");
       setFieldError("Password must be 12 to 128 characters.");
       return;
     }
     if (fields.password !== fields.confirmPassword) {
+      console.info("[admin-registration] Client-side validation failed: passwords do not match.");
       setFieldError("Passwords do not match.");
       return;
     }
     const email = fields.email.trim().toLowerCase();
     if (experience === "admin" && !email.endsWith("@healtywayssa.co.za")) {
+      console.info("[admin-registration] Client-side validation failed: administrator email domain.");
       setFieldError("Administrator accounts must use an @healtywayssa.co.za email address.");
       return;
     }
+    console.info("[admin-registration] Client-side validation passed.");
     setBusy(true);
     try {
       const registration = {

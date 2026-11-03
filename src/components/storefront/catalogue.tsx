@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Leaf } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, ArrowRight, Leaf, Search, SlidersHorizontal, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -183,6 +183,80 @@ interface ProductListingProps {
   onSelectProduct: CatalogueProps["onSelectProduct"];
 }
 
+function hasActiveFilters(categoryId: string | undefined, filters: ProductListingProps["filters"]) {
+  return Boolean(categoryId || filters.q || filters.minPrice || filters.maxPrice);
+}
+
+function ProductCardSkeleton() {
+  return (
+    <div className="shop-card shop-card-skeleton" aria-hidden="true">
+      <div className="shop-card-media skeleton-block" />
+      <div className="shop-card-body">
+        <span className="skeleton-line w-1/3" />
+        <span className="skeleton-line w-3/4" />
+        <span className="skeleton-line w-full" />
+        <span className="skeleton-line w-1/2" />
+      </div>
+    </div>
+  );
+}
+
+function ShopProductCard({
+  product,
+  onSelectProduct,
+}: {
+  product: PublicProduct;
+  onSelectProduct: CatalogueProps["onSelectProduct"];
+}) {
+  const summary = product.shortDescription ?? product.description;
+  return (
+    <article className="shop-card">
+      <button
+        type="button"
+        className="shop-card-media"
+        tabIndex={-1}
+        aria-hidden="true"
+        onClick={() => onSelectProduct(product.slug)}
+      >
+        <ProductImage
+          product={product}
+          altText={`${product.name} product image`}
+          className="shop-card-image"
+        />
+      </button>
+      <div className="shop-card-body">
+        <span className="product-category">{product.category.name}</span>
+        <h3 className="shop-card-title">{product.name}</h3>
+        <p className="shop-card-summary">{summary}</p>
+        {summary !== product.description ? <p className="sr-only">{product.description}</p> : null}
+        <div className="shop-card-meta">
+          {Number.isSafeInteger(product.priceCents) ? (
+            <p className="product-price">{formatZarCents(product.priceCents)}</p>
+          ) : null}
+          {product.packaging ? (
+            <p className="product-packaging">
+              {product.packaging.amount} {product.packaging.unit}
+            </p>
+          ) : null}
+        </div>
+        <div className="shop-card-actions">
+          <CartAddButton productId={product.id} quantity={1}>
+            Add to cart
+          </CartAddButton>
+          <Button
+            variant="ghost"
+            className="shop-card-details"
+            onClick={() => onSelectProduct(product.slug)}
+            aria-label={`View details for ${product.name}`}
+          >
+            Details <ArrowRight aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function ProductListing({
   categoryId,
   page,
@@ -215,25 +289,35 @@ function ProductListing({
   });
   const categories = categoriesQuery.data?.categories ?? [];
   const productList = productsQuery.data;
+  const activeCategory = categories.find((category) => category.id === categoryId);
+  const filtered = hasActiveFilters(categoryId, filters);
+  const clearAll = () => {
+    onCategoryChange(undefined);
+    onFiltersChange({ ...filters, q: "", minPrice: "", maxPrice: "" });
+  };
 
   return (
     <>
       <header className="catalogue-header">
-        <span className="eyebrow">Healthy Ways SA</span>
+        <span className="eyebrow">The Healthy Ways SA shop</span>
         <h2 id="catalogue-title" className="section-title mt-3">
           Explore the catalogue
         </h2>
         <p className="launch-copy mx-auto mt-4">
-          Browse the products currently available in our catalogue.
+          Natural wellness essentials, thoughtfully chosen. Search, filter and add to your cart —
+          no account needed until checkout.
         </p>
       </header>
 
-      <CatalogueFilters filters={filters} onApply={onFiltersChange} />
+      <CatalogueFilters key={`${filters.q}|${filters.minPrice}|${filters.maxPrice}`} filters={filters} onApply={onFiltersChange} />
 
       {categoriesQuery.isPending ? (
-        <p className="catalogue-status" role="status">
-          Loading categories…
-        </p>
+        <div className="category-list" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="skeleton-pill" />
+          ))}
+          <span className="sr-only" role="status">Loading categories…</span>
+        </div>
       ) : categoriesQuery.isError ? (
         <div className="catalogue-error" role="alert">
           <p>{getErrorMessage(categoriesQuery.error)}</p>
@@ -243,32 +327,79 @@ function ProductListing({
         </div>
       ) : categories.length > 0 ? (
         <nav className="category-list" aria-label="Product categories">
-          <Button
-            variant={categoryId ? "outline" : "secondary"}
+          <button
+            type="button"
+            className="category-pill"
             aria-pressed={!categoryId}
             onClick={() => onCategoryChange(undefined)}
           >
             All categories
-          </Button>
+          </button>
           {categories.map((category) => (
-            <Button
+            <button
+              type="button"
               key={category.id}
-              variant={categoryId === category.id ? "secondary" : "outline"}
+              className="category-pill"
               aria-pressed={categoryId === category.id}
               onClick={() => onCategoryChange(category.id)}
             >
               {category.name}
-            </Button>
+            </button>
           ))}
         </nav>
       ) : (
         <p className="catalogue-note">No categories are available right now.</p>
       )}
 
-      {productsQuery.isPending ? (
-        <p className="catalogue-status" role="status" aria-live="polite">
-          Loading catalogue…
+      <div className="shop-toolbar">
+        <p className="shop-count" aria-live="polite">
+          {productList
+            ? `${productList.pagination.total} ${productList.pagination.total === 1 ? "product" : "products"}`
+            : "\u00a0"}
         </p>
+        {filtered ? (
+          <div className="active-filters" aria-label="Active filters">
+            {activeCategory ? (
+              <button type="button" className="filter-chip" onClick={() => onCategoryChange(undefined)}>
+                {activeCategory.name} <X aria-hidden="true" />
+                <span className="sr-only">Remove category filter</span>
+              </button>
+            ) : null}
+            {filters.q ? (
+              <button type="button" className="filter-chip" onClick={() => onFiltersChange({ ...filters, q: "" })}>
+                “{filters.q}” <X aria-hidden="true" />
+                <span className="sr-only">Clear search</span>
+              </button>
+            ) : null}
+            {filters.minPrice || filters.maxPrice ? (
+              <button
+                type="button"
+                className="filter-chip"
+                onClick={() => onFiltersChange({ ...filters, minPrice: "", maxPrice: "" })}
+              >
+                R{filters.minPrice || "0"} – {filters.maxPrice ? `R${filters.maxPrice}` : "any"}{" "}
+                <X aria-hidden="true" />
+                <span className="sr-only">Clear price filter</span>
+              </button>
+            ) : null}
+            <button type="button" className="filter-clear" onClick={clearAll}>
+              Clear all
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {productsQuery.isPending ? (
+        <>
+          <p className="sr-only" role="status" aria-live="polite">
+            Loading catalogue…
+          </p>
+          <div className="shop-grid">
+            {Array.from({ length: 6 }, (_, i) => (
+              <ProductCardSkeleton key={i} />
+            ))}
+          </div>
+        </>
       ) : productsQuery.isError ? (
         <div className="catalogue-error" role="alert">
           <p>{getErrorMessage(productsQuery.error)}</p>
@@ -277,54 +408,27 @@ function ProductListing({
           </Button>
         </div>
       ) : productList && productList.products.length === 0 ? (
-        <p className="catalogue-note" role="status">
-          {categoryId || filters.q || filters.minPrice || filters.maxPrice
-            ? "No products match your current filters."
-            : "There are no products in the catalogue right now."}
-        </p>
+        <div className="shop-empty">
+          <Leaf aria-hidden="true" strokeWidth={1.2} />
+          <p className="catalogue-note" role="status">
+            {filtered
+              ? "No products match your current filters."
+              : "There are no products in the catalogue right now."}
+          </p>
+          {filtered ? (
+            <Button variant="outline" onClick={clearAll}>
+              Clear filters
+            </Button>
+          ) : null}
+        </div>
       ) : productList ? (
         <>
-          <div className="product-grid" aria-busy={productsQuery.isFetching}>
+          <div
+            className={`shop-grid${productsQuery.isFetching ? " is-refreshing" : ""}`}
+            aria-busy={productsQuery.isFetching}
+          >
             {productList.products.map((product) => (
-              <Card className="product-card" key={product.id}>
-                <div className="product-card-media">
-                  <ProductImage
-                    product={product}
-                    altText={`${product.name} product image`}
-                    className="product-card-image"
-                  />
-                </div>
-                <CardHeader>
-                  <span className="product-category">{product.category.name}</span>
-                  <CardTitle className="font-display text-2xl font-medium">
-                    {product.name}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="product-card-content">
-                  <p>{product.description}</p>
-                  {Number.isSafeInteger(product.priceCents) ? (
-                    <p className="product-price">{formatZarCents(product.priceCents)}</p>
-                  ) : null}
-                  {product.packaging ? (
-                    <p className="product-packaging">
-                      {product.packaging.amount} {product.packaging.unit}
-                    </p>
-                  ) : null}
-                </CardContent>
-                <CardFooter className="product-card-actions">
-                  <CartAddButton productId={product.id} quantity={1}>
-                    Add to cart
-                  </CartAddButton>
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => onSelectProduct(product.slug)}
-                    aria-label={`View details for ${product.name}`}
-                  >
-                    View details
-                  </Button>
-                </CardFooter>
-              </Card>
+              <ShopProductCard key={product.id} product={product} onSelectProduct={onSelectProduct} />
             ))}
           </div>
           {productList.pagination.totalPages > 1 ? (
@@ -373,11 +477,30 @@ function CatalogueFilters({
   onApply: ProductListingProps["onFiltersChange"];
 }) {
   const [draft, setDraft] = useState(filters);
+  const [showMore, setShowMore] = useState(Boolean(filters.minPrice || filters.maxPrice));
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const latest = useRef({ filters, onApply });
+  latest.current = { filters, onApply };
+
+  // Live search: apply the search term shortly after the customer stops typing.
+  useEffect(() => {
+    const term = draft.q.trim();
+    if (term === latest.current.filters.q) return;
+    const timer = window.setTimeout(() => {
+      latest.current.onApply({ ...latest.current.filters, q: term });
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [draft.q]);
+
+  function applySort(next: Partial<Pick<typeof draft, "sortBy" | "sortOrder">>) {
+    const updated = { ...draft, ...next };
+    setDraft(updated);
+    onApply({ ...filters, sortBy: updated.sortBy, sortOrder: updated.sortOrder });
+  }
 
   return (
     <form
-      className="catalogue-filters"
+      className="shop-filters"
       role="search"
       onSubmit={(event) => {
         event.preventDefault();
@@ -388,71 +511,87 @@ function CatalogueFilters({
           (draft.maxPrice.trim() && maximum === undefined)
         ) {
           setValidationMessage("Enter prices with up to two decimal places.");
+          setShowMore(true);
           return;
         }
         if (minimum !== undefined && maximum !== undefined && minimum > maximum) {
           setValidationMessage("The minimum price must not exceed the maximum price.");
+          setShowMore(true);
           return;
         }
         setValidationMessage(null);
-        onApply({ ...draft, q: draft.q.trim() });
+        onApply({ ...draft, q: draft.q.trim(), minPrice: draft.minPrice.trim(), maxPrice: draft.maxPrice.trim() });
       }}
     >
-      <label>
-        Search products
-        <input
-          type="search"
-          value={draft.q}
-          maxLength={100}
-          onChange={(event) => setDraft({ ...draft, q: event.currentTarget.value })}
-        />
-      </label>
-      <label>
-        Minimum price (ZAR)
-        <input
-          inputMode="decimal"
-          value={draft.minPrice}
-          onChange={(event) => setDraft({ ...draft, minPrice: event.currentTarget.value })}
-        />
-      </label>
-      <label>
-        Maximum price (ZAR)
-        <input
-          inputMode="decimal"
-          value={draft.maxPrice}
-          onChange={(event) => setDraft({ ...draft, maxPrice: event.currentTarget.value })}
-        />
-      </label>
-      <label>
-        Sort by
-        <select
-          value={draft.sortBy}
-          onChange={(event) => {
-            const sortBy = event.currentTarget.value;
-            if (isProductSortField(sortBy)) setDraft({ ...draft, sortBy });
-          }}
+      <div className="shop-filters-row">
+        <label className="shop-search">
+          <span className="sr-only">Search products</span>
+          <Search aria-hidden="true" />
+          <input
+            type="search"
+            placeholder="Search products…"
+            value={draft.q}
+            maxLength={100}
+            onChange={(event) => setDraft({ ...draft, q: event.currentTarget.value })}
+          />
+        </label>
+        <label className="shop-select">
+          <span>Sort by</span>
+          <select
+            value={draft.sortBy}
+            onChange={(event) => {
+              const sortBy = event.currentTarget.value;
+              if (isProductSortField(sortBy)) applySort({ sortBy });
+            }}
+          >
+            <option value="name">Name</option>
+            <option value="priceCents">Price</option>
+            <option value="createdAt">Recently added</option>
+          </select>
+        </label>
+        <label className="shop-select">
+          <span>Sort order</span>
+          <select
+            value={draft.sortOrder}
+            onChange={(event) => {
+              const sortOrder = event.currentTarget.value;
+              if (isProductSortOrder(sortOrder)) applySort({ sortOrder });
+            }}
+          >
+            <option value="asc">Ascending</option>
+            <option value="desc">Descending</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          className="shop-more"
+          aria-expanded={showMore}
+          onClick={() => setShowMore((open) => !open)}
         >
-          <option value="name">Name</option>
-          <option value="priceCents">Price</option>
-          <option value="createdAt">Recently added</option>
-        </select>
-      </label>
-      <label>
-        Sort order
-        <select
-          value={draft.sortOrder}
-          onChange={(event) => {
-            const sortOrder = event.currentTarget.value;
-            if (isProductSortOrder(sortOrder)) setDraft({ ...draft, sortOrder });
-          }}
-        >
-          <option value="asc">Ascending</option>
-          <option value="desc">Descending</option>
-        </select>
-      </label>
-      <Button type="submit" variant="secondary">
-        Apply filters
-      </Button>
+          <SlidersHorizontal aria-hidden="true" /> Price
+        </button>
+      </div>
+      <div className="shop-filters-more" hidden={!showMore}>
+        <label>
+          Minimum price (ZAR)
+          <input
+            inputMode="decimal"
+            placeholder="0"
+            value={draft.minPrice}
+            onChange={(event) => setDraft({ ...draft, minPrice: event.currentTarget.value })}
+          />
+        </label>
+        <label>
+          Maximum price (ZAR)
+          <input
+            inputMode="decimal"
+            placeholder="Any"
+            value={draft.maxPrice}
+            onChange={(event) => setDraft({ ...draft, maxPrice: event.currentTarget.value })}
+          />
+        </label>
+        <Button type="submit">Apply filters</Button>
+      </div>
       {validationMessage ? (
         <p className="catalogue-filter-error" role="alert">
           {validationMessage}

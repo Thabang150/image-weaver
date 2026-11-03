@@ -228,16 +228,14 @@ function ShopProductCard({
         <h3 className="shop-card-title">{product.name}</h3>
         <p className="shop-card-summary">{summary}</p>
         {summary !== product.description ? <p className="sr-only">{product.description}</p> : null}
-        <div className="shop-card-meta">
-          {Number.isSafeInteger(product.priceCents) ? (
-            <p className="product-price">{formatZarCents(product.priceCents)}</p>
-          ) : null}
-          {product.packaging ? (
-            <p className="product-packaging">
-              {product.packaging.amount} {product.packaging.unit}
-            </p>
-          ) : null}
-        </div>
+        {product.packaging ? (
+          <p className="product-packaging">
+            {product.packaging.amount} {product.packaging.unit}
+          </p>
+        ) : null}
+        {Number.isSafeInteger(product.priceCents) ? (
+          <p className="product-price shop-card-price">{formatZarCents(product.priceCents)}</p>
+        ) : null}
         <div className="shop-card-actions">
           <CartAddButton productId={product.id} quantity={1}>
             Add to cart

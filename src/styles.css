@@ -1842,3 +1842,7 @@ body {
     animation: none;
   }
 }
+.shop-card-price {
+  margin-top: auto;
+  padding-top: 4px;
+}

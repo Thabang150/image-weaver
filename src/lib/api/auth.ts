@@ -370,6 +370,8 @@ export const authApi = {
     getConfiguredAuthApi().login(credentials),
   register: (input: Parameters<ReturnType<typeof createAuthApi>["register"]>[0]) =>
     getConfiguredAuthApi().register(input),
+  registerAdmin: (input: Parameters<ReturnType<typeof createAuthApi>["registerAdmin"]>[0]) =>
+    getConfiguredAuthApi().registerAdmin(input),
   requestVerification: (email: string) => getConfiguredAuthApi().requestVerification(email),
   verifyEmail: (token: string) => getConfiguredAuthApi().verifyEmail(token),
   forgotPassword: (email: string) => getConfiguredAuthApi().forgotPassword(email),

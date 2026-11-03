@@ -492,9 +492,14 @@ function RegisterPage({
         password: fields.password,
         ...(fields.displayName.trim() ? { displayName: fields.displayName.trim() } : {}),
       };
-      const result = experience === "admin"
-        ? await authApi.registerAdmin(registration)
-        : await authApi.register(registration);
+      let result: Awaited<ReturnType<typeof authApi.registerAdmin>>;
+      if (experience === "admin") {
+        console.info("[admin-registration] Calling registerAdmin.");
+        result = await authApi.registerAdmin(registration);
+        console.info("[admin-registration] registerAdmin resolved.", result.status);
+      } else {
+        result = await authApi.register(registration);
+      }
       setFields({ displayName: "", email: "", password: "", confirmPassword: "" });
       setFeedback({
         kind: result.emailVerificationEmailSent ? "success" : "info",

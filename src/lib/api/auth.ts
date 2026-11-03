@@ -44,12 +44,13 @@ export type LoginResponse =
 export interface RegistrationResult {
   user: PublicUser;
   emailVerificationEmailSent: boolean;
+  status: number;
 }
 
 export type SessionState =
   { status: "unauthenticated" } | { status: "authenticated"; user: PublicUser };
 
-export type AuthApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
+export type AuthApiClient = Pick<ReturnType<typeof createApiClient>, "request" | "requestWithStatus">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -96,7 +97,7 @@ function invalidAuthResponse(): never {
   throw new ApiResponseError(200, "Backend returned an invalid authentication response.");
 }
 
-function parseRegistrationResult(response: unknown): RegistrationResult {
+function parseRegistrationResult(response: unknown, status: number): RegistrationResult {
   if (
     !isRecord(response) ||
     !isPublicUser(response["user"]) ||
@@ -107,6 +108,7 @@ function parseRegistrationResult(response: unknown): RegistrationResult {
   return {
     user: response["user"],
     emailVerificationEmailSent: response["emailVerificationEmailSent"],
+    status,
   };
 }
 
@@ -164,11 +166,11 @@ export function createAuthApi(client: AuthApiClient) {
       displayName?: string;
       phoneNumber?: string;
     }): Promise<RegistrationResult> {
-      const response = await client.request<unknown>("/auth/register", {
+      const { body, status } = await client.requestWithStatus<unknown>("/auth/register", {
         method: "POST",
         json: input,
       });
-      return parseRegistrationResult(response);
+      return parseRegistrationResult(body, status);
     },
 
     async registerAdmin(input: {
@@ -177,14 +179,14 @@ export function createAuthApi(client: AuthApiClient) {
       displayName?: string;
       phoneNumber?: string;
     }): Promise<RegistrationResult> {
-      const response = await client.request<unknown>("/auth/admin/register", {
+      const { body, status } = await client.requestWithStatus<unknown>("/auth/admin/register", {
         method: "POST",
         json: {
           ...input,
           email: input.email.trim().toLowerCase(),
         },
       });
-      return parseRegistrationResult(response);
+      return parseRegistrationResult(body, status);
     },
 
     async requestVerification(email: string): Promise<{ message: string }> {

@@ -195,7 +195,7 @@ describe("session foundation", () => {
     await expect(auth.registerAdmin({
       email: `  ${admin.email.toUpperCase()}  `,
       password: "administrator-password",
-    })).resolves.toEqual({ user: admin, emailVerificationEmailSent: true });
+    })).resolves.toEqual({ user: admin, emailVerificationEmailSent: true, status: 201 });
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe(
       "https://api.example.test/api/v1/auth/admin/register",
@@ -239,7 +239,7 @@ describe("session foundation", () => {
 
     await expect(
       auth.register({ email: user.email, password: "a-strong-test-password" }),
-    ).resolves.toEqual({ user, emailVerificationEmailSent: false });
+    ).resolves.toEqual({ user, emailVerificationEmailSent: false, status: 201 });
     await expect(auth.requestVerification(user.email)).resolves.toHaveProperty("message");
     await expect(auth.verifyEmail("v".repeat(40))).resolves.toEqual({
       message: "Email address verified.",

@@ -102,7 +102,7 @@ function describeAuthError(error: unknown, action: string): string {
     return "This request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
   if (error instanceof TypeError) {
-    return `${action} could not be completed because the backend could not be reached. Check your connection, disable blockers for this site, then try again.`;
+    return `${action} could not be completed because the browser could not complete the network request. Check the API URL, browser network or CORS configuration, your connection, and blockers, then try again.`;
   }
   return `${action} could not be completed. Check your connection and try again.`;
 }
@@ -452,7 +452,6 @@ function RegisterPage({
   experience: "customer" | "admin";
   onNavigate: (view: PreviewView) => void;
 }) {
-  const queryClient = useQueryClient();
   const [fields, setFields] = useState({
     displayName: "",
     email: "",
@@ -491,12 +490,11 @@ function RegisterPage({
         ? await authApi.registerAdmin(registration)
         : await authApi.register(registration);
       setFields({ displayName: "", email: "", password: "", confirmPassword: "" });
-      await queryClient.invalidateQueries({ queryKey: ["session"] });
       setFeedback({
         kind: result.emailVerificationEmailSent ? "success" : "info",
         message: result.emailVerificationEmailSent
-          ? `Account created for ${result.user.email}. The backend reports that the email provider accepted the verification message; this does not confirm delivery. Verify the email before signing in.`
-          : `Account created for ${result.user.email}, but the backend reports that no verification message was accepted by the email provider. Contact the site operator or request verification again when email delivery is available.`,
+          ? `${result.status === 202 ? "Registration accepted" : "Account created"} for ${result.user.email}. The backend reports that the email provider accepted the verification message; this does not confirm delivery. Verify the email before signing in.`
+          : `${result.status === 202 ? "Registration accepted" : "Account created"} for ${result.user.email}, but the backend reports that no verification message was accepted by the email provider. Contact the site operator or request verification again when email delivery is available.`,
       });
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Registration") });

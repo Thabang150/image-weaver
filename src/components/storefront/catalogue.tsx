@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, Leaf, Search, SlidersHorizontal, X } from "lucid
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CartAddButton } from "@/components/storefront/cart";
 import { ApiHttpError, ApiResponseError } from "@/lib/api/client";
 import { catalogueApi, type PublicProduct } from "@/lib/api/catalogue";
@@ -571,7 +570,7 @@ function CatalogueFilters({
           <SlidersHorizontal aria-hidden="true" /> Price
         </button>
       </div>
-      <div className="shop-filters-more" hidden={!showMore}>
+      <div className="shop-filters-more" data-open={showMore}>
         <label>
           Minimum price (ZAR)
           <input

@@ -12,6 +12,7 @@ const previewViews: PreviewView[] = [
   "admin-login",
   "register",
   "admin-register",
+  "admin-forgot-password",
   "verify-email",
   "account",
   "addresses",
@@ -107,6 +108,18 @@ function Preview() {
     const resolvedOrderId = orderId ?? search.orderId;
     if (nextView === "login") {
       void navigate({ to: returnTo === "admin" ? "/admin/login" : "/account/login" });
+      return;
+    }
+    if (nextView === "admin-login") {
+      void navigate({ to: "/admin/login" });
+      return;
+    }
+    if (nextView === "admin-register") {
+      void navigate({ to: "/admin/register" });
+      return;
+    }
+    if (nextView === "admin-forgot-password") {
+      void navigate({ to: "/admin/forgot-password" });
       return;
     }
     void navigate({

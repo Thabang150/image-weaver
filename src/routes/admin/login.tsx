@@ -16,6 +16,14 @@ function AdminLoginRoute() {
       void navigate({ to: "/preview" });
       return;
     }
+    if (view === "admin-register") {
+      void navigate({ to: "/admin/register" });
+      return;
+    }
+    if (view === "admin-forgot-password") {
+      void navigate({ to: "/admin/forgot-password" });
+      return;
+    }
     void navigate({ to: "/preview", search: { view: view === "admin-login" ? "admin" : view } });
   }
 

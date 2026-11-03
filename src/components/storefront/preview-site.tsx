@@ -22,6 +22,7 @@ export type PreviewView =
   | "admin-login"
   | "register"
   | "admin-register"
+  | "admin-forgot-password"
   | "verify-email"
   | "account"
   | "addresses"
@@ -83,13 +84,14 @@ function describeAuthError(error: unknown, action: string): string {
     }
     if (error.status === 409)
       return "This account or request already exists. Check the details and try again.";
-    if (error.status === 400) {
+    if (error.status === 400 || error.status === 422) {
       const backendMessage = error.message?.trim();
       return backendMessage
         ? `${action} was not accepted: ${backendMessage}`
         : `${action} was not accepted. Check the required fields, password length, or token format and try again.`;
     }
     if (error.status === 429) return "Too many attempts. Wait a few minutes before trying again.";
+    if (error.message?.trim()) return `${action} failed: ${error.message.trim()}`;
     if (error.status >= 500)
       return "The service is temporarily unavailable. Please try again later.";
   }
@@ -274,6 +276,8 @@ export function PreviewSite({
     content = <RegisterPage experience="customer" onNavigate={onNavigate} />;
   } else if (view === "admin-register") {
     content = <RegisterPage experience="admin" onNavigate={onNavigate} />;
+  } else if (view === "admin-forgot-password") {
+    content = <ForgotPasswordPage experience="admin" onNavigate={onNavigate} />;
   } else if (view === "verify-email") {
     content = (
       <VerifyEmailPage
@@ -323,12 +327,12 @@ export function PreviewSite({
         {user && !isAdminUser(user) ? (
           <AccessMessage
             title="Administrator access denied"
-            description="A matching email domain is not enough. The backend must confirm the verified administrator role and completed two-factor authentication. The current backend has no public admin-registration or invitation endpoint; ask the backend operator to provision an admin account through an approved secure process."
+            description="A matching email domain is not enough. The backend must confirm the administrator role and completed two-factor authentication."
           />
         ) : !user ? (
           <AccessMessage
             title="Administrator sign-in required"
-            description="Sign in with an authorized administrator account. The backend role and required two-factor authentication are checked after sign-in. There is no public admin-registration or invitation endpoint; ask the backend operator about approved secure provisioning."
+            description="Sign in with an authorized administrator account. The backend role and required two-factor authentication are checked after sign-in."
             onAction={() => onNavigate("login", "admin")}
             action="Go to login"
           />
@@ -771,7 +775,17 @@ function LoginPage({
                 Forgot password?
               </button>
             </p>
-          ) : null}
+          ) : (
+            <p>
+              <button
+                className="text-sm underline"
+                type="button"
+                onClick={() => onNavigate("admin-forgot-password")}
+              >
+                Forgot password?
+              </button>
+            </p>
+          )}
         </form>
       ) : (
         <form className="space-y-4" onSubmit={(event) => void submitFactor(event)}>
@@ -1077,7 +1091,7 @@ function VerifyEmailPage({
   );
 }
 
-function ForgotPasswordPage({ onNavigate }: { onNavigate: (view: PreviewView) => void }) {
+function ForgotPasswordPage({ experience = "customer", onNavigate }: { experience?: "customer" | "admin"; onNavigate: (view: PreviewView) => void }) {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -1096,7 +1110,7 @@ function ForgotPasswordPage({ onNavigate }: { onNavigate: (view: PreviewView) =>
   }
   return (
     <FormPage
-      title="Forgot password"
+      title={experience === "admin" ? "Administrator password reset" : "Forgot password"}
       description="The backend does not reveal whether an account exists."
     >
       <form className="space-y-4" onSubmit={(event) => void submit(event)}>

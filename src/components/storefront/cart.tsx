@@ -67,6 +67,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const isAdminAuthPage =
+    typeof window !== "undefined" &&
+    /^\/admin\/(?:login|register|forgot-password)(?:\/|$)/.test(window.location.pathname);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -77,6 +80,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     queryKey: ["session"],
     queryFn: () => authApi.getSession(),
     retry: false,
+    enabled: !isAdminAuthPage,
   });
   const cartUserId = sessionQuery.data?.status === "authenticated" ? sessionQuery.data.user.id : "anonymous";
 
@@ -90,6 +94,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     queryFn: () => cartApi.getCart(),
     retry: false,
     staleTime: 30_000,
+    enabled: !isAdminAuthPage,
   });
 
   const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;

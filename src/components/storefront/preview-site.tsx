@@ -215,6 +215,7 @@ export function PreviewSite({
     queryKey: ["session"],
     queryFn: () => authApi.getSession(),
     retry: false,
+    enabled: !["admin-login", "admin-register", "admin-forgot-password"].includes(view),
   });
   const user = sessionQuery.data?.status === "authenticated" ? sessionQuery.data.user : undefined;
   const previousUserIdRef = useRef<string | undefined>(undefined);

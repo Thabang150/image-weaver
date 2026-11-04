@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Leaf, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Leaf, Search, ShieldCheck, SlidersHorizontal, Truck, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -295,6 +295,37 @@ function ProductListing({
 
   return (
     <>
+      <section className="shop-hero" aria-labelledby="shop-hero-title">
+        <span className="eyebrow">Healthy Ways SA · Organic natural wellness</span>
+        <h2 id="shop-hero-title" className="shop-hero-title">
+          Nature&rsquo;s care, <em>delivered gently.</em>
+        </h2>
+        <p className="shop-hero-copy">
+          Browse our trusted natural wellness range — the same personal care you know, now a little
+          closer to home. Shop freely; an account is only needed at checkout.
+        </p>
+        <div className="shop-hero-actions">
+          <Button
+            className="shop-hero-cta"
+            onClick={() => document.getElementById("catalogue-title")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          >
+            Shop the catalogue <ArrowRight aria-hidden="true" />
+          </Button>
+          <a
+            className="shop-hero-secondary"
+            href="https://wa.me/27796871118"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Ask us on WhatsApp
+          </a>
+        </div>
+        <ul className="shop-hero-trust">
+          <li><Leaf aria-hidden="true" strokeWidth={1.4} /> Organic natural wellness</li>
+          <li><ShieldCheck aria-hidden="true" strokeWidth={1.4} /> Secure checkout</li>
+          <li><Truck aria-hidden="true" strokeWidth={1.4} /> Nationwide delivery</li>
+        </ul>
+      </section>
       <header className="catalogue-header">
         <span className="eyebrow">The Healthy Ways SA shop</span>
         <h2 id="catalogue-title" className="section-title mt-3">

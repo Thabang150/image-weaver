@@ -9,6 +9,8 @@ import { ApiHttpError, ApiResponseError, CsrfTokenError } from "@/lib/api/client
 import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { isAdminUser } from "@/lib/auth/authorization";
 import { ordersApi } from "@/lib/api/orders";
+import { catalogueApi, type PublicProduct } from "@/lib/api/catalogue";
+import { getAllowedProductImageUrls } from "@/lib/image-url";
 import { formatZarCents } from "@/lib/money";
 import { Brand, ContactActions } from "@/components/wellness";
 import { CheckoutPage } from "@/components/storefront/customer-checkout";
@@ -16,7 +18,17 @@ import { AddressesPage, OrderDetailPage, OrdersPage, TrackingPage } from "@/comp
 import { PaymentStatePage } from "@/components/storefront/payment-state";
 
 export type PreviewView =
+  | "home"
   | "shop"
+  | "about"
+  | "contact"
+  | "consultation"
+  | "journal"
+  | "faq"
+  | "privacy"
+  | "terms"
+  | "delivery"
+  | "returns"
   | "login"
   | "customer-login"
   | "admin-login"
@@ -140,55 +152,54 @@ function SiteFrame({
   const isAdmin = user ? isAdminUser(user) : false;
   return (
     <>
-      <header className="border-b border-border bg-background">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-4">
-          <a href="/preview" aria-label="HealthywaysSA home and shop">
-            <Brand className="w-[120px]" />
-          </a>
-          <nav className="flex flex-wrap items-center gap-2" aria-label="Main navigation">
-            <Button type="button" variant="ghost" onClick={() => onNavigate("shop")}>
-              Home / Shop
-            </Button>
-            <Button
+      <header className="preview-header">
+        <div className="preview-header-inner">
+          <button className="preview-brand" type="button" onClick={() => onNavigate("home")} aria-label="Healthy Ways SA home">
+            <Brand className="preview-brand-image" />
+          </button>
+          <nav className="preview-nav" aria-label="Main navigation">
+            <button type="button" onClick={() => onNavigate("shop")}>Shop</button>
+            <button type="button" onClick={() => onNavigate("about")}>About</button>
+            <button type="button" onClick={() => onNavigate("consultation")}>Consultation</button>
+            <button type="button" onClick={() => onNavigate("journal")}>Journal</button>
+            <button type="button" onClick={() => onNavigate("contact")}>Contact</button>
+          </nav>
+          <div className="preview-account-actions">
+            <button
               type="button"
-              variant="ghost"
+              className="preview-account-link"
               onClick={() => onNavigate(user ? "account" : "login", "account")}
             >
-              My Account
-            </Button>
-            {user ? (
-              <>
-                <Button type="button" variant="ghost" onClick={() => onNavigate("addresses")}>My Addresses</Button>
-                <Button type="button" variant="ghost" onClick={() => onNavigate("orders")}>My Orders</Button>
-              </>
-            ) : null}
-            <Button type="button" variant="ghost" onClick={() => onNavigate("cart")}>
+              {user ? "Account" : "Sign in"}
+            </button>
+            <button type="button" className="preview-cart-link" onClick={() => onNavigate("cart")}>
               Cart
-            </Button>
-            {!user ? (
-              <Button type="button" variant="ghost" onClick={() => onNavigate("login", "admin")}>Admin sign-in</Button>
-            ) : null}
+            </button>
             {isAdmin ? (
-              <Button type="button" variant="ghost" onClick={() => onNavigate("admin")}>
+              <button type="button" className="preview-account-link" onClick={() => onNavigate("admin")}>
                 Admin
-              </Button>
+              </button>
             ) : null}
             {user ? (
-              <Button type="button" variant="outline" disabled={logoutBusy} onClick={onLogout}>
-                {logoutBusy ? "Signing out…" : "Log out"}
-              </Button>
-            ) : (
-              <Button type="button" variant="outline" onClick={() => onNavigate("login")}>
-                Log in
-              </Button>
-            )}
-          </nav>
+              <button type="button" className="preview-signout" disabled={logoutBusy} onClick={onLogout}>
+                {logoutBusy ? "Signing out…" : "Sign out"}
+              </button>
+            ) : null}
+          </div>
         </div>
       </header>
       {children}
-      <footer className="border-t border-border bg-background">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-6 text-sm text-muted-foreground">
-          <span>© 2026 Healthy Ways SA. Naturally, with care.</span>
+      <footer className="preview-footer">
+        <div className="preview-footer-inner">
+          <Brand className="preview-footer-brand" />
+          <nav className="preview-footer-links" aria-label="Footer navigation">
+            <button type="button" onClick={() => onNavigate("about")}>About</button>
+            <button type="button" onClick={() => onNavigate("faq")}>FAQ</button>
+            <button type="button" onClick={() => onNavigate("delivery")}>Delivery</button>
+            <button type="button" onClick={() => onNavigate("returns")}>Returns</button>
+            <button type="button" onClick={() => onNavigate("privacy")}>Privacy</button>
+            <button type="button" onClick={() => onNavigate("terms")}>Terms</button>
+          </nav>
           <ContactActions />
           <span>Rooted in nature. Made for your wellbeing.</span>
         </div>
@@ -257,7 +268,9 @@ export function PreviewSite({
   }
 
   let content: ReactNode;
-  if (view === "shop") {
+  if (view === "home") {
+    content = <PreviewHome onNavigate={onNavigate} />;
+  } else if (view === "shop") {
     content = (
       <Catalogue
         selectedSlug={product}
@@ -265,6 +278,8 @@ export function PreviewSite({
         onBackToCatalogue={onBackToCatalogue}
       />
     );
+  } else if (view === "about" || view === "contact" || view === "consultation" || view === "journal" || view === "faq" || view === "privacy" || view === "terms" || view === "delivery" || view === "returns") {
+    content = <PublicPage view={view} onNavigate={onNavigate} />;
   } else if (view === "login") {
     content = returnTo === "admin"
       ? <AdminLoginPage onNavigate={onNavigate} />
@@ -425,6 +440,229 @@ function AccessMessage({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function PreviewHome({ onNavigate }: { onNavigate: (view: PreviewView) => void }) {
+  const featured = useQuery({
+    queryKey: ["preview-home-featured"],
+    queryFn: () => catalogueApi.getProducts({
+      page: 1,
+      limit: 4,
+      sortBy: "name",
+      sortOrder: "asc",
+    }),
+  });
+
+  return (
+    <main>
+      <section className="preview-home-hero" aria-labelledby="preview-home-title">
+        <img src="/images/botanical-hero.webp" alt="" className="preview-home-hero-image" />
+        <div className="preview-home-hero-shade" />
+        <div className="preview-home-hero-content">
+          <p>Organic natural wellness</p>
+          <h1 id="preview-home-title">Wellness, made simpler.</h1>
+          <span>
+            Thoughtfully selected wellness products and practical knowledge for everyday wellbeing.
+          </span>
+          <div className="preview-home-actions">
+            <Button onClick={() => onNavigate("shop")}>Shop products</Button>
+            <Button variant="outline" onClick={() => onNavigate("shop")}>Explore the collection</Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="preview-home-intro" aria-labelledby="preview-approach-title">
+        <p className="preview-section-kicker">Our approach</p>
+        <h2 id="preview-approach-title">Natural wellness should feel clear, personal and reassuring.</h2>
+        <p>
+          Healthy Ways SA brings together carefully selected products and friendly guidance, so
+          every customer can make more informed choices at their own pace.
+        </p>
+      </section>
+
+      <section className="preview-featured" aria-labelledby="preview-featured-title">
+        <div className="preview-featured-heading">
+          <div>
+            <p className="preview-section-kicker">The collection</p>
+            <h2 id="preview-featured-title">Wellness essentials</h2>
+          </div>
+          <button type="button" onClick={() => onNavigate("shop")}>View all products</button>
+        </div>
+        {featured.isPending ? (
+          <div className="preview-featured-grid" role="status">
+            {[0, 1, 2, 3].map((item) => <div className="preview-featured-skeleton" key={item} />)}
+          </div>
+        ) : featured.isError ? (
+          <div className="preview-featured-state" role="alert">
+            <p>The collection could not be loaded.</p>
+            <button type="button" onClick={() => void featured.refetch()}>Try again</button>
+          </div>
+        ) : featured.data.products.length === 0 ? (
+          <div className="preview-featured-state">Products are being updated. Please check back soon.</div>
+        ) : (
+          <div className="preview-featured-grid">
+            {featured.data.products.map((product) => {
+              const image = getAllowedProductImageUrls(product.imageReferences)[0];
+              return (
+                <article className="preview-featured-card" key={product.id}>
+                  <button type="button" onClick={() => onNavigate("shop")} className="preview-featured-image-button">
+                    {image ? (
+                      <img src={image} alt={product.name} loading="lazy" />
+                    ) : (
+                      <span>Image unavailable</span>
+                    )}
+                  </button>
+                  <p>{product.category.name}</p>
+                  <h3>{product.name}</h3>
+                  <strong>{formatZarCents(product.priceCents)}</strong>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="preview-support">
+        <div>
+          <p className="preview-section-kicker">Personal support</p>
+          <h2>Questions along the way?</h2>
+        </div>
+        <p>Our team is available for product guidance and help with your order.</p>
+        <ContactActions />
+      </section>
+    </main>
+  );
+}
+
+const publicPageCopy: Record<Exclude<PreviewView, "shop" | "home" | "login" | "customer-login" | "admin-login" | "register" | "admin-register" | "admin-forgot-password" | "verify-email" | "account" | "addresses" | "orders" | "order-detail" | "tracking-detail" | "checkout" | "payment-return" | "payment-cancel" | "cart" | "admin" | "forgot-password" | "reset-password">, {
+  eyebrow: string;
+  title: string;
+  intro: string;
+  sections: Array<{ title: string; copy: string }>;
+}> = {
+  about: {
+    eyebrow: "Our story",
+    title: "Natural care, thoughtfully chosen.",
+    intro: "Healthy Ways SA combines trusted natural wellness products with practical, personal support for everyday wellbeing.",
+    sections: [
+      { title: "Rooted in care", copy: "Our approach is simple: make natural wellness feel understandable, accessible and reassuring." },
+      { title: "Selected with intention", copy: "We focus on useful, clearly presented products and help customers find information before making a choice." },
+      { title: "Here for the journey", copy: "Every wellbeing journey is personal. Our team is available to answer product and order questions with care." },
+    ],
+  },
+  contact: {
+    eyebrow: "Contact",
+    title: "How can we help?",
+    intro: "Reach our team for product guidance, order support or general questions.",
+    sections: [
+      { title: "WhatsApp", copy: "Send us a WhatsApp message for a convenient conversation with our team." },
+      { title: "Email", copy: "Email hello@healthywayssa.co.za for product, account or delivery questions." },
+      { title: "Call", copy: "Call +27 79 687 1118 during standard business hours for personal support." },
+    ],
+  },
+  consultation: {
+    eyebrow: "Personal guidance",
+    title: "Start a thoughtful wellness conversation.",
+    intro: "Tell our team what you would like help with so we can point you toward the right next step.",
+    sections: [
+      { title: "Product guidance", copy: "Ask for help understanding product choices, intended use and suitability questions." },
+      { title: "Before your enquiry", copy: "Do not send sensitive medical details. A consultation does not replace care from a qualified healthcare professional." },
+      { title: "Continue with confidence", copy: "Our team can help clarify product information and connect you with appropriate support." },
+    ],
+  },
+  journal: {
+    eyebrow: "The Healthy Ways journal",
+    title: "Simple ideas for everyday wellbeing.",
+    intro: "Practical reading on natural routines, informed choices and feeling your best.",
+    sections: [
+      { title: "Building a mindful routine", copy: "Small, consistent choices are often more sustainable than dramatic changes. Start with sleep, hydration, movement and balanced nourishment." },
+      { title: "Reading a product label", copy: "Ingredients, serving directions, cautions and quality information help you compare wellness products more clearly." },
+      { title: "Knowing when to ask", copy: "Speak to a qualified healthcare professional if you have a medical condition, take medication or are pregnant or nursing." },
+    ],
+  },
+  faq: {
+    eyebrow: "FAQ",
+    title: "Answers before you begin.",
+    intro: "A quick guide to shopping, accounts, delivery and product support.",
+    sections: [
+      { title: "Can I shop without an account?", copy: "Yes. You can browse and add products to your cart as a guest. Sign in is requested when you proceed to checkout." },
+      { title: "How do I track an order?", copy: "Sign in to your account and select My orders. Available tracking information will be shown alongside the order." },
+      { title: "Where can I ask about a product?", copy: "Use WhatsApp, email or the consultation page to ask for product guidance." },
+      { title: "How are delivery charges calculated?", copy: "Delivery charges are returned by the checkout shipping service after a delivery address is selected." },
+    ],
+  },
+  privacy: {
+    eyebrow: "Privacy",
+    title: "Your privacy matters.",
+    intro: "This summary explains the website information and account practices that apply to the Healthy Ways SA storefront.",
+    sections: [
+      { title: "Information we use", copy: "Account, delivery and order information is used to provide registration, checkout, fulfilment and customer support." },
+      { title: "Payments and security", copy: "Payment details are handled through the approved payment provider. Checkout data is not stored in this preview interface." },
+      { title: "Your choices", copy: "Contact the support team if you need help reviewing account information or raising a privacy question." },
+    ],
+  },
+  terms: {
+    eyebrow: "Terms",
+    title: "Website and purchase terms.",
+    intro: "These terms describe responsible use of this preview storefront and its purchasing experience.",
+    sections: [
+      { title: "Product information", copy: "Descriptions are provided for general information and are not intended to replace qualified healthcare advice." },
+      { title: "Orders and availability", copy: "An order is subject to stock, address validation and successful payment confirmation." },
+      { title: "Contact and support", copy: "Questions about an order or these terms should be sent to the Healthy Ways SA support team." },
+    ],
+  },
+  delivery: {
+    eyebrow: "Delivery",
+    title: "Clear delivery expectations.",
+    intro: "Delivery options and charges are calculated during checkout using the delivery address and live shipping service.",
+    sections: [
+      { title: "Checkout quote", copy: "Choose an address and request available shipping options before creating the payment order." },
+      { title: "Tracking", copy: "Where tracking is available, it can be viewed from the relevant customer order." },
+      { title: "Delivery support", copy: "Contact the team if an order status or delivery update needs clarification." },
+    ],
+  },
+  returns: {
+    eyebrow: "Returns",
+    title: "Support for order concerns.",
+    intro: "Our team can help review incorrect, damaged or unsuitable orders and explain the available next steps.",
+    sections: [
+      { title: "Contact promptly", copy: "Include the order number, product and concern when contacting support so the issue can be reviewed efficiently." },
+      { title: "Keep original packaging", copy: "Do not dispose of packaging, delivery labels or the product until the support team confirms the required process." },
+      { title: "Health and safety", copy: "Seek appropriate medical advice for adverse reactions and contact the company directly for product quality concerns." },
+    ],
+  },
+};
+
+function PublicPage({ view, onNavigate }: { view: keyof typeof publicPageCopy; onNavigate: (view: PreviewView) => void }) {
+  const copy = publicPageCopy[view];
+  return (
+    <main className="wellness-public-page">
+      <header className="wellness-public-hero">
+        <p className="preview-section-kicker">{copy.eyebrow}</p>
+        <h1>{copy.title}</h1>
+        <p>{copy.intro}</p>
+        {view === "contact" || view === "consultation" ? <ContactActions /> : null}
+      </header>
+      <section className="wellness-public-grid" aria-label={`${copy.title} information`}>
+        {copy.sections.map((section) => (
+          <article key={section.title}>
+            <span aria-hidden="true">0{copy.sections.indexOf(section) + 1}</span>
+            <h2>{section.title}</h2>
+            <p>{section.copy}</p>
+          </article>
+        ))}
+      </section>
+      {view === "contact" || view === "consultation" ? (
+        <section className="wellness-public-callout">
+          <div>
+            <p className="preview-section-kicker">Need product guidance?</p>
+            <h2>Browse first, then ask us anything.</h2>
+          </div>
+          <Button onClick={() => onNavigate("shop")}>Explore products</Button>
+        </section>
+      ) : null}
+    </main>
   );
 }
 

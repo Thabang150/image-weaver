@@ -127,7 +127,348 @@ Validation errors are HTTP `400` with `{ "error": "Invalid request." }`. Safe se
 
 | Method and path | Access / CSRF | Input | Success |
 |---|---|---|---|
-| `GET /api/v1/auth/csrf-token` | Public; no CSRF header; retain cookies | None | `200` `{ "csrfToken": "<returned token>" }`; sets session and CSRF cookies. |
+|  I’ll first map the current storefront changes and implementation gaps, then I’ll finish only the homepage/catalogue work without touching admin or backend code.
+
+Ran terminal command: Set-Location 'c:\Users\thaba\Desktop\TMTR20\image-weaver'; git --no-pager status --short; git --no-pager diff --stat; git --no-pager diff --name-status
+
+Find files matching `{package.json,src/routes/**/*,src/components/storefront/**/*,src/components/w...`
+
+Read , line 1 to the end
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\package.json",
+  "view_range": [
+    1,
+    -1
+  ]
+}
+
+Read , line 1 to the end
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\routes\\index.tsx",
+  "view_range": [
+    1,
+    -1
+  ]
+}
+
+Read , line 1 to the end
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\routes\\preview.tsx",
+  "view_range": [
+    1,
+    -1
+  ]
+}
+
+Read , line 1 to the end
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\components\\storefront\\catalogue.tsx",
+  "view_range": [
+    1,
+    -1
+  ]
+}
+
+Ran terminal command: Set-Location 'c:\Users\thaba\Desktop\TMTR20\image-weaver'; git --no-pager status --porcelain=v1; git --no-pager diff --stat; git --no-pager log -3 --oneline
+
+Read , line 1 to the end
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\components\\wellness.tsx",
+  "view_range": [
+    1,
+    -1
+  ]
+}
+
+Find files matching `src/**/*.{css,scss}`
+
+Search for `launch-hero|catalogue-section|shop-card|botanical-scene`
+
+Read , line 1 to the end
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\routes\\__root.tsx",
+  "view_range": [
+    1,
+    -1
+  ]
+}
+
+Search for `<Catalogue|Catalogue\(`
+
+Ran terminal command: Set-Location 'c:\Users\thaba\Desktop\TMTR20\image-weaver'; git --no-pager show --stat --oneline 87fc732; git --no-pager show --stat --oneline 27bd745; git --no-pager show --stat --oneline 8043db8
+
+Read , lines 180 to 460
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\components\\storefront\\catalogue.tsx",
+  "view_range": [
+    180,
+    460
+  ]
+}
+
+Read , lines 460 to 685
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\components\\storefront\\catalogue.tsx",
+  "view_range": [
+    460,
+    685
+  ]
+}
+
+Read , lines 1560 to 1870
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\styles.css",
+  "view_range": [
+    1560,
+    1870
+  ]
+}
+
+Read , lines 200 to 430
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\components\\storefront\\preview-site.tsx",
+  "view_range": [
+    200,
+    430
+  ]
+}
+
+Search for `site-header|header-|nav-|hero-|homepage|home-`
+
+Read , lines 380 to 450
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\components\\storefront\\preview-site.tsx",
+  "view_range": [
+    380,
+    450
+  ]
+}
+
+Search for `function SiteFrame|export function SiteFrame|Brand\(`
+
+Read , lines 680 to 780
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\styles.css",
+  "view_range": [
+    680,
+    780
+  ]
+}
+
+Search for `getProducts|PublicProduct`
+
+Read , line 1 to the end
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\lib\\api\\catalogue.ts",
+  "view_range": [
+    1,
+    -1
+  ]
+}
+
+The repository is clean, and the latest completed work is a substantial catalogue redesign. The homepage is still the launch countdown page, so I’m preserving the catalogue and replacing only `/` with the customer homepage plus shared customer navigation.
+
+"Apply Patch" failed
+Completed with input: "*** Begin Patch\n*** Update File: c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\routes\\index.tsx\n@@\n-import { createFileRoute } from \"@tanstack/react-router\";\n-import { Leaf, Mail, MessageCircle, Phone } from \"lucide-react\";\n-import type { CSSProperties } from \"react\";\n+import { useQuery } from \"@tanstack/react-query\";\n+import { createFileRoute, Link } from \"@tanstack/react-router\";\n+import { ArrowRight, Instagram, Leaf, Mail, MessageCircle, Phone, ShoppingBag } from \"lucide-react\";\n \n-import { Brand, BotanicalImage, Countdown, Footer } from \"@/components/wellness\";\n+import { Brand, ContactActions, Footer } from \"@/components/wellness\";\n+import { catalogueApi, type PublicProduct } from \"@/lib/api/catalogue\";\n+import { getAllowedProductImageUrls } from \"@/lib/image-url\";\n+import { formatZarCents } from \"@/lib/money\";\n@@\n-      { title: \"Healthy Ways SA — A Natural New Chapter\" },\n+      { title: \"Healthy Ways SA | Natural Wellness, Rooted in Care\" },\n@@\n-        content:\n-          \"A new Healthy Ways SA online wellness experience launches at the end of 3 November 2026. Organic natural wellness, rooted in care.\",\n+        content:\n+          \"Thoughtfully selected natural supplements and organic wellness products, delivered with personal care across South Africa.\",\n       },\n-      { property: \"og:title\", content: \"Healthy Ways SA — A Natural New Chapter\" },\n+      { property: \"og:title\", content: \"Healthy Ways SA | Natural Wellness, Rooted in Care\" },\n@@\n-        content: \"A new Healthy Ways SA online experience arrives at the end of 3 November 2026.\",\n+        content: \"Discover natural wellness essentials selected with care.\",\n@@\n-const d = (ms: number) => ({ \"--d\": `${ms}ms` }) as CSSProperties;\n-\n-const leaves = [\n-  { top: \"14%\", left: \"7%\", size: 34, t: \"19s\", d: \"0s\" },\n-  { top: \"62%\", left: \"4%\", size: 22, t: \"23s\", d: \"-6s\" },\n-  { top: \"22%\", right: \"8%\", size: 26, t: \"21s\", d: \"-3s\" },\n-  { top: \"72%\", right: \"10%\", size: 38, t: \"25s\", d: \"-9s\" },\n-];\n-\n-export function LaunchExperience() {\n-  return (\n-    <>\n-      <main className=\"botanical-scene launch-hero\">\n-        <BotanicalImage />\n-        <div className=\"ambient-glow\" style={{ top: \"10%\", left: \"20%\" }} aria-hidden />\n-        {leaves.map(({ size, t, d: delay, ...pos }, i) => (\n-          <Leaf\n-            key={i}\n-            aria-hidden\n-            className=\"floating-leaf\"\n-            size={size}\n-            strokeWidth={1.3}\n-            style={{ ...pos, [\"--t\" as string]: t, [\"--d\" as string]: delay } as CSSProperties}\n-          />\n-        ))}\n-        <div className=\"logo-enter\">\n-          <Brand className=\"mb-6 w-[245px] sm:w-[270px]\" />\n-        </div>\n-        <div className=\"reveal mb-2 flex items-center gap-3\" style={d(300)}>\n-          <span className=\"w-8 border-t border-gold/50\" />\n-          <span className=\"eyebrow\">Established care · A new chapter</span>\n-          <span className=\"w-8 border-t border-gold/50\" />\n-        </div>\n-        <h1 className=\"launch-heading reveal\" style={d(450)}>\n-          Natural wellness,\n-          <br className=\"hidden sm:block\" /> <em>beautifully renewed.</em>\n-        </h1>\n-        <p className=\"launch-copy reveal\" style={d(600)}>\n-          A new Healthy Ways SA online experience is almost here — the same trusted, personal care\n-          you know, now a little closer to home.\n-        </p>\n-        <div className=\"reveal flex w-full justify-center\" style={d(750)}>\n-          <Countdown />\n-        </div>\n-        <div className=\"reveal\" style={d(900)}>\n-          <span className=\"eyebrow\">Launching</span>\n-          <p className=\"launch-date\">\n-            <time dateTime=\"2026-11-03T23:59:59+02:00\">3 NOVEMBER 2026</time>\n-            <span className=\"mt-2 block text-[10px] text-muted-foreground\">\n-              End of day · South Africa\n-            </span>\n-          </p>\n-        </div>\n-        <div\n-          className=\"reveal mt-4 flex items-center gap-2 text-[10px] text-muted-foreground\"\n-          style={d(1050)}\n-        >\n-          <Leaf size={13} strokeWidth={1.3} /> Organic Natural Wellness\n-        </div>\n-      </main>\n-      <section className=\"enquiry\" aria-labelledby=\"enquiry-title\">\n-        <span className=\"eyebrow\">Before we launch</span>\n-        <h2 id=\"enquiry-title\" className=\"section-title mt-4 mb-4\">\n-          Have an enquiry before launch?\n-        </h2>\n-        <p className=\"launch-copy mx-auto mb-8\">\n-          Whether you have a question about our products or would like to learn more about Healthy\n-          Ways SA, we’d be happy to hear from you.\n-        </p>\n-        <div className=\"flex flex-wrap justify-center gap-3\">\n-          <a\n-            className=\"enquiry-button primary\"\n-            href=\"https://wa.me/27796871118\"\n-            target=\"_blank\"\n-            rel=\"noreferrer\"\n-          >\n-            <MessageCircle size={15} strokeWidth={1.5} /> Chat on WhatsApp\n-          </a>\n-          <a className=\"enquiry-button secondary\" href=\"mailto:[info@healtywayssa.co.za](mailto:info@healtywayssa.co.za)\">\n-            <Mail size={15} strokeWidth={1.5} /> Email Us\n-          </a>\n-        </div>\n-        <a className=\"contact-link mt-6 text-muted-foreground\" href=\"tel:+27796871118\">\n-          <Phone size={14} strokeWidth={1.5} /> 079 687 1118\n-        </a>\n-      </section>\n-    </>\n-  );\n+function ProductImage({ product }: { product: PublicProduct }) {\n+  const imageUrl = getAllowedProductImageUrls(product.imageReferences)[0];\n+  if (!imageUrl) {\n+    return <div className=\"home-product-image home-product-image-fallback\">Image unavailable</div>;\n+  }\n+  return <img className=\"home-product-image\" src={imageUrl} alt={product.name} loading=\"lazy\" />;\n }\n \n function Index() {\n+  const featured = useQuery({\n+    queryKey: [\"home\", \"featured-products\"],\n+    queryFn: () =>\n+      catalogueApi.getProducts({\n+        page: 1,\n+        limit: 4,\n+        sortBy: \"name\",\n+        sortOrder: \"asc\",\n+      }),\n+  });\n+\n   return (\n     <>\n-      <LaunchExperience />\n+      <header className=\"home-header\">\n+        <div className=\"home-header-inner\">\n+          <Link to=\"/\" aria-label=\"Healthy Ways SA home\">\n+            <Brand className=\"home-brand\" />\n+          </Link>\n+          <nav className=\"home-nav\" aria-label=\"Primary navigation\">\n+            <Link to=\"/preview\">Shop</Link>\n+            <a href=\"#our-approach\">Our approach</a>\n+            <a href=\"#contact\">Contact</a>\n+          </nav>\n+          <Link className=\"home-account\" to=\"/account/login\">\n+            Account\n+          </Link>\n+          <Link className=\"home-shop-button\" to=\"/preview\">\n+            <ShoppingBag aria-hidden=\"true\" /> Shop\n+          </Link>\n+        </div>\n+      </header>\n+\n+      <main>\n+        <section className=\"home-hero\" aria-labelledby=\"home-hero-title\">\n+          <img\n+            className=\"home-hero-image\"\n+            src=\"/images/botanical-hero.webp\"\n+            alt=\"Sunlit botanical leaves\"\n+            width={1920}\n+            height={1280}\n+            fetchPriority=\"high\"\n+          />\n+          <div className=\"home-hero-overlay\" />\n+          <div className=\"home-hero-content\">\n+            <p className=\"home-eyebrow\"><Leaf aria-hidden=\"true\" /> Organic natural wellness</p>\n+            <h1 id=\"home-hero-title\">Wellness, naturally <em>and with care.</em></h1>\n+            <p>\n+              Thoughtfully selected essentials for daily wellbeing, backed by personal service\n+              and a gentler approach to feeling your best.\n+            </p>\n+            <div className=\"home-hero-actions\">\n+              <Link className=\"home-button home-button-primary\" to=\"/preview\">\n+                Explore the shop <ArrowRight aria-hidden=\"true\" />\n+              </Link>\n+              <a className=\"home-button home-button-secondary\" href=\"#our-approach\">\n+                Our approach\n+              </a>\n+            </div>\n+          </div>\n+        </section>\n+\n+        <section className=\"home-intro\" id=\"our-approach\" aria-labelledby=\"home-intro-title\">\n+          <div>\n+            <p className=\"home-eyebrow home-eyebrow-dark\">Welcome to Healthy Ways</p>\n+            <h2 id=\"home-intro-title\">A thoughtful path to everyday wellbeing.</h2>\n+          </div>\n+          <div>\n+            <p>\n+              We believe natural wellness should feel simple, reassuring and personal. Our\n+              collection is curated around quality, everyday usefulness and the trust you place in us.\n+            </p>\n+            <Link className=\"home-text-link\" to=\"/preview\">\n+              Discover our products <ArrowRight aria-hidden=\"true\" />\n+            </Link>\n+          </div>\n+        </section>\n+\n+        <section className=\"home-values\" aria-label=\"Our values\">\n+          <article>\n+            <Leaf aria-hidden=\"true\" />\n+            <h3>Nature-led</h3>\n+            <p>Wellness choices rooted in natural ingredients and thoughtful formulation.</p>\n+          </article>\n+          <article>\n+            <span className=\"home-value-mark\" aria-hidden=\"true\">01</span>\n+            <h3>Carefully selected</h3>\n+            <p>Products chosen for quality, usefulness and everyday peace of mind.</p>\n+          </article>\n+          <article>\n+            <span className=\"home-value-mark\" aria-hidden=\"true\">SA</span>\n+            <h3>Personal service</h3>\n+            <p>Friendly South African support when you need guidance or have a question.</p>\n+          </article>\n+        </section>\n+\n+        <section className=\"home-featured\" aria-labelledby=\"home-featured-title\">\n+          <div className=\"home-section-heading\">\n+            <div>\n+              <p class=\"home-eyebrow home-eyebrow-dark\">From the collection</p>\n+              <h2 id=\"home-featured-title\">Wellness essentials</h2>\n+            </div>\n+            <Link className=\"home-text-link\" to=\"/preview\">\n+              View all products <ArrowRight aria-hidden=\"true\" />\n+            </Link>\n+          </div>\n+\n+          {featured.isPending ? (\n+            <div className=\"home-product-grid\" role=\"status\" aria-label=\"Loading featured products\">\n+              {[0, 1, 2, 3].map((item) => <div key={item} className=\"home-product-skeleton\" />)}\n+            </div>\n+          ) : featured.isError ? (\n+            <div className=\"home-products-error\" role=\"alert\">\n+              <p>The featured collection could not be loaded.</p>\n+              <button type=\"button\" onClick={() => void featured.refetch()}>Try again</button>\n+            </div>\n+          ) : featured.data.products.length === 0 ? (\n+            <div className=\"home-products-empty\">Our collection is being updated. Please check back soon.</div>\n+          ) : (\n+            <div className=\"home-product-grid\">\n+              {featured.data.products.map((product) => (\n+                <article className=\"home-product-card\" key={product.id}>\n+                  <Link\n+                    to=\"/preview\"\n+                    search={{ view: \"shop\", product: product.slug }}\n+                    aria-label={`View ${product.name}`}\n+                  >\n+                    <ProductImage product={product} />\n+                  </Link>\n+                  <p className=\"home-product-category\">{product.category.name}</p>\n+                  <h3>\n+                    <Link to=\"/preview\" search={{ view: \"shop\", product: product.slug }}>\n+                      {product.name}\n+                    </Link>\n+                  </h3>\n+                  {product.shortDescription ? <p className=\"home-product-summary\">{product.shortDescription}</p> : null}\n+                  <div className=\"home-product-footer\">\n+                    <strong>{formatZarCents(product.priceCents)}</strong>\n+                    <Link to=\"/preview\" search={{ view: \"shop\", product: product.slug }}>\n+                      View <ArrowRight aria-hidden=\"true\" />\n+                    </Link>\n+                  </div>\n+                </article>\n+              ))}\n+            </div>\n+          )}\n+        </section>\n+\n+        <section className=\"home-contact\" id=\"contact\" aria-labelledby=\"home-contact-title\">\n+          <div>\n+            <p className=\"home-eyebrow\">Here to help</p>\n+            <h2 id=\"home-contact-title\">Questions about your wellbeing journey?</h2>\n+            <p>Speak to our friendly team for product guidance and personal support.</p>\n+          </div>\n+          <ContactActions />\n+        </section>\n+      </main>\n       <Footer />\n*** End Patch\n"
+Tool execution failed: Failed to apply patch: Error: Failed to find expected lines in c:\Users\thaba\Desktop\TMTR20\image-weaver\src\routes\index.tsx:
+const d = (ms: number) => ({ "--d": `${ms}ms` }) as CSSProperties;
+
+const leaves = [
+  { top: "14%", left: "7%", size: 34, t: "19s", d: "0s" },
+  { top: "62%", left: "4%", size: 22, t: "23s", d: "-6s" },
+  { top: "22%", right: "8%", size: 26, t: "21s", d: "-3s" },
+  { top: "72%", right: "10%", size: 38, t: "25s", d: "-9s" },
+];
+
+export function LaunchExperience() {
+  return (
+    <>
+      <main className="botanical-scene launch-hero">
+        <BotanicalImage />
+        <div className="ambient-glow" style={{ top: "10%", left: "20%" }} aria-hidden />
+        {leaves.map(({ size, t, d: delay, ...pos }, i) => (
+          <Leaf
+            key={i}
+            aria-hidden
+            className="floating-leaf"
+            size={size}
+            strokeWidth={1.3}
+            style={{ ...pos, ["--t" as string]: t, ["--d" as string]: delay } as CSSProperties}
+          />
+        ))}
+        <div className="logo-enter">
+          <Brand className="mb-6 w-[245px] sm:w-[270px]" />
+        </div>
+        <div className="reveal mb-2 flex items-center gap-3" style={d(300)}>
+          <span className="w-8 border-t border-gold/50" />
+          <span className="eyebrow">Established care · A new chapter</span>
+          <span className="w-8 border-t border-gold/50" />
+        </div>
+        <h1 className="launch-heading reveal" style={d(450)}>
+          Natural wellness,
+          <br className="hidden sm:block" /> <em>beautifully renewed.</em>
+        </h1>
+        <p className="launch-copy reveal" style={d(600)}>
+          A new Healthy Ways SA online experience is almost here — the same trusted, personal care
+          you know, now a little closer to home.
+        </p>
+        <div className="reveal flex w-full justify-center" style={d(750)}>
+          <Countdown />
+        </div>
+        <div className="reveal" style={d(900)}>
+          <span className="eyebrow">Launching</span>
+          <p className="launch-date">
+            <time dateTime="2026-11-03T23:59:59+02:00">3 NOVEMBER 2026</time>
+            <span className="mt-2 block text-[10px] text-muted-foreground">
+              End of day · South Africa
+            </span>
+          </p>
+        </div>
+        <div
+          className="reveal mt-4 flex items-center gap-2 text-[10px] text-muted-foreground"
+          style={d(1050)}
+        >
+          <Leaf size={13} strokeWidth={1.3} /> Organic Natural Wellness
+        </div>
+      </main>
+      <section className="enquiry" aria-labelledby="enquiry-title">
+        <span className="eyebrow">Before we launch</span>
+        <h2 id="enquiry-title" className="section-title mt-4 mb-4">
+          Have an enquiry before launch?
+        </h2>
+        <p className="launch-copy mx-auto mb-8">
+          Whether you have a question about our products or would like to learn more about Healthy
+          Ways SA, we’d be happy to hear from you.
+        </p>
+        <div className="flex flex-wrap justify-center gap-3">
+          <a
+            className="enquiry-button primary"
+            href="https://wa.me/27796871118"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <MessageCircle size={15} strokeWidth={1.5} /> Chat on WhatsApp
+          </a>
+          <a className="enquiry-button secondary" href="mailto:info@healtywayssa.co.za">
+            <Mail size={15} strokeWidth={1.5} /> Email Us
+          </a>
+        </div>
+        <a className="contact-link mt-6 text-muted-foreground" href="tel:+27796871118">
+          <Phone size={14} strokeWidth={1.5} /> 079 687 1118
+        </a>
+      </section>
+    </>
+  );
+}
+
+function Index() {
+  return (
+    <>
+      <LaunchExperience />
+      <Footer />
+
+Read , lines 1 to 150
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\routes\\index.tsx",
+  "view_range": [
+    1,
+    150
+  ]
+}
+
+Edit 
+
+Edit 
+
+Discovering tests...
+Tool execution failed: No tests are available to run through VS Code's test extensions in this workspace. No tests were run; this is not a passing test result.
+
+The homepage is now implemented around real catalogue data, with the existing catalogue kept intact. I’m checking the route and stylesheet changes now; if verification exposes a type or routing issue, I’ll fix it without broadening scope.
+
+Ran terminal command: git --no-pager diff --check; $diffStatus=$LASTEXITCODE; Write-Output "git diff --check exit status: $diffStatus"; npm run build
+
+Read Terminal
+Completed with input: {
+  "shellId": "8",
+  "delay": 120
+}
+
+Read Terminal
+Completed with input: {
+  "shellId": "8",
+  "delay": 120
+}
+
+Stop Terminal Session
+Completed with input: {
+  "shellId": "8"
+}
+
+Ran terminal command: Set-Location 'c:\Users\thaba\Desktop\TMTR20\image-weaver'; git --no-pager diff --check; git --no-pager diff --stat; git --no-pager status --short
+
+Search for `LaunchExperience|countdown|botanical-scene`
+
+Read , lines 1 to 220
+Completed with input: {
+  "path": "c:\\Users\\thaba\\Desktop\\TMTR20\\image-weaver\\src\\routes\\index.tsx",
+  "view_range": [
+    1,
+    220
+  ]
+}
+
+Search for `admin|backend`
+
+Ran terminal command: npx tsc --noEmit
+
+Stop Terminal Session
+Completed with input: {
+  "shellId": "10"
+}
+
+Ran terminal command: git --no-pager diff --check; $exitCode=$LASTEXITCODE; Write-Output "git diff --check exit status: $exitCode"; git --no-pager diff --stat; git --no-pager status --short
+
+## Resume findings
+
+- Repository was clean.
+- Catalogue redesign was already implemented in `catalogue.tsx` and `styles.css`.
+- The homepage was still the previous launch-countdown experience.
+- No uncommitted admin or backend work was present.
+
+## Completed
+
+Replaced `/` with the customer-facing homepage in `index.tsx`:
+
+- Modern wellness hero and navigation.
+- Real featured-product query with loading, error, empty, and retry states.
+- Product-detail links into the existing `/preview` shop.
+- Guest-friendly shop navigation.
+- Account access and contact actions.
+- Responsive desktop/mobile layout.
+- Homepage SEO metadata.
+- Botanical imagery through the existing static public image.
+
+Added the homepage visual foundation to `styles.css`.
+
+## Files changed
+
+- `index.tsx`
+- `styles.css`
+
+## Verification
+
+- `git diff --check`: exit status **0**
+- Build and TypeScript verification did not complete within the environment timeout and were stopped.
+- No browser screenshots were captured because browser automation tools were unavailable.
+- No homepage routes, catalogue functionality, authentication routes, admin dashboard, PayFast, shipping, backend, database, or production configuration were modified.
+
+## Remaining
+
+- Browser validation of desktop/mobile layouts.
+- Verify the homepage featured-product query against the configured backend.
+- Capture requested desktop and mobile screenshots after deployment review.
+
+Development, staging, and production separation could not be verified from source alone. Implementation work stops at the homepage/catalogue scope.`GET /api/v1/auth/csrf-token` | Public; no CSRF header; retain cookies | None | `200` `{ "csrfToken": "<returned token>" }`; sets session and CSRF cookies. |
 | `POST /api/v1/auth/register` | Public; CSRF required | `email`, `password`; optional `displayName`, `phoneNumber`. Email must be valid and <=254 chars and is lowercased. Password is 12–128 chars. Display name is 1–100 chars; phone is 1–30 chars. | `201` `{ "user": <public user>, "emailVerificationEmailSent": true|false }`. |
 | `POST /api/v1/auth/admin/register` | Public; CSRF required | Same strict fields/validation as customer registration. Server accepts only normalized addresses ending exactly in `@healtywayssa.co.za`; client role fields are rejected. | `201` same response shape as customer registration; user receives only `admin` role and remains unverified. |
 | `POST /api/v1/auth/login` | Public; CSRF required | `email`, `password`. Valid email; password 1–128 chars. | Customer: `202` `{ "emailOtpRequired": true }`; admin without TOTP: `202` `{ "twoFactorEnrollmentRequired": true }`; admin with TOTP: `202` `{ "twoFactorRequired": true }`. Rotates session into a restricted pending state. |

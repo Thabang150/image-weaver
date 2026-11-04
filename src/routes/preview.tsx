@@ -6,7 +6,17 @@ import { PreviewSite, type PreviewView } from "@/components/storefront/preview-s
 
 const productSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const previewViews: PreviewView[] = [
+  "home",
   "shop",
+  "about",
+  "contact",
+  "consultation",
+  "journal",
+  "faq",
+  "privacy",
+  "terms",
+  "delivery",
+  "returns",
   "login",
   "customer-login",
   "admin-login",
@@ -57,15 +67,15 @@ export const Route = createFileRoute("/preview")({
   },
   head: () => ({
     meta: [
-      { title: "HealthywaysSA — Storefront Preview" },
+      { title: "Healthy Ways SA — Storefront Preview" },
       {
         name: "description",
-        content: "Shop and test the HealthywaysSA customer storefront.",
+        content: "Explore the Healthy Ways SA natural wellness storefront preview.",
       },
-      { property: "og:title", content: "HealthywaysSA — Storefront Preview" },
+      { property: "og:title", content: "Healthy Ways SA — Storefront Preview" },
       {
         property: "og:description",
-        content: "Shop and test the HealthywaysSA customer storefront.",
+        content: "Explore the Healthy Ways SA natural wellness storefront preview.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -78,7 +88,7 @@ export const Route = createFileRoute("/preview")({
 function Preview() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const view = search.view ?? "shop";
+  const view = search.view ?? "home";
   const emailLinkFallbackStartedRef = useRef(false);
 
   useEffect(() => {
@@ -127,7 +137,7 @@ function Preview() {
         nextView === "shop" && search.product
           ? { view: nextView, product: search.product }
           : nextView === "shop"
-            ? {}
+            ? { view: "shop" as const }
             : returnTo
               ? { view: nextView, returnTo }
             : nextView === "order-detail" || nextView === "tracking-detail" || nextView === "payment-return" || nextView === "payment-cancel"
@@ -137,7 +147,7 @@ function Preview() {
   }
 
   return (
-    <CartProvider>
+    <CartProvider enabled={view !== "admin-login" && view !== "admin-register" && view !== "admin-forgot-password"}>
       <PreviewSite
         view={view}
         product={search.product}

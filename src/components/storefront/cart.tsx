@@ -63,7 +63,7 @@ function getCartErrorMessage(error: unknown): string {
   return "The cart could not be reached. Check your connection and try again.";
 }
 
-export function CartProvider({ children }: { children: ReactNode }) {
+export function CartProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -80,7 +80,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     queryKey: ["session"],
     queryFn: () => authApi.getSession(),
     retry: false,
-    enabled: !isAdminAuthPage,
+    enabled: enabled && !isAdminAuthPage,
   });
   const cartUserId = sessionQuery.data?.status === "authenticated" ? sessionQuery.data.user.id : "anonymous";
 
@@ -94,7 +94,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     queryFn: () => cartApi.getCart(),
     retry: false,
     staleTime: 30_000,
-    enabled: !isAdminAuthPage,
+    enabled: enabled && !isAdminAuthPage,
   });
 
   const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;

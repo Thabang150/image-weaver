@@ -161,6 +161,7 @@ function SiteFrame({
   const isAdmin = user ? isAdminUser(user) : false;
   const cart = useOptionalCart();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const menuToggleRef = useRef<HTMLButtonElement>(null);
   const navigateFromHeader = (view: PreviewView) => {
     setMobileMenuOpen(false);
     onNavigate(view);
@@ -176,6 +177,12 @@ function SiteFrame({
             id="preview-primary-navigation"
             className={`preview-nav${mobileMenuOpen ? " is-open" : ""}`}
             aria-label="Main navigation"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setMobileMenuOpen(false);
+                menuToggleRef.current?.focus();
+              }
+            }}
           >
             <button type="button" onClick={() => navigateFromHeader("home")}>Home</button>
             <button type="button" onClick={() => navigateFromHeader("shop")}>Shop</button>
@@ -226,6 +233,7 @@ function SiteFrame({
             ) : null}
           </div>
           <button
+            ref={menuToggleRef}
             type="button"
             className="preview-menu-toggle"
             aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}

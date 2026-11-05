@@ -24,7 +24,7 @@ function AdminForgotPasswordRoute() {
   }
 
   return (
-    <CartProvider>
+    <CartProvider enabled={false}>
       <PreviewSite
         view="admin-forgot-password"
         product={undefined}

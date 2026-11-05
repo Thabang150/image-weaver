@@ -28,7 +28,7 @@ function AdminLoginRoute() {
   }
 
   return (
-    <CartProvider>
+    <CartProvider enabled={false}>
       <PreviewSite
         view="admin-login"
         product={undefined}

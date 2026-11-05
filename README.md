@@ -20,6 +20,21 @@ Production API calls use the same-origin `/api/v1` path. Nitro proxies `/api/v1/
 
 Only the public backend URL belongs in a `VITE_*` variable; Vite exposes these values in the browser bundle. Do not place passwords, session secrets, CSRF tokens, payment credentials, or other secrets in frontend environment variables. The backend must allow the deployed frontend origin with credentialed CORS.
 
+### Preview environment safety
+
+Preview mutations are blocked solely by the `/preview` browser pathname. Frontend environment variables cannot enable preview mutations.
+
+Preview staging will require:
+
+- a separately deployed frontend staging origin;
+- a separately deployed backend staging origin;
+- a separate MongoDB database;
+- staging frontend/backend cookie and `FRONTEND_ORIGIN` CORS configuration;
+- PayFast sandbox credentials and staging callback origins;
+- isolated email behaviour for verification and password-reset messages.
+
+These infrastructure settings are not provisioned by this repository and staging is not operational merely because `VITE_APP_ENV=staging` is configured. The frontend also cannot prove that a deployed backend/database is isolated: backend deployment and ownership verification remain required.
+
 `src/lib/api/client.ts` follows the authentication contract for `GET /api/v1/auth/csrf-token` and its `{ csrfToken }` response. Unsafe requests are blocked if token acquisition fails. On the exact documented CSRF 403, the client refreshes the token but does not replay the rejected mutation. Authentication helpers refresh CSRF after session-regenerating login/logout/2FA transitions. Configure the backend's exact `FRONTEND_ORIGIN` for the deployed site.
 
 The administrator catalogue UI accepts image references only. Set the frontend `VITE_PRODUCT_IMAGE_ALLOWED_HOSTS` to a comma-separated list of approved HTTPS image hostnames, and configure the matching backend `PRODUCT_IMAGE_ALLOWED_HOSTS`; file uploads are not supported.

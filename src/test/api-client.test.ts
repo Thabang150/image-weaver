@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ApiHttpError,
   ApiResponseError,
+  PreviewMutationBlockedError,
   buildApiUrl,
   createApiClient,
   getBackendBaseUrl,
+  isPreviewPath,
   normalizeApiBaseUrl,
 } from "@/lib/api/client";
 
@@ -19,6 +21,13 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("API URL configuration", () => {
+  it("recognizes preview paths with trailing slashes", () => {
+    expect(isPreviewPath("/preview")).toBe(true);
+    expect(isPreviewPath("/preview/")).toBe(true);
+    expect(isPreviewPath("/preview?view=shop")).toBe(true);
+    expect(isPreviewPath("/shop")).toBe(false);
+  });
+
   it("adds the API prefix once, whether or not it is already in the base URL", () => {
     expect(normalizeApiBaseUrl(baseUrl)).toBe(`${baseUrl}/api/v1/`);
     expect(normalizeApiBaseUrl(`${baseUrl}/api/v1/`)).toBe(`${baseUrl}/api/v1/`);
@@ -56,6 +65,35 @@ describe("API URL configuration", () => {
 });
 
 describe("API requests", () => {
+  it("blocks unsafe methods on preview routes and preserves dedicated-route mutations", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
+      jsonResponse({ ok: true }),
+    );
+    const csrfTokenProvider = vi.fn().mockResolvedValue("csrf-1");
+    const client = createApiClient({ baseUrl, csrfTokenProvider, fetcher });
+
+    window.history.pushState({}, "", "/preview?view=shop");
+    await expect(client.request("/resource", { method: "POST" })).rejects.toBeInstanceOf(
+      PreviewMutationBlockedError,
+    );
+    await expect(client.request("/resource", { method: "put" })).rejects.toBeInstanceOf(
+      PreviewMutationBlockedError,
+    );
+    await expect(client.request("/resource", { method: "PATCH" })).rejects.toBeInstanceOf(
+      PreviewMutationBlockedError,
+    );
+    await expect(client.request("/resource", { method: "DELETE" })).rejects.toBeInstanceOf(
+      PreviewMutationBlockedError,
+    );
+    await expect(client.request("/products")).resolves.toEqual({ ok: true });
+    expect(csrfTokenProvider).not.toHaveBeenCalled();
+
+    window.history.pushState({}, "", "/account/login");
+    await expect(
+      client.request("/auth/login", { method: "POST", json: {} }),
+    ).resolves.toEqual({ ok: true });
+  });
+
   it("includes browser session cookies and serializes JSON requests", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

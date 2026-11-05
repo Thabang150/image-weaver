@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,7 +10,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { ApiHttpError, CsrfTokenError } from "@/lib/api/client";
+import { ApiHttpError, CsrfTokenError, PreviewMutationBlockedError } from "@/lib/api/client";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
 import { authApi } from "@/lib/api/auth";
 import { formatZarCents } from "@/lib/money";
@@ -60,6 +60,9 @@ function getCartErrorMessage(error: unknown): string {
   if (error instanceof CsrfTokenError) {
     return "The cart request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
+  if (error instanceof PreviewMutationBlockedError) {
+    return error.message;
+  }
   return "The cart could not be reached. Check your connection and try again.";
 }
 
@@ -71,11 +74,6 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
     typeof window !== "undefined" &&
     /^\/admin\/(?:login|register|forgot-password)(?:\/|$)/.test(window.location.pathname);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("healthyways.cart.snapshot", JSON.stringify({ savedAt: new Date().toISOString() }));
-  }, []);
-
   const sessionQuery = useQuery({
     queryKey: ["session"],
     queryFn: () => authApi.getSession(),
@@ -83,10 +81,11 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
     enabled: enabled && !isAdminAuthPage,
   });
   const cartUserId = sessionQuery.data?.status === "authenticated" ? sessionQuery.data.user.id : "anonymous";
+  const hasAuthenticatedSession = sessionQuery.data?.status === "authenticated";
 
   const {
     data: cart,
-    isPending: isCartLoading,
+    isPending: isCartPending,
     error: cartError,
     refetch: retryCart,
   } = useQuery({
@@ -94,8 +93,10 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
     queryFn: () => cartApi.getCart(),
     retry: false,
     staleTime: 30_000,
-    enabled: enabled && !isAdminAuthPage,
+    enabled: enabled && !isAdminAuthPage && hasAuthenticatedSession === true,
   });
+  const isCartLoading =
+    enabled && !isAdminAuthPage && hasAuthenticatedSession === true && isCartPending;
 
   const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
 

@@ -20,7 +20,7 @@ function CustomerLoginRoute() {
   }
 
   return (
-    <CartProvider>
+    <CartProvider enabled={false}>
       <PreviewSite
         view="customer-login"
         product={undefined}

@@ -24,7 +24,7 @@ function AdminRegisterRoute() {
   }
 
   return (
-    <CartProvider>
+    <CartProvider enabled={false}>
       <PreviewSite
         view="admin-register"
         product={undefined}

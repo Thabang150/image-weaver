@@ -89,6 +89,9 @@ function Preview() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const view = search.view ?? "home";
+  const cartEnabled =
+    !["login", "customer-login", "register", "verify-email", "forgot-password", "reset-password",
+      "admin-login", "admin-register", "admin-forgot-password"].includes(view);
   const emailLinkFallbackStartedRef = useRef(false);
 
   useEffect(() => {
@@ -147,7 +150,7 @@ function Preview() {
   }
 
   return (
-    <CartProvider enabled={view !== "admin-login" && view !== "admin-register" && view !== "admin-forgot-password"}>
+    <CartProvider enabled={cartEnabled}>
       <PreviewSite
         view={view}
         product={search.product}

@@ -2,6 +2,33 @@ export const API_PREFIX = "/api/v1";
 
 export type CsrfTokenProvider = () => Promise<string>;
 
+export class PreviewMutationBlockedError extends Error {
+  constructor() {
+    super(
+      "This action is unavailable in the storefront preview. Preview mutations require a separate staging backend; no production data has been changed.",
+    );
+    this.name = "PreviewMutationBlockedError";
+  }
+}
+
+export function isPreviewPath(pathname: string): boolean {
+  let path = pathname;
+  try {
+    path = pathname.includes("://") || pathname.startsWith("//")
+      ? new URL(pathname, "https://preview.invalid").pathname
+      : pathname.split(/[?#]/, 1)[0] ?? pathname;
+  } catch {
+    return false;
+  }
+  const normalized = path.replace(/\/+$/, "");
+  return normalized === "/preview";
+}
+
+function isPreviewMutationAllowed(): boolean {
+  if (typeof window === "undefined") return false;
+  return !isPreviewPath(window.location.pathname);
+}
+
 export interface ApiClientOptions {
   baseUrl: string;
   csrfTokenProvider?: CsrfTokenProvider;
@@ -15,6 +42,7 @@ export interface ApiRequestOptions {
   body?: BodyInit;
   signal?: AbortSignal;
   regeneratesSession?: boolean;
+  origin?: "preview" | "outside-preview";
 }
 
 export type ApiErrorKind = "unauthorized" | "forbidden" | "http";
@@ -114,6 +142,17 @@ export function buildApiUrl(baseUrl: string, endpoint: string): string {
 
 function isUnsafeMethod(method: string): boolean {
   return !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+}
+
+function normalizeRequestMethod(method: string | undefined): string {
+  if (typeof method !== "string" || !/^[A-Za-z]+$/.test(method.trim())) {
+    throw new PreviewMutationBlockedError();
+  }
+  const normalized = method.trim().toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"].includes(normalized)) {
+    throw new PreviewMutationBlockedError();
+  }
+  return normalized;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -256,7 +295,17 @@ export function createApiClient(options: ApiClientOptions) {
     endpoint: string,
     requestOptions: ApiRequestOptions = {},
   ): Promise<{ body: T | undefined; status: number }> {
-    const method = (requestOptions.method ?? "GET").toUpperCase();
+    const method = normalizeRequestMethod(requestOptions.method ?? "GET");
+    if (isUnsafeMethod(method)) {
+      if (requestOptions.origin === "preview" ||
+        (requestOptions.origin !== "outside-preview" && typeof window === "undefined")) {
+        throw new PreviewMutationBlockedError();
+      }
+      if (requestOptions.origin !== "outside-preview" &&
+        (requestOptions.origin === "preview" || !isPreviewMutationAllowed())) {
+        throw new PreviewMutationBlockedError();
+      }
+    }
     const headers = new Headers(requestOptions.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
 

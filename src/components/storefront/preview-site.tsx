@@ -1,11 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowDown, ArrowRight, Menu, Search, ShoppingBag, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdminPanel } from "@/components/storefront/admin";
-import { CartPage, CartSheet, CartTrigger } from "@/components/storefront/cart";
+import { CartAddButton, CartPage, CartSheet, CartTrigger } from "@/components/storefront/cart";
 import { Catalogue } from "@/components/storefront/catalogue";
 import { Button } from "@/components/ui/button";
-import { ApiHttpError, ApiResponseError, CsrfTokenError } from "@/lib/api/client";
+import {
+  ApiHttpError,
+  ApiResponseError,
+  CsrfTokenError,
+  PreviewMutationBlockedError,
+} from "@/lib/api/client";
 import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { isAdminUser } from "@/lib/auth/authorization";
 import { ordersApi } from "@/lib/api/orders";
@@ -113,6 +119,9 @@ function describeAuthError(error: unknown, action: string): string {
   if (error instanceof CsrfTokenError) {
     return "This request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
+  if (error instanceof PreviewMutationBlockedError) {
+    return error.message;
+  }
   if (error instanceof TypeError) {
     return `${action} could not be completed because the browser could not complete the network request. Check the API URL, browser network or CORS configuration, your connection, and blockers, then try again.`;
   }
@@ -150,6 +159,11 @@ function SiteFrame({
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
 }) {
   const isAdmin = user ? isAdminUser(user) : false;
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const navigateFromHeader = (view: PreviewView) => {
+    setMobileMenuOpen(false);
+    onNavigate(view);
+  };
   return (
     <>
       <header className="preview-header">
@@ -157,26 +171,46 @@ function SiteFrame({
           <button className="preview-brand" type="button" onClick={() => onNavigate("home")} aria-label="Healthy Ways SA home">
             <Brand className="preview-brand-image" />
           </button>
-          <nav className="preview-nav" aria-label="Main navigation">
-            <button type="button" onClick={() => onNavigate("shop")}>Shop</button>
-            <button type="button" onClick={() => onNavigate("about")}>About</button>
-            <button type="button" onClick={() => onNavigate("consultation")}>Consultation</button>
-            <button type="button" onClick={() => onNavigate("journal")}>Journal</button>
-            <button type="button" onClick={() => onNavigate("contact")}>Contact</button>
+          <nav
+            id="preview-primary-navigation"
+            className={`preview-nav${mobileMenuOpen ? " is-open" : ""}`}
+            aria-label="Main navigation"
+          >
+            <button type="button" onClick={() => navigateFromHeader("shop")}>Shop</button>
+            <button type="button" onClick={() => navigateFromHeader("journal")}>Discover</button>
+            <button type="button" onClick={() => navigateFromHeader("about")}>Our Story</button>
+            <button type="button" onClick={() => navigateFromHeader("contact")}>Contact</button>
           </nav>
           <div className="preview-account-actions">
             <button
               type="button"
-              className="preview-account-link"
-              onClick={() => onNavigate(user ? "account" : "login", "account")}
+              className="preview-icon-button preview-search-link"
+              aria-label="Search products"
+              onClick={() => navigateFromHeader("shop")}
             >
-              {user ? "Account" : "Sign in"}
+              <Search aria-hidden="true" />
             </button>
-            <button type="button" className="preview-cart-link" onClick={() => onNavigate("cart")}>
-              Cart
+            <button
+              type="button"
+              className="preview-icon-button preview-account-link"
+              aria-label={user ? "Your account" : "Sign in"}
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onNavigate(user ? "account" : "login", "account");
+              }}
+            >
+              <UserRound aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="preview-icon-button preview-cart-link"
+              aria-label="Shopping bag"
+              onClick={() => navigateFromHeader("cart")}
+            >
+              <ShoppingBag aria-hidden="true" />
             </button>
             {isAdmin ? (
-              <button type="button" className="preview-account-link" onClick={() => onNavigate("admin")}>
+              <button type="button" className="preview-account-link" onClick={() => navigateFromHeader("admin")}>
                 Admin
               </button>
             ) : null}
@@ -186,6 +220,16 @@ function SiteFrame({
               </button>
             ) : null}
           </div>
+          <button
+            type="button"
+            className="preview-menu-toggle"
+            aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="preview-primary-navigation"
+            onClick={() => setMobileMenuOpen((isOpen) => !isOpen)}
+          >
+            {mobileMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+          </button>
         </div>
       </header>
       {children}
@@ -269,7 +313,7 @@ export function PreviewSite({
 
   let content: ReactNode;
   if (view === "home") {
-    content = <PreviewHome onNavigate={onNavigate} />;
+    content = <PreviewHome onNavigate={onNavigate} onSelectProduct={onSelectProduct} />;
   } else if (view === "shop") {
     content = (
       <Catalogue
@@ -360,7 +404,8 @@ export function PreviewSite({
   }
 
   return (
-    <CartProviderView
+    <div className="healthyways-preview-scope">
+      <CartProviderView
       content={
         <SiteFrame
           user={user}
@@ -389,7 +434,8 @@ export function PreviewSite({
       view={view}
       onSignIn={() => onNavigate("login", "cart")}
       onCheckout={() => onNavigate(user ? "checkout" : "login", user ? undefined : "cart")}
-    />
+      />
+    </div>
   );
 }
 
@@ -443,7 +489,35 @@ function AccessMessage({
   );
 }
 
-function PreviewHome({ onNavigate }: { onNavigate: (view: PreviewView) => void }) {
+function PreviewHomeProductImage({ product }: { product: PublicProduct }) {
+  const [failed, setFailed] = useState(false);
+  const image = getAllowedProductImageUrls(product.imageReferences)[0];
+
+  if (!image || failed) {
+    return (
+      <span className="preview-home-image-fallback" role="img" aria-label={`${product.name} image unavailable`}>
+        Image unavailable
+      </span>
+    );
+  }
+
+  return (
+    <img
+      src={image}
+      alt={product.name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function PreviewHome({
+  onNavigate,
+  onSelectProduct,
+}: {
+  onNavigate: (view: PreviewView) => void;
+  onSelectProduct: (slug: string) => void;
+}) {
   const featured = useQuery({
     queryKey: ["preview-home-featured"],
     queryFn: () => catalogueApi.getProducts({
@@ -453,69 +527,126 @@ function PreviewHome({ onNavigate }: { onNavigate: (view: PreviewView) => void }
       sortOrder: "asc",
     }),
   });
+  const [selectedGoal, setSelectedGoal] = useState("Everyday wellbeing");
+  const goals = [
+    "Everyday wellbeing",
+    "Calm moments",
+    "Focus & clarity",
+    "Energy & vitality",
+    "Healthy routines",
+  ];
+  const goalDescriptions: Record<string, string> = {
+    "Everyday wellbeing": "Explore small, considered choices that can support a mindful daily routine.",
+    "Calm moments": "Learn about everyday practices that make room for rest and a slower pace.",
+    "Focus & clarity": "Discover ways to create a more intentional environment for your daily tasks.",
+    "Energy & vitality": "Explore the foundations of feeling well, including rest, nourishment and movement.",
+    "Healthy routines": "Find approachable ideas for building habits that fit your own life.",
+  };
 
   return (
-    <main>
+    <main className="preview-home">
       <section className="preview-home-hero" aria-labelledby="preview-home-title">
-        <img src="/images/botanical-hero.webp" alt="" className="preview-home-hero-image" />
-        <div className="preview-home-hero-shade" />
         <div className="preview-home-hero-content">
-          <p>Organic natural wellness</p>
-          <h1 id="preview-home-title">Wellness, made simpler.</h1>
-          <span>
-            Thoughtfully selected wellness products and practical knowledge for everyday wellbeing.
-          </span>
+          <p className="preview-home-eyebrow">Healthy Ways SA · Everyday wellness</p>
+          <h1 id="preview-home-title">Make space for feeling well.</h1>
+          <p className="preview-home-hero-copy">
+            Thoughtful wellness for everyday life, with considered products and clear information
+            to help you choose at your own pace.
+          </p>
           <div className="preview-home-actions">
-            <Button onClick={() => onNavigate("shop")}>Shop products</Button>
-            <Button variant="outline" onClick={() => onNavigate("shop")}>Explore the collection</Button>
+            <Button onClick={() => onNavigate("shop")}>
+              Shop supplements <ArrowRight aria-hidden="true" />
+            </Button>
+            <a className="preview-home-text-link" href="#preview-ingredients">
+              Discover our ingredients <ArrowDown aria-hidden="true" />
+            </a>
           </div>
         </div>
+        <figure className="preview-home-hero-visual">
+          <img
+            src="/images/botanical-hero.webp"
+            alt="Sunlight falling across green botanical leaves"
+            fetchPriority="high"
+          />
+          <figcaption>Rooted in nature. Made for your wellbeing.</figcaption>
+        </figure>
       </section>
 
-      <section className="preview-home-intro" aria-labelledby="preview-approach-title">
-        <p className="preview-section-kicker">Our approach</p>
-        <h2 id="preview-approach-title">Natural wellness should feel clear, personal and reassuring.</h2>
-        <p>
-          Healthy Ways SA brings together carefully selected products and friendly guidance, so
-          every customer can make more informed choices at their own pace.
+      <section className="preview-home-goals" aria-labelledby="preview-goals-title">
+        <div className="preview-home-section-heading">
+          <p className="preview-section-kicker">A place to begin</p>
+          <h2 id="preview-goals-title">What does wellbeing mean to you?</h2>
+          <p>
+            Explore the routines and questions that matter to you. These themes are for discovery,
+            not product recommendations or promises of an outcome.
+          </p>
+        </div>
+        <div className="preview-home-goal-list" role="group" aria-label="Choose a wellbeing theme">
+          {goals.map((goal, index) => (
+            <button
+              className={`preview-home-goal${selectedGoal === goal ? " is-selected" : ""}`}
+              type="button"
+              key={goal}
+              aria-pressed={selectedGoal === goal}
+              onClick={() => setSelectedGoal(goal)}
+            >
+              <span>0{index + 1}</span>
+              {goal}
+              <ArrowRight aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+        <p className="preview-home-goal-note" aria-live="polite">
+          <strong>{selectedGoal}.</strong> {goalDescriptions[selectedGoal]} Start with ingredient
+          information and product labels, and ask a qualified professional when you need personal
+          health advice.
         </p>
       </section>
 
-      <section className="preview-featured" aria-labelledby="preview-featured-title">
-        <div className="preview-featured-heading">
+      <section className="preview-featured preview-home-products" aria-labelledby="preview-featured-title">
+        <div className="preview-featured-heading preview-home-section-heading">
           <div>
             <p className="preview-section-kicker">The collection</p>
-            <h2 id="preview-featured-title">Wellness essentials</h2>
+            <h2 id="preview-featured-title">Thoughtful picks from our range</h2>
           </div>
-          <button type="button" onClick={() => onNavigate("shop")}>View all products</button>
+          <button type="button" onClick={() => onNavigate("shop")}>Shop all products <ArrowRight aria-hidden="true" /></button>
         </div>
         {featured.isPending ? (
-          <div className="preview-featured-grid" role="status">
+          <div className="preview-featured-grid preview-home-product-grid" role="status" aria-label="Loading featured products">
             {[0, 1, 2, 3].map((item) => <div className="preview-featured-skeleton" key={item} />)}
           </div>
         ) : featured.isError ? (
           <div className="preview-featured-state" role="alert">
-            <p>The collection could not be loaded.</p>
+            <p>The collection could not be loaded just now.</p>
             <button type="button" onClick={() => void featured.refetch()}>Try again</button>
           </div>
         ) : featured.data.products.length === 0 ? (
-          <div className="preview-featured-state">Products are being updated. Please check back soon.</div>
+          <div className="preview-featured-state" role="status">Our range is being updated. Please check back soon.</div>
         ) : (
-          <div className="preview-featured-grid">
+          <div className="preview-featured-grid preview-home-product-grid">
             {featured.data.products.map((product) => {
-              const image = getAllowedProductImageUrls(product.imageReferences)[0];
               return (
                 <article className="preview-featured-card" key={product.id}>
-                  <button type="button" onClick={() => onNavigate("shop")} className="preview-featured-image-button">
-                    {image ? (
-                      <img src={image} alt={product.name} loading="lazy" />
-                    ) : (
-                      <span>Image unavailable</span>
-                    )}
+                  <button
+                    type="button"
+                    onClick={() => onSelectProduct(product.slug)}
+                    className="preview-featured-image-button"
+                    aria-label={`View ${product.name} details`}
+                  >
+                    <PreviewHomeProductImage product={product} />
                   </button>
                   <p>{product.category.name}</p>
-                  <h3>{product.name}</h3>
+                  <button
+                    type="button"
+                    className="preview-home-product-name"
+                    onClick={() => onSelectProduct(product.slug)}
+                  >
+                    {product.name}
+                  </button>
                   <strong>{formatZarCents(product.priceCents)}</strong>
+                  <CartAddButton productId={product.id} quantity={1}>
+                    Add to bag
+                  </CartAddButton>
                 </article>
               );
             })}
@@ -523,13 +654,62 @@ function PreviewHome({ onNavigate }: { onNavigate: (view: PreviewView) => void }
         )}
       </section>
 
-      <section className="preview-support">
-        <div>
-          <p className="preview-section-kicker">Personal support</p>
-          <h2>Questions along the way?</h2>
+      <section className="preview-home-ingredients" id="preview-ingredients" aria-labelledby="preview-ingredients-title">
+        <div className="preview-home-section-heading">
+          <p className="preview-section-kicker">Ingredient notes</p>
+          <h2 id="preview-ingredients-title">Get to know what’s in the range.</h2>
+          <p>
+            A starting point for learning about ingredients—not medical advice. Always read the
+            product label and consult a qualified healthcare professional with personal questions.
+          </p>
         </div>
-        <p>Our team is available for product guidance and help with your order.</p>
-        <ContactActions />
+        <ul className="preview-home-ingredient-list">
+          {["Lion’s Mane", "Ashwagandha", "Magnesium Glycinate", "Moringa", "Collagen"].map(
+            (ingredient, index) => (
+              <li key={ingredient}>
+                <span>0{index + 1}</span>
+                <h3>{ingredient}</h3>
+                <p>Explore ingredient details and read product information before choosing.</p>
+              </li>
+            ),
+          )}
+        </ul>
+        <Button variant="outline" onClick={() => onNavigate("journal")}>
+          Discover wellness education <ArrowRight aria-hidden="true" />
+        </Button>
+      </section>
+
+      <section className="preview-home-story" aria-labelledby="preview-story-title">
+        <figure className="preview-home-story-image">
+          <img src="/images/botanical-hero.webp" alt="Botanical leaves in soft natural light" loading="lazy" />
+        </figure>
+        <div className="preview-home-story-copy">
+          <p className="preview-section-kicker">Our story</p>
+          <h2 id="preview-story-title">A considered approach to everyday wellness.</h2>
+          <p>
+            The Healthy Ways SA journey is grounded in thoughtful product selection, clear
+            information and personal care. We believe everyday wellness should feel considered,
+            understandable and personal.
+          </p>
+          <button type="button" className="preview-home-text-link" onClick={() => onNavigate("about")}>
+            Get to know us <ArrowRight aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+
+      <section className="preview-home-community" aria-labelledby="preview-community-title">
+        <p className="preview-section-kicker">Keep discovering</p>
+        <h2 id="preview-community-title">Wellness is personal. Learning can be shared.</h2>
+        <p>
+          Find practical notes on mindful routines, reading product labels and knowing when to ask
+          for qualified advice.
+        </p>
+        <div className="preview-home-community-actions">
+          <Button onClick={() => onNavigate("journal")}>Explore Discover <ArrowRight aria-hidden="true" /></Button>
+          <button type="button" className="preview-home-text-link" onClick={() => onNavigate("contact")}>
+            Talk to our team
+          </button>
+        </div>
       </section>
     </main>
   );

@@ -61,6 +61,21 @@ function installCartApi({
       return jsonResponse({ csrfToken: "test-csrf-token" });
     }
 
+    if (url.pathname.endsWith("/auth/me")) {
+      return jsonResponse({
+        status: "authenticated",
+        user: {
+          id: "507f1f77bcf86cd799439012",
+          email: "customer@example.com",
+          emailVerified: true,
+          roles: ["customer"],
+          addresses: [],
+          createdAt: "2025-01-01T00:00:00.000Z",
+          updatedAt: "2025-01-01T00:00:00.000Z",
+        },
+      });
+    }
+
     if (url.pathname.endsWith("/cart") && method === "GET") {
       cartReadCount += 1;
       if (failFirstCartRead && cartReadCount === 1) {

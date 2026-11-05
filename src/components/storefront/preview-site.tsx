@@ -3,7 +3,7 @@ import { ArrowDown, ArrowRight, Menu, Search, ShoppingBag, UserRound, X } from "
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdminPanel } from "@/components/storefront/admin";
-import { CartAddButton, CartPage, CartSheet, CartTrigger } from "@/components/storefront/cart";
+import { CartAddButton, CartPage, CartSheet, CartTrigger, useOptionalCart } from "@/components/storefront/cart";
 import { Catalogue } from "@/components/storefront/catalogue";
 import { Button } from "@/components/ui/button";
 import {
@@ -159,6 +159,7 @@ function SiteFrame({
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
 }) {
   const isAdmin = user ? isAdminUser(user) : false;
+  const cart = useOptionalCart();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigateFromHeader = (view: PreviewView) => {
     setMobileMenuOpen(false);
@@ -176,6 +177,7 @@ function SiteFrame({
             className={`preview-nav${mobileMenuOpen ? " is-open" : ""}`}
             aria-label="Main navigation"
           >
+            <button type="button" onClick={() => navigateFromHeader("home")}>Home</button>
             <button type="button" onClick={() => navigateFromHeader("shop")}>Shop</button>
             <button type="button" onClick={() => navigateFromHeader("journal")}>Discover</button>
             <button type="button" onClick={() => navigateFromHeader("about")}>Our Story</button>
@@ -204,10 +206,13 @@ function SiteFrame({
             <button
               type="button"
               className="preview-icon-button preview-cart-link"
-              aria-label="Shopping bag"
+              aria-label={cart?.totalQuantity ? `Shopping bag, ${cart.totalQuantity} items` : "Shopping bag"}
               onClick={() => navigateFromHeader("cart")}
             >
               <ShoppingBag aria-hidden="true" />
+              {cart && cart.totalQuantity > 0 ? (
+                <span className="preview-header-cart-count" aria-hidden="true">{cart.totalQuantity}</span>
+              ) : null}
             </button>
             {isAdmin ? (
               <button type="button" className="preview-account-link" onClick={() => navigateFromHeader("admin")}>
@@ -518,6 +523,30 @@ function PreviewHome({
   onNavigate: (view: PreviewView) => void;
   onSelectProduct: (slug: string) => void;
 }) {
+  const [selectedIngredient, setSelectedIngredient] = useState("Lion’s Mane");
+  const [breathingActive, setBreathingActive] = useState(false);
+  useEffect(() => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const sections = document.querySelectorAll<HTMLElement>(".preview-home .preview-reveal");
+    if (reducedMotion || !("IntersectionObserver" in window)) {
+      sections.forEach((section) => section.classList.add("is-visible"));
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.12 },
+    );
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
   const featured = useQuery({
     queryKey: ["preview-home-featured"],
     queryFn: () => catalogueApi.getProducts({
@@ -527,55 +556,91 @@ function PreviewHome({
       sortOrder: "asc",
     }),
   });
-  const [selectedGoal, setSelectedGoal] = useState("Everyday wellbeing");
+  const [selectedGoal, setSelectedGoal] = useState("Everyday wellness");
   const goals = [
-    "Everyday wellbeing",
-    "Calm moments",
-    "Focus & clarity",
-    "Energy & vitality",
-    "Healthy routines",
+    "Calm",
+    "Focus",
+    "Everyday wellness",
+    "Vitality",
+    "Rest & recovery",
   ];
   const goalDescriptions: Record<string, string> = {
-    "Everyday wellbeing": "Explore small, considered choices that can support a mindful daily routine.",
-    "Calm moments": "Learn about everyday practices that make room for rest and a slower pace.",
-    "Focus & clarity": "Discover ways to create a more intentional environment for your daily tasks.",
-    "Energy & vitality": "Explore the foundations of feeling well, including rest, nourishment and movement.",
-    "Healthy routines": "Find approachable ideas for building habits that fit your own life.",
+    Calm: "A quiet moment can begin with a slower breath, a simple ritual or a little more room in the day.",
+    Focus: "Explore practical ways to shape a more intentional space for the task in front of you.",
+    "Everyday wellness": "Build from the basics that fit your life: nourishment, movement, rest and connection.",
+    Vitality: "Consider the everyday routines that help you feel engaged with the things that matter.",
+    "Rest & recovery": "Make space for rest as part of a balanced routine, and seek qualified advice when needed.",
   };
+  const ingredients = [
+    {
+      name: "Lion’s Mane",
+      type: "Mushroom",
+      description: "A distinctive edible mushroom. Product labels can clarify the part used, preparation and other ingredients.",
+    },
+    {
+      name: "Ashwagandha",
+      type: "Botanical",
+      description: "A plant in the nightshade family. Check each product label for the form used and relevant cautions.",
+    },
+    {
+      name: "Magnesium Glycinate",
+      type: "Mineral form",
+      description: "A form of magnesium paired with glycine. Compare the label for the amount of elemental magnesium per serving.",
+    },
+    {
+      name: "Moringa",
+      type: "Botanical",
+      description: "A plant used in foods and ingredient preparations. The product label explains its form and composition.",
+    },
+    {
+      name: "Collagen",
+      type: "Protein",
+      description: "A structural protein used as an ingredient. Check the source and allergen information on the product label.",
+    },
+  ];
+  const activeIngredient = ingredients.find(({ name }) => name === selectedIngredient) ?? ingredients[0];
 
   return (
     <main className="preview-home">
-      <section className="preview-home-hero" aria-labelledby="preview-home-title">
+      <section className={`preview-home-hero${breathingActive ? " is-breathing" : ""}`} aria-labelledby="preview-home-title">
+        <img
+          src="/images/botanical-hero.webp"
+          alt=""
+          className="preview-home-hero-image"
+          fetchPriority="high"
+        />
+        <div className="preview-home-hero-shade" aria-hidden="true" />
         <div className="preview-home-hero-content">
-          <p className="preview-home-eyebrow">Healthy Ways SA · Everyday wellness</p>
-          <h1 id="preview-home-title">Make space for feeling well.</h1>
+          <p className="preview-home-eyebrow">Healthy Ways SA · A more intentional everyday</p>
+          <h1 id="preview-home-title">Find your natural rhythm.</h1>
           <p className="preview-home-hero-copy">
-            Thoughtful wellness for everyday life, with considered products and clear information
-            to help you choose at your own pace.
+            Thoughtfully selected wellness essentials to support a more intentional everyday.
           </p>
           <div className="preview-home-actions">
             <Button onClick={() => onNavigate("shop")}>
-              Shop supplements <ArrowRight aria-hidden="true" />
+              Explore the collection <ArrowRight aria-hidden="true" />
             </Button>
             <a className="preview-home-text-link" href="#preview-ingredients">
               Discover our ingredients <ArrowDown aria-hidden="true" />
             </a>
           </div>
+          <button
+            type="button"
+            className="preview-home-breathing-toggle"
+            aria-pressed={breathingActive}
+            onClick={() => setBreathingActive((active) => !active)}
+          >
+            <span className="preview-home-breathing-orbit" aria-hidden="true" />
+            {breathingActive ? "Pause the breathing rhythm" : "Find a breathing rhythm"}
+          </button>
         </div>
-        <figure className="preview-home-hero-visual">
-          <img
-            src="/images/botanical-hero.webp"
-            alt="Sunlight falling across green botanical leaves"
-            fetchPriority="high"
-          />
-          <figcaption>Rooted in nature. Made for your wellbeing.</figcaption>
-        </figure>
+        <p className="preview-home-hero-caption">A little closer to nature, a little closer to yourself.</p>
       </section>
 
-      <section className="preview-home-goals" aria-labelledby="preview-goals-title">
+      <section className="preview-home-goals preview-reveal" aria-labelledby="preview-goals-title">
         <div className="preview-home-section-heading">
           <p className="preview-section-kicker">A place to begin</p>
-          <h2 id="preview-goals-title">What does wellbeing mean to you?</h2>
+          <h2 id="preview-goals-title">How would you like to feel?</h2>
           <p>
             Explore the routines and questions that matter to you. These themes are for discovery,
             not product recommendations or promises of an outcome.
@@ -590,20 +655,19 @@ function PreviewHome({
               aria-pressed={selectedGoal === goal}
               onClick={() => setSelectedGoal(goal)}
             >
-              <span>0{index + 1}</span>
-              {goal}
+              <span className="preview-home-goal-number">0{index + 1}</span>
+              <span className="preview-home-goal-label">{goal}</span>
               <ArrowRight aria-hidden="true" />
             </button>
           ))}
         </div>
-        <p className="preview-home-goal-note" aria-live="polite">
-          <strong>{selectedGoal}.</strong> {goalDescriptions[selectedGoal]} Start with ingredient
-          information and product labels, and ask a qualified professional when you need personal
-          health advice.
-        </p>
+        <div className="preview-home-goal-note" aria-live="polite" key={selectedGoal}>
+          <span className="preview-home-note-index">A note on {selectedGoal.toLowerCase()}</span>
+          <p>{goalDescriptions[selectedGoal]}</p>
+        </div>
       </section>
 
-      <section className="preview-featured preview-home-products" aria-labelledby="preview-featured-title">
+      <section className="preview-featured preview-home-products preview-reveal" aria-labelledby="preview-featured-title">
         <div className="preview-featured-heading preview-home-section-heading">
           <div>
             <p className="preview-section-kicker">The collection</p>
@@ -654,34 +718,52 @@ function PreviewHome({
         )}
       </section>
 
-      <section className="preview-home-ingredients" id="preview-ingredients" aria-labelledby="preview-ingredients-title">
-        <div className="preview-home-section-heading">
-          <p className="preview-section-kicker">Ingredient notes</p>
-          <h2 id="preview-ingredients-title">Get to know what’s in the range.</h2>
+      <section className="preview-home-ingredients preview-reveal" id="preview-ingredients" aria-labelledby="preview-ingredients-title">
+        <div className="preview-home-ingredient-intro">
+          <p className="preview-section-kicker">The language of ingredients</p>
+          <h2 id="preview-ingredients-title">Curiosity is a good place to start.</h2>
           <p>
-            A starting point for learning about ingredients—not medical advice. Always read the
-            product label and consult a qualified healthcare professional with personal questions.
+            Take a closer look at some of the ingredients in our range. Clear labels and reliable
+            information help you make choices that are right for you.
+          </p>
+          <p className="preview-home-ingredient-disclaimer">
+            General ingredient information only. It is not medical advice and does not describe
+            every product formulation.
           </p>
         </div>
-        <ul className="preview-home-ingredient-list">
-          {["Lion’s Mane", "Ashwagandha", "Magnesium Glycinate", "Moringa", "Collagen"].map(
-            (ingredient, index) => (
-              <li key={ingredient}>
-                <span>0{index + 1}</span>
-                <h3>{ingredient}</h3>
-                <p>Explore ingredient details and read product information before choosing.</p>
-              </li>
-            ),
-          )}
-        </ul>
-        <Button variant="outline" onClick={() => onNavigate("journal")}>
-          Discover wellness education <ArrowRight aria-hidden="true" />
-        </Button>
+        <div className="preview-home-ingredient-explorer">
+          <div className="preview-home-ingredient-tabs" role="group" aria-label="Explore ingredients">
+            {ingredients.map(({ name }, index) => (
+              <button
+                type="button"
+                aria-pressed={selectedIngredient === name}
+                key={name}
+                onClick={() => setSelectedIngredient(name)}
+              >
+                <span>0{index + 1}</span>{name}
+              </button>
+            ))}
+          </div>
+          <div
+            className="preview-home-ingredient-detail"
+            id="preview-ingredient-detail"
+            aria-live="polite"
+            key={activeIngredient.name}
+          >
+            <span className="preview-home-ingredient-type">{activeIngredient.type}</span>
+            <h3>{activeIngredient.name}</h3>
+            <p>{activeIngredient.description}</p>
+            <button type="button" className="preview-home-text-link" onClick={() => onNavigate("shop")}>
+              Browse the range <ArrowRight aria-hidden="true" />
+            </button>
+          </div>
+        </div>
       </section>
 
-      <section className="preview-home-story" aria-labelledby="preview-story-title">
+      <section className="preview-home-story preview-reveal" aria-labelledby="preview-story-title">
         <figure className="preview-home-story-image">
-          <img src="/images/botanical-hero.webp" alt="Botanical leaves in soft natural light" loading="lazy" />
+          <img src="/images/botanical-hero.webp" alt="Olive-toned botanical branches against warm light" loading="lazy" />
+          <figcaption>Rooted in nature. Made for your wellbeing.</figcaption>
         </figure>
         <div className="preview-home-story-copy">
           <p className="preview-section-kicker">Our story</p>
@@ -697,7 +779,7 @@ function PreviewHome({
         </div>
       </section>
 
-      <section className="preview-home-community" aria-labelledby="preview-community-title">
+      <section className="preview-home-community preview-reveal" aria-labelledby="preview-community-title">
         <p className="preview-section-kicker">Keep discovering</p>
         <h2 id="preview-community-title">Wellness is personal. Learning can be shared.</h2>
         <p>

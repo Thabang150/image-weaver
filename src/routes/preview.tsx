@@ -167,7 +167,7 @@ function Preview() {
         }}
         onNavigate={navigateTo}
         onSelectProduct={(slug) => {
-          void navigate({ search: { product: slug } });
+          void navigate({ search: { view: "shop", product: slug } });
         }}
         onBackToCatalogue={() => {
           void navigate({ search: {} });

@@ -2972,3 +2972,793 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+.healthyways-preview-scope .preview-header {
+  border-bottom-color: #e8e9e2;
+  background: #f7f7f2;
+}
+.healthyways-preview-scope .preview-header-inner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+}
+.healthyways-preview-scope .preview-brand {
+  justify-self: start;
+}
+.healthyways-preview-scope .preview-nav {
+  position: static;
+  justify-content: center;
+  gap: clamp(18px, 2.6vw, 38px);
+}
+.healthyways-preview-scope .preview-nav button {
+  padding: 10px 0;
+  color: #394238;
+  font-size: 12px;
+  letter-spacing: 0.025em;
+}
+.healthyways-preview-scope .preview-account-actions {
+  justify-self: end;
+}
+.healthyways-preview-scope .preview-icon-button {
+  position: relative;
+  border-radius: 0;
+}
+.healthyways-preview-scope .preview-header-cart-count {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 50%;
+  background: #52644f;
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 9px;
+  line-height: 1;
+}
+.healthyways-preview-scope .preview-menu-toggle {
+  display: none;
+}
+.healthyways-preview-scope .preview-home-hero {
+  position: relative;
+  display: flex;
+  min-height: min(690px, calc(100svh - 78px));
+  align-items: center;
+  max-width: none;
+  isolation: isolate;
+  overflow: hidden;
+  padding: clamp(76px, 10vw, 140px) clamp(24px, 9vw, 138px);
+  background: #344538;
+}
+.healthyways-preview-scope .preview-home-hero-image {
+  position: absolute;
+  inset: -2%;
+  z-index: -2;
+  width: 104%;
+  height: 104%;
+  object-fit: cover;
+  object-position: center 47%;
+  animation: preview-home-canopy-drift 32s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.healthyways-preview-scope .preview-home-hero-shade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgb(32 43 34 / 48%);
+}
+.healthyways-preview-scope .preview-home-hero-content {
+  width: min(720px, 100%);
+  margin: 0;
+  padding: 0;
+}
+.healthyways-preview-scope .preview-home-eyebrow,
+.healthyways-preview-scope .preview-home-hero .preview-section-kicker {
+  margin: 0 0 22px;
+  color: #e0e6dc;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+}
+.healthyways-preview-scope .preview-home-hero h1 {
+  max-width: 700px;
+  margin: 0;
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: clamp(68px, 9.2vw, 126px);
+  font-weight: 400;
+  letter-spacing: -0.035em;
+  line-height: 0.88;
+}
+.healthyways-preview-scope .preview-home-hero-copy {
+  max-width: 475px;
+  margin: 28px 0 0;
+  color: #f5f5ee;
+  font-family: var(--font-sans);
+  font-size: clamp(14px, 1.45vw, 17px);
+  line-height: 1.75;
+}
+.healthyways-preview-scope .preview-home-actions {
+  align-items: center;
+  gap: 26px;
+  margin-top: 32px;
+}
+.healthyways-preview-scope .preview-home-actions > button {
+  min-height: 50px;
+  border: 1px solid #f7f7f2;
+  border-radius: 0;
+  background: #f7f7f2;
+  padding: 0 22px;
+  color: #344538;
+  font-size: 12px;
+  letter-spacing: 0.015em;
+  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+.healthyways-preview-scope .preview-home-actions > button:hover {
+  transform: translateY(-2px);
+  background: #d9dfd2;
+}
+.healthyways-preview-scope .preview-home-hero .preview-home-text-link {
+  color: #fff;
+}
+.healthyways-preview-scope .preview-home-hero .preview-home-text-link:hover {
+  color: #d9dfd2;
+}
+.healthyways-preview-scope .preview-home-hero-caption {
+  position: absolute;
+  right: clamp(24px, 4vw, 60px);
+  bottom: 24px;
+  margin: 0;
+  color: rgb(255 255 255 / 84%);
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.healthyways-preview-scope .preview-home-breathing-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 44px;
+  border: 0;
+  background: transparent;
+  padding: 6px 0;
+  color: #f3f4ed;
+  font-size: 11px;
+  letter-spacing: 0.035em;
+  cursor: pointer;
+}
+.healthyways-preview-scope .preview-home-breathing-orbit {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid #d9dfd2;
+  border-radius: 50%;
+  transition: transform 300ms ease, background-color 300ms ease;
+}
+.healthyways-preview-scope .preview-home-breathing-toggle[aria-pressed="true"] .preview-home-breathing-orbit {
+  transform: scale(1.45);
+  background: #d9dfd2;
+  animation: preview-home-breath 6s ease-in-out infinite;
+}
+.healthyways-preview-scope .preview-home-hero.is-breathing .preview-home-hero-image {
+  animation: preview-home-breath 8s ease-in-out infinite;
+}
+.healthyways-preview-scope .preview-home-goals {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  column-gap: clamp(36px, 8vw, 120px);
+  align-items: start;
+  padding: clamp(64px, 8vw, 108px) clamp(24px, 9vw, 138px);
+  background: #f7f7f2;
+}
+.healthyways-preview-scope .preview-home-goals .preview-home-section-heading {
+  position: sticky;
+  top: 112px;
+  margin: 0;
+  text-align: left;
+}
+.healthyways-preview-scope .preview-home-section-heading h2,
+.healthyways-preview-scope .preview-home-story-copy h2,
+.healthyways-preview-scope .preview-home-community h2,
+.healthyways-preview-scope .preview-home-ingredient-intro h2 {
+  color: #292d28;
+  font-family: var(--font-display);
+  font-size: clamp(39px, 5vw, 66px);
+  font-weight: 400;
+  letter-spacing: -0.035em;
+  line-height: 0.98;
+}
+.healthyways-preview-scope .preview-home-goals .preview-home-section-heading > p:last-child,
+.healthyways-preview-scope .preview-home-ingredient-intro > p,
+.healthyways-preview-scope .preview-home-story-copy > p:not(.preview-section-kicker),
+.healthyways-preview-scope .preview-home-community > p:not(.preview-section-kicker) {
+  margin: 19px 0 0;
+  color: #626a60;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.85;
+}
+.healthyways-preview-scope .preview-home-goal-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  max-width: none;
+  margin: 0;
+  border-top: 1px solid #d9dfd2;
+  border-bottom: 0;
+}
+.healthyways-preview-scope .preview-home-goal {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 24px;
+  min-height: 76px;
+  align-items: center;
+  justify-content: initial;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid #d9dfd2;
+  background: transparent;
+  padding: 14px 12px;
+  color: #344538;
+  font-size: clamp(21px, 2.4vw, 30px);
+  transition: padding 220ms ease, background-color 220ms ease;
+}
+.healthyways-preview-scope .preview-home-goal:hover,
+.healthyways-preview-scope .preview-home-goal.is-selected {
+  padding-inline: 20px;
+  background: #e9ede5;
+}
+.healthyways-preview-scope .preview-home-goal .preview-home-goal-number {
+  color: #899985;
+  font-family: var(--font-sans);
+  font-size: 10px;
+}
+.healthyways-preview-scope .preview-home-goal .preview-home-goal-label {
+  justify-self: start;
+}
+.healthyways-preview-scope .preview-home-goal svg {
+  justify-self: end;
+  transition: transform 220ms ease;
+}
+.healthyways-preview-scope .preview-home-goal.is-selected svg {
+  transform: translateX(4px);
+}
+.healthyways-preview-scope .preview-home-goal-note {
+  grid-column: 2;
+  min-height: 94px;
+  margin: 20px 12px 0;
+  padding-left: 54px;
+  text-align: left;
+  animation: preview-home-note-in 280ms ease both;
+}
+.healthyways-preview-scope .preview-home-note-index {
+  color: #899985;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.healthyways-preview-scope .preview-home-goal-note p {
+  max-width: 510px;
+  margin: 7px 0 0;
+  color: #626a60;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.healthyways-preview-scope .preview-home-products {
+  max-width: none;
+  padding: clamp(68px, 8vw, 110px) clamp(24px, 9vw, 138px);
+  background: #fff;
+}
+.healthyways-preview-scope .preview-home-products .preview-featured-heading {
+  align-items: end;
+  max-width: 1440px;
+  margin: 0 auto 34px;
+  text-align: left;
+}
+.healthyways-preview-scope .preview-home-products .preview-section-kicker {
+  margin-bottom: 12px;
+}
+.healthyways-preview-scope .preview-home-products .preview-home-section-heading h2 {
+  font-size: clamp(40px, 5.2vw, 68px);
+}
+.healthyways-preview-scope .preview-home-products .preview-featured-heading > button {
+  border: 0;
+  border-bottom: 1px solid #899985;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 0;
+  color: #344538;
+  font-size: 12px;
+  font-weight: 500;
+}
+.healthyways-preview-scope .preview-home-product-grid {
+  max-width: 1440px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(14px, 2.3vw, 34px);
+  margin: 0 auto;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-image-button {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 0.88;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: #f3f4ef;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-image-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 500ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-image-button:hover img {
+  transform: scale(1.04);
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card > p {
+  margin: 18px 0 7px;
+  color: #899985;
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.healthyways-preview-scope .preview-home-product-name {
+  min-height: 48px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #292d28;
+  font-family: var(--font-display);
+  font-size: 23px;
+  line-height: 1.12;
+  text-align: left;
+  cursor: pointer;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card > strong {
+  margin: 10px 0 0;
+  color: #344538;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card > button:last-child {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 16px;
+  border: 1px solid #344538;
+  border-radius: 0;
+  background: transparent;
+  color: #344538;
+  font-size: 11px;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card > button:last-child:hover {
+  background: #344538;
+  color: #fff;
+}
+.healthyways-preview-scope .preview-home-ingredients {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: clamp(36px, 8vw, 120px);
+  padding: clamp(68px, 8vw, 112px) clamp(24px, 9vw, 138px);
+  background: #e9ede5;
+}
+.healthyways-preview-scope .preview-home-ingredient-intro {
+  position: sticky;
+  top: 112px;
+}
+.healthyways-preview-scope .preview-home-ingredient-intro h2 {
+  margin: 0;
+}
+.healthyways-preview-scope .preview-home-ingredient-intro .preview-home-ingredient-disclaimer {
+  margin-top: 20px;
+  border-left: 2px solid #899985;
+  padding-left: 13px;
+  font-size: 11px;
+}
+.healthyways-preview-scope .preview-home-ingredient-explorer {
+  min-width: 0;
+  border-top: 1px solid #c5cec0;
+}
+.healthyways-preview-scope .preview-home-ingredient-tabs {
+  display: flex;
+  flex-direction: column;
+}
+.healthyways-preview-scope .preview-home-ingredient-tabs button {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+  border: 0;
+  border-bottom: 1px solid #c5cec0;
+  background: transparent;
+  padding: 10px 12px;
+  color: #344538;
+  font-family: var(--font-display);
+  font-size: clamp(19px, 2vw, 26px);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 180ms ease, padding 180ms ease;
+}
+.healthyways-preview-scope .preview-home-ingredient-tabs button:hover,
+.healthyways-preview-scope .preview-home-ingredient-tabs button[aria-selected="true"] {
+  background: rgb(255 255 255 / 45%);
+  padding-inline: 19px;
+}
+.healthyways-preview-scope .preview-home-ingredient-tabs button > span {
+  color: #899985;
+  font-family: var(--font-sans);
+  font-size: 10px;
+}
+.healthyways-preview-scope .preview-home-ingredient-detail {
+  min-height: 218px;
+  padding: 26px 12px 10px 64px;
+  animation: preview-home-note-in 280ms ease both;
+}
+.healthyways-preview-scope .preview-home-ingredient-type {
+  color: #71806e;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.healthyways-preview-scope .preview-home-ingredient-detail h3 {
+  margin: 9px 0 8px;
+  color: #292d28;
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 400;
+}
+.healthyways-preview-scope .preview-home-ingredient-detail p {
+  max-width: 490px;
+  margin: 0;
+  color: #596356;
+  font-size: 13px;
+  line-height: 1.75;
+}
+.healthyways-preview-scope .preview-home-ingredient-detail .preview-home-text-link {
+  margin-top: 13px;
+}
+.healthyways-preview-scope .preview-home-story {
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+  max-width: 1440px;
+  gap: clamp(42px, 9vw, 132px);
+  padding: clamp(76px, 10vw, 140px) clamp(24px, 9vw, 138px);
+}
+.healthyways-preview-scope .preview-home-story-image {
+  position: relative;
+  padding: 0 0 22px 22px;
+}
+.healthyways-preview-scope .preview-home-story-image::before {
+  position: absolute;
+  inset: 22px 0 0 0;
+  z-index: 0;
+  border: 1px solid #d9dfd2;
+  content: "";
+}
+.healthyways-preview-scope .preview-home-story-image img {
+  position: relative;
+  z-index: 1;
+  height: clamp(330px, 43vw, 560px);
+  object-position: 28% center;
+}
+.healthyways-preview-scope .preview-home-story-image figcaption {
+  position: relative;
+  z-index: 1;
+  margin-top: 10px;
+  color: #747a70;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-align: right;
+  text-transform: uppercase;
+}
+.healthyways-preview-scope .preview-home-story-copy h2 {
+  margin: 0;
+}
+.healthyways-preview-scope .preview-home-story-copy .preview-home-text-link {
+  margin-top: 17px;
+}
+.healthyways-preview-scope .preview-home-community {
+  padding: clamp(64px, 8vw, 105px) 24px;
+  background: #344538;
+  text-align: center;
+}
+.healthyways-preview-scope .preview-home-community .preview-section-kicker {
+  color: #d9dfd2;
+}
+.healthyways-preview-scope .preview-home-community h2 {
+  max-width: 850px;
+  margin: 0 auto;
+  color: #fff;
+}
+.healthyways-preview-scope .preview-home-community > p:not(.preview-section-kicker) {
+  max-width: 590px;
+  color: #e3e7df;
+}
+.healthyways-preview-scope .preview-home-community-actions {
+  margin-top: 27px;
+}
+.healthyways-preview-scope .preview-home-community-actions > button {
+  border-radius: 0;
+  background: #f7f7f2;
+  color: #344538;
+}
+.healthyways-preview-scope .preview-home-community .preview-home-text-link {
+  color: #fff;
+}
+.healthyways-preview-scope .preview-reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 650ms ease, transform 650ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.healthyways-preview-scope .preview-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.healthyways-preview-scope .preview-footer {
+  background: #292d28;
+}
+.healthyways-preview-scope .preview-footer-inner {
+  grid-template-columns: 160px 1fr auto;
+  padding: 32px clamp(24px, 7vw, 104px);
+}
+.healthyways-preview-scope .preview-footer-brand {
+  filter: brightness(0) invert(1);
+}
+@keyframes preview-home-canopy-drift {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.045);
+  }
+}
+@keyframes preview-home-breath {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+@keyframes preview-home-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 900px) {
+  .healthyways-preview-scope .preview-header-inner {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 10px;
+  }
+  .healthyways-preview-scope .preview-nav {
+    gap: 16px;
+  }
+  .healthyways-preview-scope .preview-account-actions {
+    gap: 4px;
+  }
+  .healthyways-preview-scope .preview-home-goals,
+  .healthyways-preview-scope .preview-home-ingredients {
+    grid-template-columns: minmax(200px, 0.75fr) minmax(0, 1.25fr);
+    column-gap: 38px;
+  }
+  .healthyways-preview-scope .preview-home-product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .healthyways-preview-scope .preview-home-story {
+    gap: 46px;
+  }
+}
+@media (max-width: 680px) {
+  .healthyways-preview-scope .preview-header-inner {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    min-height: 66px;
+    padding: 8px 18px;
+  }
+  .healthyways-preview-scope .preview-brand-image {
+    width: 138px;
+    height: 42px;
+  }
+  .healthyways-preview-scope .preview-account-actions {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+  }
+  .healthyways-preview-scope .preview-search-link,
+  .healthyways-preview-scope .preview-account-link,
+  .healthyways-preview-scope .preview-signout {
+    display: none !important;
+  }
+  .healthyways-preview-scope .preview-cart-link {
+    width: 42px;
+  }
+  .healthyways-preview-scope .preview-menu-toggle {
+    display: inline-flex;
+    grid-column: 3;
+    grid-row: 1;
+    width: 42px;
+    height: 42px;
+  }
+  .healthyways-preview-scope .preview-nav {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    z-index: 25;
+    display: none;
+    align-items: stretch;
+    gap: 0;
+    border-top: 1px solid #e1e4dc;
+    background: #f7f7f2;
+    padding: 8px 22px 18px;
+  }
+  .healthyways-preview-scope .preview-nav.is-open {
+    display: flex;
+    flex-direction: column;
+  }
+  .healthyways-preview-scope .preview-nav button {
+    min-height: 48px;
+    border-bottom: 1px solid #e1e4dc;
+    text-align: left;
+  }
+  .healthyways-preview-scope .preview-home-hero {
+    min-height: 660px;
+    min-height: min(760px, calc(100svh - 66px));
+    align-items: flex-end;
+    padding: 70px 23px 76px;
+  }
+  .healthyways-preview-scope .preview-home-hero-image {
+    object-position: 52% center;
+  }
+  .healthyways-preview-scope .preview-home-hero-shade {
+    background: rgb(32 43 34 / 54%);
+  }
+  .healthyways-preview-scope .preview-home-hero h1 {
+    max-width: 560px;
+    font-size: clamp(60px, 15vw, 92px);
+  }
+  .healthyways-preview-scope .preview-home-hero-copy {
+    max-width: 390px;
+    margin-top: 20px;
+    font-size: 14px;
+  }
+  .healthyways-preview-scope .preview-home-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .healthyways-preview-scope .preview-home-breathing-toggle {
+    margin-top: 26px;
+  }
+  .healthyways-preview-scope .preview-home-hero-caption {
+    right: 22px;
+    bottom: 16px;
+    max-width: 180px;
+    font-size: 8px;
+    line-height: 1.5;
+    text-align: right;
+  }
+  .healthyways-preview-scope .preview-home-goals,
+  .healthyways-preview-scope .preview-home-ingredients {
+    grid-template-columns: 1fr;
+    gap: 30px;
+    padding: 58px 22px;
+  }
+  .healthyways-preview-scope .preview-home-goals .preview-home-section-heading,
+  .healthyways-preview-scope .preview-home-ingredient-intro {
+    position: static;
+  }
+  .healthyways-preview-scope .preview-home-section-heading h2,
+  .healthyways-preview-scope .preview-home-story-copy h2,
+  .healthyways-preview-scope .preview-home-community h2,
+  .healthyways-preview-scope .preview-home-ingredient-intro h2 {
+    font-size: clamp(40px, 11vw, 56px);
+  }
+  .healthyways-preview-scope .preview-home-goal {
+    grid-template-columns: 32px minmax(0, 1fr) 20px;
+    min-height: 68px;
+    padding-inline: 8px;
+    font-size: 23px;
+  }
+  .healthyways-preview-scope .preview-home-goal:hover,
+  .healthyways-preview-scope .preview-home-goal.is-selected {
+    padding-inline: 14px;
+  }
+  .healthyways-preview-scope .preview-home-goal-note {
+    grid-column: 1;
+    min-height: 0;
+    margin: -12px 8px 0;
+    padding-left: 40px;
+  }
+  .healthyways-preview-scope .preview-home-products {
+    padding: 60px 20px;
+  }
+  .healthyways-preview-scope .preview-home-products .preview-featured-heading {
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 25px;
+  }
+  .healthyways-preview-scope .preview-home-products .preview-home-section-heading h2 {
+    font-size: 42px;
+  }
+  .healthyways-preview-scope .preview-home-products .preview-featured-heading > button {
+    flex: 0 0 auto;
+    margin-top: 27px;
+    font-size: 10px;
+  }
+  .healthyways-preview-scope .preview-home-product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px 13px;
+  }
+  .healthyways-preview-scope .preview-home-product-name {
+    min-height: 48px;
+    font-size: 20px;
+  }
+  .healthyways-preview-scope .preview-home-product-grid .preview-featured-card > button:last-child {
+    padding-inline: 8px;
+    font-size: 10px;
+  }
+  .healthyways-preview-scope .preview-home-ingredient-detail {
+    min-height: 190px;
+    padding: 24px 10px 4px 42px;
+  }
+  .healthyways-preview-scope .preview-home-story {
+    grid-template-columns: 1fr;
+    gap: 34px;
+    padding: 60px 22px;
+  }
+  .healthyways-preview-scope .preview-home-story-image {
+    padding-left: 14px;
+  }
+  .healthyways-preview-scope .preview-home-story-image img {
+    height: 340px;
+  }
+  .healthyways-preview-scope .preview-home-community {
+    padding: 62px 22px;
+  }
+  .healthyways-preview-scope .preview-home-community-actions {
+    gap: 12px;
+  }
+  .healthyways-preview-scope .preview-footer-inner {
+    grid-template-columns: 1fr;
+    justify-items: start;
+    gap: 20px;
+    padding: 32px 22px;
+    text-align: left;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .healthyways-preview-scope .preview-home-hero-image,
+  .healthyways-preview-scope .preview-home-hero.is-breathing .preview-home-hero-image,
+  .healthyways-preview-scope .preview-home-breathing-orbit,
+  .healthyways-preview-scope .preview-home-goal-note,
+  .healthyways-preview-scope .preview-home-ingredient-detail {
+    animation: none !important;
+  }
+  .healthyways-preview-scope .preview-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

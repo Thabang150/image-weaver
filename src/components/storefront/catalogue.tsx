@@ -46,11 +46,15 @@ export function ProductPrice({
 }
 
 export function ProductStockNotice({ product }: { product: PublicProduct }) {
-  if (product.stockQuantity === undefined) return null;
-
   if (product.stockQuantity === 0) {
     return <p className="product-stock-notice product-stock-out">Out of stock</p>;
   }
+
+  if (product.isAvailable === false) {
+    return <p className="product-stock-notice product-stock-out">Currently unavailable</p>;
+  }
+
+  if (product.stockQuantity === undefined) return null;
 
   if (product.stockQuantity <= 5) {
     return <p className="product-stock-notice">Only {product.stockQuantity} left in stock</p>;
@@ -287,11 +291,16 @@ function ShopProductCard({
               ...(product.stockQuantity !== undefined
                 ? { stockQuantity: product.stockQuantity }
                 : {}),
+              ...(product.isAvailable !== undefined ? { isAvailable: product.isAvailable } : {}),
             }}
             quantity={1}
-            disabled={product.stockQuantity === 0}
+            disabled={product.stockQuantity === 0 || product.isAvailable === false}
           >
-            {product.stockQuantity === 0 ? "Out of stock" : "Add to cart"}
+            {product.stockQuantity === 0
+              ? "Out of stock"
+              : product.isAvailable === false
+                ? "Currently unavailable"
+                : "Add to cart"}
           </CartAddButton>
           <Button
             variant="ghost"
@@ -759,11 +768,21 @@ function ProductDetail({
                 ...(productQuery.data.product.stockQuantity !== undefined
                   ? { stockQuantity: productQuery.data.product.stockQuantity }
                   : {}),
+                ...(productQuery.data.product.isAvailable !== undefined
+                  ? { isAvailable: productQuery.data.product.isAvailable }
+                  : {}),
               }}
               quantity={1}
-              disabled={productQuery.data.product.stockQuantity === 0}
+              disabled={
+                productQuery.data.product.stockQuantity === 0 ||
+                productQuery.data.product.isAvailable === false
+              }
             >
-              {productQuery.data.product.stockQuantity === 0 ? "Out of stock" : "Add to cart"}
+              {productQuery.data.product.stockQuantity === 0
+                ? "Out of stock"
+                : productQuery.data.product.isAvailable === false
+                  ? "Currently unavailable"
+                  : "Add to cart"}
             </CartAddButton>
           </div>
           <p className="product-detail-note">

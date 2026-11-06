@@ -55,6 +55,7 @@ interface GuestCartProduct {
   slug: string;
   priceCents: number;
   stockQuantity?: number;
+  isAvailable?: boolean;
 }
 
 interface PendingGuestCartMerge {
@@ -283,6 +284,9 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
       try {
         if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
           throw new CartValidationError("Cart quantity must be between 1 and 99.");
+        }
+        if (product.isAvailable === false) {
+          throw new CartValidationError("This product is currently unavailable.");
         }
         const currentCart =
           mutationUserId === "anonymous"
@@ -643,6 +647,7 @@ function useCartLineViews(
       product?.salePriceCents !== undefined && priceCents === product.salePriceCents;
     const unavailable =
       !item.available ||
+      product?.isAvailable === false ||
       stockQuantity === 0 ||
       (stockQuantity !== undefined && item.quantity > stockQuantity) ||
       (query?.error instanceof ApiHttpError && query.error.status === 404);
@@ -651,6 +656,8 @@ function useCartLineViews(
         ? "Out of stock"
         : !item.available || (query?.error instanceof ApiHttpError && query.error.status === 404)
           ? "Currently unavailable"
+          : product?.isAvailable === false
+            ? "Currently unavailable"
           : stockQuantity !== undefined && item.quantity > stockQuantity
             ? `Only ${stockQuantity} left in stock. Reduce the quantity to continue.`
             : stockQuantity !== undefined && stockQuantity <= 5
@@ -1097,7 +1104,13 @@ export function CartAddButton({
       type="button"
       variant="secondary"
       className="w-full"
-      disabled={!cart || disabled || isBusy}
+      disabled={
+        !cart ||
+        disabled ||
+        isBusy ||
+        product.isAvailable === false ||
+        product.stockQuantity === 0
+      }
       aria-busy={isBusy}
       onClick={() => {
         if (!cart) return;

@@ -32,7 +32,7 @@ const productList = {
   pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
 };
 
-function withProductFields(fields: Partial<typeof product> = {}) {
+function withProductFields(fields: Record<string, unknown> = {}) {
   return { ...product, ...fields };
 }
 
@@ -143,6 +143,22 @@ describe("public catalogue", () => {
       await screen.findByText("Out of stock", { selector: ".product-stock-notice" }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Out of stock" })).toBeDisabled();
+  });
+
+  it("uses the backend availability flag without inferring stock quantity", async () => {
+    const unavailableProduct = withProductFields({ isAvailable: false });
+    installApi((url) => {
+      if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [category] });
+      return jsonResponse({
+        products: [unavailableProduct],
+        pagination: productList.pagination,
+      });
+    });
+    renderCatalogue();
+
+    expect(await screen.findByText("Currently unavailable", { selector: ".product-stock-notice" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Currently unavailable" })).toBeDisabled();
+    expect(screen.queryByText("Out of stock")).not.toBeInTheDocument();
   });
 
   it("rejects malformed sale prices and stock counts", async () => {

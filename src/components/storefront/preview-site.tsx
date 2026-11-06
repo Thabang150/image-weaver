@@ -946,11 +946,18 @@ function PreviewHome({
                       ...(product.stockQuantity !== undefined
                         ? { stockQuantity: product.stockQuantity }
                         : {}),
+                      ...(product.isAvailable !== undefined
+                        ? { isAvailable: product.isAvailable }
+                        : {}),
                     }}
                     quantity={1}
-                    disabled={product.stockQuantity === 0}
+                    disabled={product.stockQuantity === 0 || product.isAvailable === false}
                   >
-                    {product.stockQuantity === 0 ? "Out of stock" : "Add to bag"}
+                    {product.stockQuantity === 0
+                      ? "Out of stock"
+                      : product.isAvailable === false
+                        ? "Currently unavailable"
+                        : "Add to bag"}
                   </CartAddButton>
                 </article>
               );

@@ -23,6 +23,7 @@ export interface PublicProduct {
   priceCents: number;
   salePriceCents?: number;
   stockQuantity?: number;
+  isAvailable?: boolean;
   imageReferences: string[];
   shortDescription?: string;
   productForm?: "capsules";
@@ -108,6 +109,7 @@ function isPublicProduct(value: unknown): value is PublicProduct {
         value["salePriceCents"] >= value["priceCents"])) ||
     (value["stockQuantity"] !== undefined &&
       (!isSafeInteger(value["stockQuantity"]) || value["stockQuantity"] < 0)) ||
+    (value["isAvailable"] !== undefined && typeof value["isAvailable"] !== "boolean") ||
     !isStringArray(value["imageReferences"]) ||
     typeof value["createdAt"] !== "string" ||
     typeof value["updatedAt"] !== "string"

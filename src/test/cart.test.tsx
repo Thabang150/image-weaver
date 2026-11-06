@@ -191,7 +191,7 @@ function renderCart({
 }: {
   includeSecondProduct?: boolean;
   includeTestControls?: boolean;
-  cartProduct?: typeof product;
+  cartProduct?: typeof product & { isAvailable?: boolean; stockQuantity?: number };
 } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -435,6 +435,17 @@ describe("storefront cart", () => {
     expect(screen.getByRole("button", { name: "Remove Aloe product from cart" })).toBeEnabled();
   }, 15000);
 
+  it("does not submit an unavailable catalogue product", async () => {
+    const { fetcher } = installCartApi();
+    window.history.replaceState({}, "", "/preview");
+    renderCart({ cartProduct: { ...product, isAvailable: false } });
+
+    expect(await screen.findByRole("button", { name: "Add to cart" })).toBeDisabled();
+    expect(fetcher.mock.calls.some(([input, init]) =>
+      new URL(String(input)).pathname.endsWith("/cart/items") && init?.method === "POST",
+    )).toBe(false);
+  }, 15000);
+
   it("prevents duplicate adds while a cart mutation is pending", async () => {
     const { releaseAdd } = installCartApi({ delayAdd: true });
     renderCart();
@@ -630,5 +641,65 @@ describe("storefront cart", () => {
       authenticatedSession.user.id,
     ])?.items).toHaveLength(0);
     expect(backendCart.quantities.has(productId)).toBe(false);
+  }, 15000);
+
+  it("keeps authenticated products when adding, updating, and removing another item", async () => {
+    const backendCart = installGuestLifecycleApi({ initiallyAuthenticated: true });
+    window.history.replaceState({}, "", "/preview");
+    renderCart({ includeSecondProduct: true });
+
+    const addA = await screen.findByRole("button", { name: "Add to cart" });
+    await waitFor(() => expect(addA).toBeEnabled());
+    fireEvent.click(addA);
+    expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Product B" }));
+    expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
+    expect(await screen.findByText("Aloe product")).toBeVisible();
+    expect(screen.getByText("Chamomile product")).toBeVisible();
+    expect(backendCart.quantities.get(productId)).toBe(1);
+    expect(backendCart.quantities.get(secondProductId)).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Increase quantity for Aloe product" }));
+    await waitFor(() => expect(backendCart.quantities.get(productId)).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "Decrease quantity for Aloe product" }));
+    await waitFor(() => expect(backendCart.quantities.get(productId)).toBe(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Aloe product from cart" }));
+    await waitFor(() => expect(backendCart.quantities.has(productId)).toBe(false));
+    expect(backendCart.quantities.get(secondProductId)).toBe(1);
+    expect(screen.getByText("Chamomile product")).toBeVisible();
+
+    const addCalls = backendCart.fetcher.mock.calls.filter(
+      ([input, init]) =>
+        new URL(String(input)).pathname.endsWith("/cart/items") && init?.method === "POST",
+    );
+    expect(addCalls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { productId, quantity: 1 },
+      { productId: secondProductId, quantity: 1 },
+    ]);
+    expect(addCalls.every(([, init]) => init?.credentials === "include")).toBe(true);
+    expect(addCalls.every(([, init]) => new Headers(init?.headers).has("X-CSRF-Token"))).toBe(true);
+  }, 15000);
+
+  it("preserves existing authenticated cart lines when an add is rejected", async () => {
+    const backendCart = installGuestLifecycleApi({
+      initiallyAuthenticated: true,
+      initialQuantities: { [productId]: 1 },
+      failFirstAdd: true,
+    });
+    window.history.replaceState({}, "", "/preview");
+    renderCart({ includeSecondProduct: true });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open cart with 1 items" }));
+    expect(await screen.findByText("Aloe product")).toBeVisible();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Add Product B" }));
+
+    expect(await screen.findByText("Cart temporarily unavailable.")).toBeVisible();
+    expect(screen.getByText("Aloe product")).toBeVisible();
+    expect(backendCart.quantities.get(productId)).toBe(1);
+    expect(backendCart.quantities.has(secondProductId)).toBe(false);
   }, 15000);
 });

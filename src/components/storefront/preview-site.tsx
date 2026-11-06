@@ -248,17 +248,51 @@ function SiteFrame({
       {children}
       <footer className="preview-footer">
         <div className="preview-footer-inner">
-          <Brand className="preview-footer-brand" />
-          <nav className="preview-footer-links" aria-label="Footer navigation">
-            <button type="button" onClick={() => onNavigate("about")}>About</button>
-            <button type="button" onClick={() => onNavigate("faq")}>FAQ</button>
-            <button type="button" onClick={() => onNavigate("delivery")}>Delivery</button>
-            <button type="button" onClick={() => onNavigate("returns")}>Returns</button>
-            <button type="button" onClick={() => onNavigate("privacy")}>Privacy</button>
-            <button type="button" onClick={() => onNavigate("terms")}>Terms</button>
-          </nav>
-          <ContactActions />
-          <span>Rooted in nature. Made for your wellbeing.</span>
+          <div className="preview-footer-main">
+            <div className="preview-footer-brand-column">
+              <Brand className="preview-footer-brand" />
+              <p>Rooted in nature. Made for your wellbeing.</p>
+            </div>
+            <div className="preview-footer-columns">
+              <section className="preview-footer-column">
+                <h2 className="preview-footer-heading">Explore</h2>
+                <nav className="preview-footer-links" aria-label="Explore">
+                  <button type="button" onClick={() => onNavigate("home")}>Home</button>
+                  <button type="button" onClick={() => onNavigate("shop")}>Shop</button>
+                  <button type="button" onClick={() => onNavigate("journal")}>Discover</button>
+                  <button type="button" onClick={() => onNavigate("about")}>Our Story</button>
+                </nav>
+              </section>
+              <section className="preview-footer-column">
+                <h2 className="preview-footer-heading">Customer Support</h2>
+                <nav className="preview-footer-links" aria-label="Customer support">
+                  <button type="button" onClick={() => onNavigate("faq")}>FAQ</button>
+                  <button type="button" onClick={() => onNavigate("delivery")}>Delivery</button>
+                  <button type="button" onClick={() => onNavigate("returns")}>Returns</button>
+                  <button type="button" onClick={() => onNavigate("contact")}>Contact</button>
+                </nav>
+                <button
+                  type="button"
+                  className="preview-footer-consultation"
+                  onClick={() => onNavigate("consultation")}
+                >
+                  Explore consultation
+                </button>
+              </section>
+              <section className="preview-footer-column preview-footer-contact" aria-labelledby="preview-footer-contact-title">
+                <h2 className="preview-footer-heading" id="preview-footer-contact-title">Get in Touch</h2>
+                <ContactActions />
+              </section>
+            </div>
+          </div>
+          <div className="preview-footer-bottom">
+            <span>© 2026 Healthy Ways SA.</span>
+            <nav className="preview-footer-legal" aria-label="Legal">
+              <button type="button" onClick={() => onNavigate("privacy")}>Privacy</button>
+              <button type="button" onClick={() => onNavigate("terms")}>Terms</button>
+            </nav>
+            <span className="preview-footer-telegram">Looking for flowers? Find us on Telegram.</span>
+          </div>
         </div>
       </footer>
     </>

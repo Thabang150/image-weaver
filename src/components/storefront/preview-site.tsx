@@ -344,24 +344,26 @@ export function PreviewSite({
   const [authModalView, setAuthModalView] = useState<CustomerAuthModalView>("customer-login");
   const [authModalReturnTo, setAuthModalReturnTo] = useState<"checkout" | "storefront">("storefront");
   const [authModalError, setAuthModalError] = useState<string | null>(null);
+  const [cartSyncFailed, setCartSyncFailed] = useState(false);
   const [googleSignInBusy, setGoogleSignInBusy] = useState(false);
 
   function openCustomerAuth(returnTarget: "checkout" | "storefront") {
     setAuthModalReturnTo(returnTarget);
     setAuthModalView("customer-login");
     setAuthModalError(null);
+    setCartSyncFailed(false);
     setAuthModalOpen(true);
   }
 
   const completeCustomerAuth = useCallback(async (returnTarget = authModalReturnTo) => {
     setAuthModalError(null);
+    setCartSyncFailed(false);
     try {
-      if (returnTarget === "checkout") {
-        await cart?.syncGuestCart();
-      }
+      await cart?.syncGuestCart();
       setAuthModalOpen(false);
       if (returnTarget === "checkout") onNavigate("checkout");
     } catch (error) {
+      setCartSyncFailed(true);
       setAuthModalError(
         `You are signed in, but your saved cart could not be synced. ${describeAuthError(error, "Cart sync")}`,
       );
@@ -370,6 +372,7 @@ export function PreviewSite({
 
   function handleCustomerAuthNavigate(nextView: PreviewView) {
     if (
+      nextView === "login" ||
       nextView === "customer-login" ||
       nextView === "register" ||
       nextView === "forgot-password" ||
@@ -378,6 +381,7 @@ export function PreviewSite({
     ) {
       setAuthModalView(nextView);
       setAuthModalError(null);
+      setCartSyncFailed(false);
       return;
     }
     if (nextView === "account" || nextView === "cart" || nextView === "checkout") {
@@ -443,7 +447,6 @@ export function PreviewSite({
       queryClient.removeQueries({ queryKey: ["orders"] });
       queryClient.removeQueries({ queryKey: ["order"] });
       queryClient.removeQueries({ queryKey: ["tracking"] });
-      queryClient.removeQueries({ queryKey: ["cart"] });
       sessionStorage.removeItem("healthyways.checkout.orderId");
       sessionStorage.removeItem("healthyways.checkout.idempotencyKeys");
     }
@@ -625,6 +628,17 @@ export function PreviewSite({
           </DialogHeader>
           {authModalError ? (
             <p className="healthyways-auth-modal-error" role="alert">{authModalError}</p>
+          ) : null}
+          {cartSyncFailed ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="mb-4 w-full"
+              disabled={cart?.isBusy}
+              onClick={() => void completeCustomerAuth()}
+            >
+              {cart?.isBusy ? "Syncing cart…" : "Retry cart sync"}
+            </Button>
           ) : null}
           {authModalView === "customer-login" ? (
             <LoginPage

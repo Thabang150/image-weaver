@@ -432,7 +432,8 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
         updateItemMutation.isPending ||
         removeItemMutation.isPending ||
         clearCartMutation.isPending ||
-        isSyncingGuestCart,
+        isSyncingGuestCart ||
+        isCartLoading,
       notice,
       setNotice,
       addItem: async (product: GuestCartProduct, quantity = 1) => {
@@ -872,7 +873,7 @@ export function CartAddButton({
         void cart.addItem(product, quantity).catch(() => undefined);
       }}
     >
-      {isBusy ? "Adding…" : (children ?? "Add to cart")}
+      {isBusy && !cart.isCartLoading ? "Adding…" : (children ?? "Add to cart")}
     </Button>
   );
 }

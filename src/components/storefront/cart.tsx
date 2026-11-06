@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -368,7 +377,10 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
   });
 
   const [isSyncingGuestCart, setIsSyncingGuestCart] = useState(false);
+  const guestCartSyncRef = useRef<Promise<void> | null>(null);
   const syncGuestCart = useCallback(async () => {
+    if (guestCartSyncRef.current) return guestCartSyncRef.current;
+
     const session = queryClient.getQueryData<{ status: string; user?: { id: string } }>(["session"]);
     const mutationUserId =
       session?.status === "authenticated" ? session.user?.id ?? "anonymous" : "anonymous";
@@ -376,47 +388,79 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
     const guestCart = readGuestCart();
     if (guestCart.items.length === 0) return;
 
-    setIsSyncingGuestCart(true);
-    try {
-      let pending = readPendingGuestCartMerge();
-      if (!pending || pending.userId !== mutationUserId) {
-        const remoteCart = await cartApi.getCart();
-        const quantities = Object.fromEntries(guestCart.items.map((item) => {
-          const existingQuantity = remoteCart.items.find((remoteItem) => remoteItem.productId === item.productId)?.quantity ?? 0;
-          return [item.productId, Math.min(99, existingQuantity + item.quantity)];
-        }));
-        pending = { userId: mutationUserId, quantities };
-        window.localStorage.setItem(GUEST_CART_MERGE_KEY, JSON.stringify(pending));
-      }
-
-      for (const [productId, targetQuantity] of Object.entries(pending.quantities)) {
-        let remoteCart = await cartApi.getCart();
-        const existing = remoteCart.items.find((item) => item.productId === productId);
-        if (!existing || existing.quantity < targetQuantity) {
-          remoteCart = existing
-            ? await cartApi.updateItem(productId, targetQuantity)
-            : await cartApi.addItem(productId, targetQuantity);
+    const sync = (async () => {
+      setIsSyncingGuestCart(true);
+      try {
+        await queryClient.cancelQueries({ queryKey: ["cart", mutationUserId] });
+        let pending = readPendingGuestCartMerge();
+        if (!pending || pending.userId !== mutationUserId) {
+          pending = { userId: mutationUserId, quantities: {} };
         }
-        queryClient.setQueryData(["cart", mutationUserId], remoteCart);
 
-        const remaining = makeCart(readGuestCart().items.filter((item) => item.productId !== productId));
-        saveGuestCart(remaining);
-        delete pending.quantities[productId];
-        if (Object.keys(pending.quantities).length === 0) {
-          window.localStorage.removeItem(GUEST_CART_MERGE_KEY);
-        } else {
+        const newGuestLines = guestCart.items.filter(
+          (item) => !(item.productId in pending.quantities),
+        );
+        if (newGuestLines.length > 0) {
+          const remoteCart = await cartApi.getCart();
+          for (const item of newGuestLines) {
+            const existingQuantity =
+              remoteCart.items.find((remoteItem) => remoteItem.productId === item.productId)
+                ?.quantity ?? 0;
+            pending.quantities[item.productId] = Math.min(99, existingQuantity + item.quantity);
+          }
           window.localStorage.setItem(GUEST_CART_MERGE_KEY, JSON.stringify(pending));
         }
+
+        for (const [productId, targetQuantity] of Object.entries(pending.quantities)) {
+          let remoteCart = await cartApi.getCart();
+          const existing = remoteCart.items.find((item) => item.productId === productId);
+          if (!existing || existing.quantity < targetQuantity) {
+            remoteCart = existing
+              ? await cartApi.updateItem(productId, targetQuantity)
+              : await cartApi.addItem(productId, targetQuantity);
+          }
+          queryClient.setQueryData(["cart", mutationUserId], remoteCart);
+
+          const remaining = makeCart(
+            readGuestCart().items.filter((item) => item.productId !== productId),
+          );
+          saveGuestCart(remaining);
+          delete pending.quantities[productId];
+          if (Object.keys(pending.quantities).length === 0) {
+            window.localStorage.removeItem(GUEST_CART_MERGE_KEY);
+          } else {
+            window.localStorage.setItem(GUEST_CART_MERGE_KEY, JSON.stringify(pending));
+          }
+        }
+        queryClient.setQueryData(["cart", "anonymous"], readGuestCart());
+        setNotice("Your guest cart has been added to your account cart.");
+      } catch (error) {
+        await queryClient.invalidateQueries({ queryKey: ["cart", mutationUserId] });
+        setNotice(getCartErrorMessage(error));
+        throw error;
+      } finally {
+        setIsSyncingGuestCart(false);
       }
-      queryClient.setQueryData(["cart", "anonymous"], readGuestCart());
-      setNotice("Your guest cart has been added to your account cart.");
-    } catch (error) {
-      setNotice(getCartErrorMessage(error));
-      throw error;
+    })();
+
+    guestCartSyncRef.current = sync;
+    try {
+      await sync;
     } finally {
-      setIsSyncingGuestCart(false);
+      if (guestCartSyncRef.current === sync) guestCartSyncRef.current = null;
     }
   }, [queryClient]);
+
+  useEffect(() => {
+    if (!enabled || !hasAuthenticatedSession) return;
+    try {
+      if (readGuestCart().items.length === 0) return;
+    } catch (error) {
+      setNotice(getCartErrorMessage(error));
+      return;
+    }
+    void syncGuestCart().catch(() => undefined);
+  }, [enabled, hasAuthenticatedSession, cartUserId, syncGuestCart]);
 
   const value = useMemo<CartContextValue>(
     () => ({

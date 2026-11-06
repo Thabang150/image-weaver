@@ -326,6 +326,26 @@ describe("storefront cart", () => {
     expect(requests.filter(({ path }) => path.endsWith("/auth/csrf-token"))).toHaveLength(1);
   }, 15000);
 
+  it("restores an authenticated cart from the backend after the provider remounts", async () => {
+    const { requests } = installGuestLifecycleApi({ initiallyAuthenticated: true });
+    window.history.replaceState({}, "", "/preview");
+
+    const firstRender = renderCart();
+    const addButton = await screen.findByRole("button", { name: "Add to cart" });
+    await waitFor(() => expect(addButton).toBeEnabled());
+    fireEvent.click(addButton);
+    expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
+    expect(document.querySelector(".cart-badge")?.textContent).toBe("1");
+    firstRender.unmount();
+
+    renderCart();
+    fireEvent.click(await screen.findByRole("button", { name: "Open cart with 1 items" }));
+    expect(await screen.findByText("Aloe product")).toBeVisible();
+    expect(
+      requests.filter(({ method, path }) => method === "GET" && path.endsWith("/cart")).length,
+    ).toBeGreaterThanOrEqual(2);
+  }, 15000);
+
   it("shows a recoverable cart API error and retries the cart load", async () => {
     const { requests } = installCartApi({ failFirstCartRead: true });
     renderCart();
@@ -404,12 +424,8 @@ describe("storefront cart", () => {
         status: "authenticated",
       });
     });
-    await waitFor(() =>
-      expect(firstRender.queryClient.getQueryData(["cart", authenticatedSession.user.id])).toBeDefined(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Sync guest cart" }));
-
     await waitFor(() => expect(document.querySelector(".cart-badge")?.textContent).toBe("4"));
+    expect(firstRender.queryClient.getQueryData(["cart", authenticatedSession.user.id])).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Open cart with 4 items" }));
     expect(await screen.findByText("Chamomile product")).toBeVisible();
     expect(screen.getByText("Aloe product")).toBeVisible();
@@ -435,17 +451,19 @@ describe("storefront cart", () => {
       });
     });
     await waitFor(() =>
-      expect(view.queryClient.getQueryData(["cart", authenticatedSession.user.id])).toBeDefined(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Sync guest cart" }));
-
-    await waitFor(() =>
       expect(localStorage.getItem("healthyways.guest-cart-merge.v1")).toContain(productId),
     );
     fireEvent.click(screen.getByRole("button", { name: "Open cart" }));
     expect(await screen.findByText(/Cart temporarily unavailable/)).toBeVisible();
     expect(localStorage.getItem("healthyways.guest-cart.v1")).toContain(productId);
     expect(localStorage.getItem("healthyways.guest-cart-merge.v1")).toContain(productId);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Sync guest cart" }));
+    await waitFor(() =>
+      expect(localStorage.getItem("healthyways.guest-cart.v1")).toContain('"items":[]'),
+    );
+    expect(localStorage.getItem("healthyways.guest-cart-merge.v1")).toBeNull();
   }, 15000);
 
   it("restores authenticated cart data after refresh and persists quantity changes and removal", async () => {

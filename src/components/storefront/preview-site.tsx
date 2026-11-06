@@ -7,10 +7,19 @@ import { CartAddButton, CartPage, CartSheet, CartTrigger, useOptionalCart } from
 import { Catalogue } from "@/components/storefront/catalogue";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ApiHttpError,
   ApiResponseError,
   CsrfTokenError,
   PreviewMutationBlockedError,
+  buildApiUrl,
+  getBackendBaseUrl,
 } from "@/lib/api/client";
 import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { isAdminUser } from "@/lib/auth/authorization";
@@ -54,6 +63,13 @@ export type PreviewView =
   | "admin"
   | "forgot-password"
   | "reset-password";
+
+type CustomerAuthModalView =
+  | "customer-login"
+  | "register"
+  | "forgot-password"
+  | "reset-password"
+  | "verify-email";
 
 interface PreviewSiteProps {
   view: PreviewView;
@@ -312,6 +328,7 @@ export function PreviewSite({
   onBackToCatalogue,
 }: PreviewSiteProps) {
   const queryClient = useQueryClient();
+  const cart = useOptionalCart();
   const activeOrderId = orderId;
   const sessionQuery = useQuery({
     queryKey: ["session"],
@@ -323,6 +340,100 @@ export function PreviewSite({
   const previousUserIdRef = useRef<string | undefined>(undefined);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalView, setAuthModalView] = useState<CustomerAuthModalView>("customer-login");
+  const [authModalReturnTo, setAuthModalReturnTo] = useState<"checkout" | "storefront">("storefront");
+  const [authModalError, setAuthModalError] = useState<string | null>(null);
+  const [googleSignInBusy, setGoogleSignInBusy] = useState(false);
+
+  function openCustomerAuth(returnTarget: "checkout" | "storefront") {
+    setAuthModalReturnTo(returnTarget);
+    setAuthModalView("customer-login");
+    setAuthModalError(null);
+    setAuthModalOpen(true);
+  }
+
+  const completeCustomerAuth = useCallback(async (returnTarget = authModalReturnTo) => {
+    setAuthModalError(null);
+    try {
+      if (returnTarget === "checkout") {
+        await cart?.syncGuestCart();
+      }
+      setAuthModalOpen(false);
+      if (returnTarget === "checkout") onNavigate("checkout");
+    } catch (error) {
+      setAuthModalError(
+        `You are signed in, but your saved cart could not be synced. ${describeAuthError(error, "Cart sync")}`,
+      );
+    }
+  }, [authModalReturnTo, cart, onNavigate]);
+
+  function handleCustomerAuthNavigate(nextView: PreviewView) {
+    if (
+      nextView === "customer-login" ||
+      nextView === "register" ||
+      nextView === "forgot-password" ||
+      nextView === "reset-password" ||
+      nextView === "verify-email"
+    ) {
+      setAuthModalView(nextView);
+      setAuthModalError(null);
+      return;
+    }
+    if (nextView === "account" || nextView === "cart" || nextView === "checkout") {
+      void completeCustomerAuth();
+      return;
+    }
+    setAuthModalOpen(false);
+    onNavigate(nextView);
+  }
+
+  async function startGoogleSignIn() {
+    setGoogleSignInBusy(true);
+    setAuthModalError(null);
+    try {
+      window.sessionStorage.setItem(
+        "healthyways.google-sign-in-return",
+        authModalReturnTo,
+      );
+      window.location.assign(buildApiUrl(getBackendBaseUrl(), "/auth/google/start"));
+    } catch (error) {
+      window.sessionStorage.removeItem("healthyways.google-sign-in-return");
+      setGoogleSignInBusy(false);
+      setAuthModalOpen(true);
+      setAuthModalError(describeAuthError(error, "Google sign-in"));
+    }
+  }
+
+  useEffect(() => {
+    async function resumeGoogleSignIn() {
+      const returnTarget = window.sessionStorage.getItem("healthyways.google-sign-in-return");
+      if (!returnTarget) return;
+      window.sessionStorage.removeItem("healthyways.google-sign-in-return");
+      setAuthModalReturnTo(returnTarget === "checkout" ? "checkout" : "storefront");
+      setAuthModalView("customer-login");
+      setAuthModalOpen(true);
+      setGoogleSignInBusy(false);
+      try {
+        const session = await authApi.getSession();
+        if (session.status !== "authenticated" || isAdminUser(session.user)) {
+          setAuthModalError("Google sign-in did not establish a customer session. Try again or use email and password.");
+          return;
+        }
+        queryClient.setQueryData(["session"], session);
+        await completeCustomerAuth(returnTarget === "checkout" ? "checkout" : "storefront");
+      } catch (error) {
+        setAuthModalError(describeAuthError(error, "Google sign-in"));
+      }
+    }
+
+    window.addEventListener("focus", resumeGoogleSignIn);
+    window.addEventListener("pageshow", resumeGoogleSignIn);
+    return () => {
+      window.removeEventListener("focus", resumeGoogleSignIn);
+      window.removeEventListener("pageshow", resumeGoogleSignIn);
+    };
+  }, [queryClient, completeCustomerAuth]);
 
   useEffect(() => {
     const previousUserId = previousUserIdRef.current;
@@ -358,6 +469,18 @@ export function PreviewSite({
     }
   }
 
+  function navigatePreview(
+    nextView: PreviewView,
+    nextReturnTo?: "cart" | "account" | "admin",
+    nextOrderId?: string,
+  ) {
+    if (nextView === "login" && nextReturnTo !== "admin") {
+      openCustomerAuth(nextReturnTo === "cart" ? "checkout" : "storefront");
+      return;
+    }
+    onNavigate(nextView, nextReturnTo, nextOrderId);
+  }
+
   let content: ReactNode;
   if (view === "home") {
     content = <PreviewHome onNavigate={onNavigate} onSelectProduct={onSelectProduct} />;
@@ -376,7 +499,13 @@ export function PreviewSite({
       ? <AdminLoginPage onNavigate={onNavigate} />
       : <CustomerLoginPage onNavigate={onNavigate} returnTo={returnTo} />;
   } else if (view === "customer-login") {
-    content = <CustomerLoginPage onNavigate={onNavigate} />;
+    content = (
+      <CustomerLoginPage
+        onNavigate={onNavigate}
+        onGoogleSignIn={() => void startGoogleSignIn()}
+        googleSignInBusy={googleSignInBusy}
+      />
+    );
   } else if (view === "admin-login") {
     content = <AdminLoginPage onNavigate={onNavigate} />;
   } else if (view === "register") {
@@ -404,28 +533,28 @@ export function PreviewSite({
     ) : (
       <AccessMessage
         title="Sign in to view your account"
-        onAction={() => onNavigate("login", "account")}
+        onAction={() => openCustomerAuth("storefront")}
         action="Go to login"
       />
     );
   } else if (view === "addresses") {
-    content = user ? <AddressesPage user={user} applyUser={(updated, initiatingUserId) => updateSessionForUser(queryClient, initiatingUserId, updated)} /> : <AccessMessage title="Sign in to manage addresses" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+    content = user ? <AddressesPage user={user} applyUser={(updated, initiatingUserId) => updateSessionForUser(queryClient, initiatingUserId, updated)} /> : <AccessMessage title="Sign in to manage addresses" onAction={() => openCustomerAuth("storefront")} action="Go to login" />;
   } else if (view === "orders") {
-    content = user ? <OrdersPage userId={user.id} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId)} /> : <AccessMessage title="Sign in to view your orders" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+    content = user ? <OrdersPage userId={user.id} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId)} /> : <AccessMessage title="Sign in to view your orders" onAction={() => openCustomerAuth("storefront")} action="Go to login" />;
   } else if (view === "order-detail") {
-    content = user && activeOrderId ? <OrderDetailPage userId={user.id} orderId={activeOrderId} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? activeOrderId)} /> : <AccessMessage title="Sign in to view this order" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+    content = user && activeOrderId ? <OrderDetailPage userId={user.id} orderId={activeOrderId} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? activeOrderId)} /> : <AccessMessage title="Sign in to view this order" onAction={() => openCustomerAuth("storefront")} action="Go to login" />;
   } else if (view === "tracking-detail") {
-    content = user && activeOrderId ? <TrackingPage userId={user.id} orderId={activeOrderId} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? activeOrderId)} /> : <AccessMessage title="Sign in to view tracking" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+    content = user && activeOrderId ? <TrackingPage userId={user.id} orderId={activeOrderId} onNavigate={(next, _returnTo, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? activeOrderId)} /> : <AccessMessage title="Sign in to view tracking" onAction={() => openCustomerAuth("storefront")} action="Go to login" />;
   } else if (view === "checkout") {
-    content = user ? <CheckoutPage user={user} onNavigate={(next) => onNavigate(next as PreviewView)} /> : <AccessMessage title="Sign in to checkout" onAction={() => onNavigate("login", "cart")} action="Go to login" />;
+    content = user ? <CheckoutPage user={user} onNavigate={(next) => onNavigate(next as PreviewView)} /> : <AccessMessage title="Sign in to checkout" onAction={() => openCustomerAuth("checkout")} action="Go to login" />;
   } else if (view === "payment-return" || view === "payment-cancel") {
-    content = user ? <PaymentStatePage userId={user.id} orderId={orderId} cancelled={view === "payment-cancel"} onNavigate={(next, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? orderId)} /> : <AccessMessage title="Sign in to view payment status" onAction={() => onNavigate("login", "account")} action="Go to login" />;
+    content = user ? <PaymentStatePage userId={user.id} orderId={orderId} cancelled={view === "payment-cancel"} onNavigate={(next, selectedOrderId) => onNavigate(next as PreviewView, undefined, selectedOrderId ?? orderId)} /> : <AccessMessage title="Sign in to view payment status" onAction={() => openCustomerAuth("storefront")} action="Go to login" />;
   } else if (view === "cart") {
     content = (
       <CartPage
         onContinueShopping={() => onNavigate("shop")}
-        onSignIn={() => onNavigate("login", "cart")}
-        onCheckout={() => onNavigate(user ? "checkout" : "login", user ? undefined : "cart")}
+        onSignIn={() => openCustomerAuth("storefront")}
+        onCheckout={() => user ? onNavigate("checkout") : openCustomerAuth("checkout")}
       />
     );
   } else {
@@ -458,7 +587,7 @@ export function PreviewSite({
           user={user}
           onLogout={() => void logout()}
           logoutBusy={logoutBusy}
-          onNavigate={onNavigate}
+          onNavigate={navigatePreview}
         >
           {sessionQuery.isError ? (
             <div className="mx-auto max-w-7xl px-5 pt-4">
@@ -479,9 +608,48 @@ export function PreviewSite({
         </SiteFrame>
       }
       view={view}
-      onSignIn={() => onNavigate("login", "cart")}
-      onCheckout={() => onNavigate(user ? "checkout" : "login", user ? undefined : "cart")}
+      onSignIn={() => openCustomerAuth("storefront")}
+      onCheckout={() => user ? onNavigate("checkout") : openCustomerAuth("checkout")}
       />
+      <Dialog
+        open={authModalOpen}
+        onOpenChange={(open) => {
+          setAuthModalOpen(open);
+          if (!open) setAuthModalError(null);
+        }}
+      >
+        <DialogContent className="healthyways-auth-dialog">
+          <DialogHeader className="healthyways-auth-dialog-header">
+            <DialogTitle>Healthy Ways SA</DialogTitle>
+            <DialogDescription>Sign in or create your customer account.</DialogDescription>
+          </DialogHeader>
+          {authModalError ? (
+            <p className="healthyways-auth-modal-error" role="alert">{authModalError}</p>
+          ) : null}
+          {authModalView === "customer-login" ? (
+            <LoginPage
+              experience="customer"
+              onNavigate={handleCustomerAuthNavigate}
+              returnTo={authModalReturnTo === "checkout" ? "cart" : "account"}
+              onGoogleSignIn={() => void startGoogleSignIn()}
+              googleSignInBusy={googleSignInBusy}
+            />
+          ) : authModalView === "register" ? (
+            <RegisterPage experience="customer" onNavigate={handleCustomerAuthNavigate} />
+          ) : authModalView === "forgot-password" ? (
+            <ForgotPasswordPage onNavigate={handleCustomerAuthNavigate} />
+          ) : authModalView === "reset-password" ? (
+            <ResetPasswordPage onNavigate={handleCustomerAuthNavigate} />
+          ) : (
+            <VerifyEmailPage
+              onNavigate={handleCustomerAuthNavigate}
+              verificationToken={undefined}
+              isEmailLink={false}
+              onClearEmailLink={() => undefined}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1148,11 +1316,23 @@ type LoginExperience = "customer" | "admin";
 function CustomerLoginPage({
   onNavigate,
   returnTo,
+  onGoogleSignIn,
+  googleSignInBusy,
 }: {
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
   returnTo?: "cart" | "account" | "admin";
+  onGoogleSignIn?: () => void;
+  googleSignInBusy?: boolean;
 }) {
-  return <LoginPage experience="customer" onNavigate={onNavigate} returnTo={returnTo} />;
+  return (
+    <LoginPage
+      experience="customer"
+      onNavigate={onNavigate}
+      returnTo={returnTo}
+      onGoogleSignIn={onGoogleSignIn}
+      googleSignInBusy={googleSignInBusy}
+    />
+  );
 }
 
 function AdminLoginPage({
@@ -1167,10 +1347,14 @@ function LoginPage({
   experience,
   onNavigate,
   returnTo,
+  onGoogleSignIn,
+  googleSignInBusy = false,
 }: {
   experience: LoginExperience;
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
   returnTo: "cart" | "account" | "admin" | undefined;
+  onGoogleSignIn?: () => void;
+  googleSignInBusy?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
@@ -1290,6 +1474,17 @@ function LoginPage({
     >
       {step === "credentials" ? (
         <form className="space-y-4" onSubmit={(event) => void submitCredentials(event)}>
+          {experience === "customer" && onGoogleSignIn ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={busy || googleSignInBusy}
+              onClick={onGoogleSignIn}
+            >
+              {googleSignInBusy ? "Connecting to Google…" : "Continue with Google"}
+            </Button>
+          ) : null}
           <label className="block space-y-1 text-sm">
             <span>Email</span>
             <input

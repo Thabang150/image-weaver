@@ -94,7 +94,7 @@ describe("API requests", () => {
     ).resolves.toEqual({ ok: true });
   });
 
-  it("allows only customer cart writes from the preview route", async () => {
+  it("allows customer authentication and cart writes but blocks protected preview mutations", async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse({ ok: true }));
     const client = createApiClient({
       baseUrl,
@@ -120,13 +120,37 @@ describe("API requests", () => {
     ).resolves.toEqual({ ok: true });
     await expect(client.request("/cart", { method: "DELETE" })).resolves.toEqual({ ok: true });
 
-    await expect(client.request("/orders", { method: "POST", json: {} })).rejects.toBeInstanceOf(
-      PreviewMutationBlockedError,
-    );
+    for (const endpoint of [
+      "/auth/login",
+      "/auth/register",
+      "/auth/logout",
+      "/auth/request-verification",
+      "/auth/verify-email",
+      "/auth/forgot-password",
+      "/auth/reset-password",
+      "/auth/login/verify-email-otp",
+      "/auth/login/resend-email-otp",
+    ]) {
+      await expect(client.request(endpoint, { method: "POST", json: {} })).resolves.toEqual({
+        ok: true,
+      });
+    }
+
+    for (const endpoint of [
+      "/auth/admin/register",
+      "/auth/2fa/verify",
+      "/users/me",
+      "/orders",
+      "/payments",
+    ]) {
+      await expect(client.request(endpoint, { method: "POST", json: {} })).rejects.toBeInstanceOf(
+        PreviewMutationBlockedError,
+      );
+    }
     await expect(
       client.request("/cart/items/not-an-id", { method: "DELETE" }),
     ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
-    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenCalledTimes(13);
     window.history.pushState({}, "", "/account/login");
   });
 

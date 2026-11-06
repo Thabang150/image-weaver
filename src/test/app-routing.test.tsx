@@ -5,7 +5,7 @@ import {
   RouterProvider,
   rootRouteId,
 } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -97,6 +97,20 @@ describe("App routing", () => {
     expect(previewMatches.at(-1)?.routeId).toBe("/preview");
     expect(homeMatches.at(-1)?.routeId).not.toBe(rootRouteId);
   });
+
+  it("opens the preview customer auth modal and switches between sign-in and registration", async () => {
+    const fetcher = createPreviewFetcher({});
+    const router = await renderPreviewAt("/preview", fetcher);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Continue with Google" })).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Register" }));
+    expect(within(dialog).getByRole("heading", { name: "Create an account" })).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Log in" }));
+    expect(within(dialog).getByRole("heading", { name: "Log in" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/preview");
+  }, 15000);
 
   it("resolves /verify-email through /preview and clears the link token after capture", async () => {
     const token = "v".repeat(40);

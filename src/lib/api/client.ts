@@ -33,10 +33,30 @@ function isCustomerCartMutation(method: string, endpoint: string): boolean {
   return method === "PATCH" && /^cart\/items\/[a-f\d]{24}$/i.test(path);
 }
 
+const customerAuthMutationPaths = new Set([
+  "auth/login",
+  "auth/register",
+  "auth/logout",
+  "auth/request-verification",
+  "auth/verify-email",
+  "auth/forgot-password",
+  "auth/reset-password",
+  "auth/login/verify-email-otp",
+  "auth/login/resend-email-otp",
+]);
+
+function isCustomerAuthMutation(method: string, endpoint: string): boolean {
+  if (method !== "POST") return false;
+  const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
+  return customerAuthMutationPaths.has(path);
+}
+
 function isPreviewMutationAllowed(method: string, endpoint: string): boolean {
   if (typeof window === "undefined") return false;
-  // Customer cart writes stay behind the backend's customer-role and CSRF checks.
-  return !isPreviewPath(window.location.pathname) || isCustomerCartMutation(method, endpoint);
+  // Auth and cart operations remain protected by the backend's session, role, and CSRF checks.
+  return !isPreviewPath(window.location.pathname) ||
+    isCustomerAuthMutation(method, endpoint) ||
+    isCustomerCartMutation(method, endpoint);
 }
 
 export interface ApiClientOptions {

@@ -32,6 +32,10 @@ const productList = {
   pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
 };
 
+function withProductFields(fields: Partial<typeof product> = {}) {
+  return { ...product, ...fields };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -64,7 +68,14 @@ function renderCatalogue(selectedSlug?: string) {
   return { ...view, onSelectProduct, onBackToCatalogue, queryClient };
 }
 
+function priceMatcher(cents: number) {
+  const expected = formatZarCents(cents).replace(/\u00a0/g, " ");
+  return (_content: string, element: Element | null) =>
+    element?.textContent?.replace(/\u00a0/g, " ") === expected;
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -93,6 +104,62 @@ describe("public catalogue", () => {
     fireEvent.click(screen.getByRole("button", { name: "View details for Aloe product" }));
     expect(onSelectProduct).toHaveBeenCalledWith("aloe-product");
   }, 15000);
+
+  it("uses backend sale and stock fields without inventing inventory data", async () => {
+    const catalogueProduct = withProductFields({ salePriceCents: 10000, stockQuantity: 4 });
+    installApi((url) => {
+      if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [category] });
+      return jsonResponse({
+        products: [catalogueProduct],
+        pagination: productList.pagination,
+      });
+    });
+    renderCatalogue();
+
+    expect(await screen.findByText("SALE")).toBeVisible();
+    expect(screen.getByText(priceMatcher(product.priceCents), { selector: "del" })).toBeVisible();
+    expect(screen.getByText(priceMatcher(10000), { selector: "strong" })).toBeVisible();
+    const saving = `Save ${formatZarCents(product.priceCents - 10000)}`.replace(/\u00a0/g, " ");
+    expect(
+      screen.getByText(
+        (_, element) => element?.textContent?.replace(/\u00a0/g, " ") === saving,
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Only 4 left in stock")).toBeVisible();
+  });
+
+  it("labels zero-stock products and disables adding them", async () => {
+    const catalogueProduct = withProductFields({ stockQuantity: 0 });
+    installApi((url) => {
+      if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [category] });
+      return jsonResponse({
+        products: [catalogueProduct],
+        pagination: productList.pagination,
+      });
+    });
+    renderCatalogue();
+
+    expect(
+      await screen.findByText("Out of stock", { selector: ".product-stock-notice" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Out of stock" })).toBeDisabled();
+  });
+
+  it("rejects malformed sale prices and stock counts", async () => {
+    installApi((url) =>
+      url.pathname.endsWith("/categories")
+        ? jsonResponse({ categories: [category] })
+        : jsonResponse({
+            products: [withProductFields({ salePriceCents: product.priceCents, stockQuantity: -1 })],
+            pagination: productList.pagination,
+          }),
+    );
+    renderCatalogue();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Backend returned an invalid catalogue response.",
+    );
+  });
 
   it("shows an empty state when category and product results are empty", async () => {
     installApi((url) =>
@@ -394,6 +461,9 @@ describe("public catalogue", () => {
   });
 
   it("preserves the launch hero, countdown, contact actions, and catalogue entry point", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-02T12:00:00+02:00"));
+
     render(<LaunchExperience />);
 
     expect(

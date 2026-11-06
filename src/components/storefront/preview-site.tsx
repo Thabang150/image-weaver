@@ -4,7 +4,11 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 
 import { AdminPanel } from "@/components/storefront/admin";
 import { CartAddButton, CartPage, CartSheet, CartTrigger, useOptionalCart } from "@/components/storefront/cart";
-import { Catalogue } from "@/components/storefront/catalogue";
+import {
+  Catalogue,
+  ProductPrice,
+  ProductStockNotice,
+} from "@/components/storefront/catalogue";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,7 +28,7 @@ import {
 import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { isAdminUser } from "@/lib/auth/authorization";
 import { ordersApi } from "@/lib/api/orders";
-import { catalogueApi, type PublicProduct } from "@/lib/api/catalogue";
+import { catalogueApi, getSellingPriceCents, type PublicProduct } from "@/lib/api/catalogue";
 import { getAllowedProductImageUrls } from "@/lib/image-url";
 import { formatZarCents } from "@/lib/money";
 import { Brand, ContactActions } from "@/components/wellness";
@@ -931,9 +935,22 @@ function PreviewHome({
                   >
                     {product.name}
                   </button>
-                  <strong>{formatZarCents(product.priceCents)}</strong>
-                  <CartAddButton product={product} quantity={1}>
-                    Add to bag
+                  <ProductStockNotice product={product} />
+                  <ProductPrice product={product} className="preview-featured-price" />
+                  <CartAddButton
+                    product={{
+                      id: product.id,
+                      name: product.name,
+                      slug: product.slug,
+                      priceCents: getSellingPriceCents(product),
+                      ...(product.stockQuantity !== undefined
+                        ? { stockQuantity: product.stockQuantity }
+                        : {}),
+                    }}
+                    quantity={1}
+                    disabled={product.stockQuantity === 0}
+                  >
+                    {product.stockQuantity === 0 ? "Out of stock" : "Add to bag"}
                   </CartAddButton>
                 </article>
               );

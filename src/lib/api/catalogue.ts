@@ -21,6 +21,8 @@ export interface PublicProduct {
     slug: string;
   };
   priceCents: number;
+  salePriceCents?: number;
+  stockQuantity?: number;
   imageReferences: string[];
   shortDescription?: string;
   productForm?: "capsules";
@@ -44,6 +46,10 @@ export interface ProductPagination {
 export interface ProductList {
   products: PublicProduct[];
   pagination: ProductPagination;
+}
+
+export function getSellingPriceCents(product: PublicProduct): number {
+  return product.salePriceCents ?? product.priceCents;
 }
 
 export type CatalogueApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
@@ -96,6 +102,12 @@ function isPublicProduct(value: unknown): value is PublicProduct {
     typeof value["description"] !== "string" ||
     !isSafeInteger(value["priceCents"]) ||
     value["priceCents"] <= 0 ||
+    (value["salePriceCents"] !== undefined &&
+      (!isSafeInteger(value["salePriceCents"]) ||
+        value["salePriceCents"] <= 0 ||
+        value["salePriceCents"] >= value["priceCents"])) ||
+    (value["stockQuantity"] !== undefined &&
+      (!isSafeInteger(value["stockQuantity"]) || value["stockQuantity"] < 0)) ||
     !isStringArray(value["imageReferences"]) ||
     typeof value["createdAt"] !== "string" ||
     typeof value["updatedAt"] !== "string"

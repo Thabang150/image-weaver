@@ -9,6 +9,7 @@ export interface CartLine {
   productId: string;
   quantity: number;
   available: boolean;
+  stockQuantity?: number;
   product: CartProductSummary | null;
   unitPriceCents: number | null;
   lineSubtotalCents: number | null;
@@ -50,6 +51,7 @@ function parseCartLine(value: unknown): CartLine {
   const productId = value["productId"];
   const quantity = value["quantity"];
   const available = value["available"];
+  const stockQuantity = value["stockQuantity"];
   const unitPriceCents = value["unitPriceCents"];
   const lineSubtotalCents = value["lineSubtotalCents"];
 
@@ -58,7 +60,9 @@ function parseCartLine(value: unknown): CartLine {
     !isSafeInteger(quantity) ||
     quantity < 1 ||
     quantity > 99 ||
-    typeof available !== "boolean"
+    typeof available !== "boolean" ||
+    (stockQuantity !== undefined &&
+      (!isSafeInteger(stockQuantity) || stockQuantity < 0))
   ) {
     invalidCartResponse();
   }
@@ -80,13 +84,15 @@ function parseCartLine(value: unknown): CartLine {
       productId,
       quantity,
       available: true,
+      ...(isSafeInteger(stockQuantity) ? { stockQuantity } : {}),
       product: parseProductSummary(value["product"]),
       unitPriceCents,
       lineSubtotalCents,
     };
   }
 
-  if (value["product"] !== null || unitPriceCents !== null || lineSubtotalCents !== null) {
+  const unavailableProduct = parseProductSummary(value["product"]);
+  if (unitPriceCents !== null || lineSubtotalCents !== null) {
     invalidCartResponse();
   }
 
@@ -94,7 +100,8 @@ function parseCartLine(value: unknown): CartLine {
     productId,
     quantity,
     available: false,
-    product: null,
+    ...(isSafeInteger(stockQuantity) ? { stockQuantity } : {}),
+    product: unavailableProduct,
     unitPriceCents: null,
     lineSubtotalCents: null,
   };
@@ -120,12 +127,18 @@ function parseCart(value: unknown): Cart {
     invalidCartResponse();
   }
 
+  const containsUnavailableItems = items.some(
+    (item) =>
+      !item.available ||
+      (item.stockQuantity !== undefined &&
+        (item.stockQuantity === 0 || item.quantity > item.stockQuantity)),
+  );
   return {
     items,
     itemCount,
     currency: "ZAR",
     totalCents,
-    hasUnavailableItems,
+    hasUnavailableItems: hasUnavailableItems || containsUnavailableItems,
   };
 }
 

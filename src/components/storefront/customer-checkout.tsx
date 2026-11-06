@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { ordersApi, type CustomerOrder, type PayFastCheckout } from "@/lib/api/orders";
+import { cartApi } from "@/lib/api/cart";
 import { formatZarCents } from "@/lib/money";
 import { useCart } from "@/components/storefront/cart";
 import { ApiHttpError } from "@/lib/api/client";
@@ -169,7 +170,20 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
     try {
       let next = order;
       if (!next) {
-        next = await ordersApi.createOrder(addressId, idempotencyKey(user.id, addressId, cart));
+        const latestCart = await cartApi.getCart();
+        queryClient.setQueryData(["cart", user.id], latestCart);
+        if (latestCart.hasUnavailableItems) {
+          setMessage("Stock or availability changed. Your cart has been refreshed; review it before continuing.");
+          return;
+        }
+        if (cartFingerprint(latestCart) !== cartFingerprint(cart)) {
+          setMessage("Your cart changed while checkout was open. Review the refreshed cart before continuing.");
+          return;
+        }
+        next = await ordersApi.createOrder(
+          addressId,
+          idempotencyKey(user.id, addressId, latestCart),
+        );
         sessionStorage.setItem(ORDER_KEY, next.id);
       }
       setOrder(next);

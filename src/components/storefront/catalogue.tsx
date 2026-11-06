@@ -5,7 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CartAddButton } from "@/components/storefront/cart";
 import { ApiHttpError, ApiResponseError } from "@/lib/api/client";
-import { catalogueApi, type PublicProduct } from "@/lib/api/catalogue";
+import {
+  catalogueApi,
+  getSellingPriceCents,
+  type PublicProduct,
+} from "@/lib/api/catalogue";
 import { getAllowedProductImageUrls } from "@/lib/image-url";
 import { formatZarCents } from "@/lib/money";
 
@@ -15,6 +19,44 @@ function getPrimaryImageUrl(product: PublicProduct): string | undefined {
 
 function getProductGallery(product: PublicProduct): string[] {
   return getAllowedProductImageUrls(product.imageReferences);
+}
+
+export function ProductPrice({
+  product,
+  className,
+}: {
+  product: PublicProduct;
+  className?: string;
+}) {
+  const salePriceCents = product.salePriceCents;
+  const classes = ["product-price", className].filter(Boolean).join(" ");
+
+  if (salePriceCents === undefined) {
+    return <p className={classes}>{formatZarCents(product.priceCents)}</p>;
+  }
+
+  return (
+    <p className={`${classes} product-price-sale`}>
+      <span className="product-sale-badge">SALE</span>
+      <del>{formatZarCents(product.priceCents)}</del>
+      <strong>{formatZarCents(salePriceCents)}</strong>
+      <span className="product-sale-saving">Save {formatZarCents(product.priceCents - salePriceCents)}</span>
+    </p>
+  );
+}
+
+export function ProductStockNotice({ product }: { product: PublicProduct }) {
+  if (product.stockQuantity === undefined) return null;
+
+  if (product.stockQuantity === 0) {
+    return <p className="product-stock-notice product-stock-out">Out of stock</p>;
+  }
+
+  if (product.stockQuantity <= 5) {
+    return <p className="product-stock-notice">Only {product.stockQuantity} left in stock</p>;
+  }
+
+  return null;
 }
 
 function ProductImage({
@@ -233,20 +275,23 @@ function ShopProductCard({
             {product.packaging.amount} {product.packaging.unit}
           </p>
         ) : null}
-        {Number.isSafeInteger(product.priceCents) ? (
-          <p className="product-price shop-card-price">{formatZarCents(product.priceCents)}</p>
-        ) : null}
+        <ProductStockNotice product={product} />
+        <ProductPrice product={product} className="shop-card-price" />
         <div className="shop-card-actions">
           <CartAddButton
             product={{
               id: product.id,
               name: product.name,
               slug: product.slug,
-              priceCents: product.priceCents,
+              priceCents: getSellingPriceCents(product),
+              ...(product.stockQuantity !== undefined
+                ? { stockQuantity: product.stockQuantity }
+                : {}),
             }}
             quantity={1}
+            disabled={product.stockQuantity === 0}
           >
-            Add to cart
+            {product.stockQuantity === 0 ? "Out of stock" : "Add to cart"}
           </CartAddButton>
           <Button
             variant="ghost"
@@ -696,11 +741,8 @@ function ProductDetail({
             {productQuery.data.product.name}
           </h2>
           <p className="product-detail-description">{productQuery.data.product.description}</p>
-          {Number.isSafeInteger(productQuery.data.product.priceCents) ? (
-            <p className="product-detail-price">
-              {formatZarCents(productQuery.data.product.priceCents)}
-            </p>
-          ) : null}
+          <ProductStockNotice product={productQuery.data.product} />
+          <ProductPrice product={productQuery.data.product} className="product-detail-price" />
           {productQuery.data.product.packaging ? (
             <p className="product-packaging">
               {productQuery.data.product.packaging.amount}{" "}
@@ -713,11 +755,15 @@ function ProductDetail({
                 id: productQuery.data.product.id,
                 name: productQuery.data.product.name,
                 slug: productQuery.data.product.slug,
-                priceCents: productQuery.data.product.priceCents,
+                priceCents: getSellingPriceCents(productQuery.data.product),
+                ...(productQuery.data.product.stockQuantity !== undefined
+                  ? { stockQuantity: productQuery.data.product.stockQuantity }
+                  : {}),
               }}
               quantity={1}
+              disabled={productQuery.data.product.stockQuantity === 0}
             >
-              Add to cart
+              {productQuery.data.product.stockQuantity === 0 ? "Out of stock" : "Add to cart"}
             </CartAddButton>
           </div>
           <p className="product-detail-note">

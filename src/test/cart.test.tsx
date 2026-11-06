@@ -20,6 +20,21 @@ const secondProduct = {
   slug: "chamomile-product",
   priceCents: 8900,
 };
+
+function publicProductForCart(item: typeof product | typeof secondProduct, fields: Record<string, unknown> = {}) {
+  return {
+    id: item.id,
+    name: item.name,
+    slug: item.slug,
+    description: `${item.name} description`,
+    category: { id: "category-1", name: "Botanical care", slug: "botanical-care" },
+    priceCents: item.priceCents,
+    imageReferences: [],
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    ...fields,
+  };
+}
 const authenticatedSession = {
   status: "authenticated",
   user: {
@@ -68,10 +83,12 @@ function installCartApi({
   initialQuantity = 0,
   failFirstCartRead = false,
   delayAdd = false,
+  unavailableCart = false,
 }: {
   initialQuantity?: number;
   failFirstCartRead?: boolean;
   delayAdd?: boolean;
+  unavailableCart?: boolean;
 } = {}) {
   let quantity = initialQuantity;
   let cartReadCount = 0;
@@ -101,10 +118,33 @@ function installCartApi({
       });
     }
 
+    if (url.pathname.endsWith(`/products/${product.slug}`)) {
+      return jsonResponse({ product: publicProductForCart(product) });
+    }
+
     if (url.pathname.endsWith("/cart") && method === "GET") {
       cartReadCount += 1;
       if (failFirstCartRead && cartReadCount === 1) {
         return jsonResponse({ error: "Cart temporarily unavailable." }, 503);
+      }
+      if (unavailableCart) {
+        return jsonResponse({
+          cart: {
+            items: [{
+              productId,
+              quantity: 1,
+              available: false,
+              stockQuantity: 0,
+              product: { name: product.name, slug: product.slug },
+              unitPriceCents: null,
+              lineSubtotalCents: null,
+            }],
+            itemCount: 1,
+            currency: "ZAR",
+            totalCents: 0,
+            hasUnavailableItems: true,
+          },
+        });
       }
       return jsonResponse({ cart: makeCart(quantity) });
     }
@@ -147,9 +187,11 @@ function installCartApi({
 function renderCart({
   includeSecondProduct = false,
   includeTestControls = false,
+  cartProduct = product,
 }: {
   includeSecondProduct?: boolean;
   includeTestControls?: boolean;
+  cartProduct?: typeof product;
 } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -161,7 +203,7 @@ function renderCart({
     <QueryClientProvider client={queryClient}>
       <CartProvider>
         <CartTrigger />
-        <CartAddButton product={product} />
+        <CartAddButton product={cartProduct} />
         {includeSecondProduct ? (
           <CartAddButton product={secondProduct}>Add Product B</CartAddButton>
         ) : null}
@@ -195,10 +237,14 @@ function installGuestLifecycleApi({
   initiallyAuthenticated = false,
   initialQuantities = {},
   failFirstAdd = false,
+  catalogueStockQuantity,
+  catalogueSalePriceCents,
 }: {
   initiallyAuthenticated?: boolean;
   initialQuantities?: Record<string, number>;
   failFirstAdd?: boolean;
+  catalogueStockQuantity?: number;
+  catalogueSalePriceCents?: number;
 } = {}) {
   const quantities = new Map(Object.entries(initialQuantities));
   let shouldFailFirstAdd = failFirstAdd;
@@ -235,6 +281,24 @@ function installGuestLifecycleApi({
       return initiallyAuthenticated
         ? jsonResponse({ user: authenticatedSession.user })
         : jsonResponse({ error: "Authentication required." }, 401);
+    }
+    if (url.pathname.endsWith(`/products/${product.slug}`)) {
+      return jsonResponse({
+        product: publicProductForCart(
+          product,
+          {
+            ...(catalogueStockQuantity === undefined
+              ? {}
+              : { stockQuantity: catalogueStockQuantity }),
+            ...(catalogueSalePriceCents === undefined
+              ? {}
+              : { salePriceCents: catalogueSalePriceCents }),
+          },
+        ),
+      });
+    }
+    if (url.pathname.endsWith(`/products/${secondProduct.slug}`)) {
+      return jsonResponse({ product: publicProductForCart(secondProduct) });
     }
     if (url.pathname.endsWith("/cart") && method === "GET") {
       return jsonResponse({ cart: cartResponse() });
@@ -360,6 +424,17 @@ describe("storefront cart", () => {
     ).toHaveLength(2);
   }, 15000);
 
+  it("retains and labels an unavailable authenticated item while blocking checkout", async () => {
+    installCartApi({ unavailableCart: true });
+    renderCart();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open cart with 1 items" }));
+    expect(await screen.findByText("Aloe product")).toBeVisible();
+    expect(await screen.findByText("Out of stock")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove Aloe product from cart" })).toBeEnabled();
+  }, 15000);
+
   it("prevents duplicate adds while a cart mutation is pending", async () => {
     const { releaseAdd } = installCartApi({ delayAdd: true });
     renderCart();
@@ -401,6 +476,63 @@ describe("storefront cart", () => {
     expect(screen.getByText("2", { selector: ".cart-quantity-row span" })).toBeVisible();
     expect(localStorage.getItem("healthyways.guest-cart.v1")).toContain(productId);
     expect(requests.some((path) => path.includes("/cart"))).toBe(false);
+  }, 15000);
+
+  it("allows low-stock additions only up to the backend-reported quantity", async () => {
+    const { requests } = installGuestLifecycleApi({
+      initiallyAuthenticated: true,
+      catalogueStockQuantity: 1,
+    });
+    window.history.replaceState({}, "", "/preview");
+    renderCart({ cartProduct: { ...product, stockQuantity: 1 } });
+
+    const add = await screen.findByRole("button", { name: "Add to cart" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+    expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
+    expect(
+      await screen.findByText("Only 1 left in stock", { selector: ".cart-item-stock" }),
+    ).toBeVisible();
+    fireEvent.click(add);
+
+    expect(await screen.findByText("Only 1 left in stock.")).toBeVisible();
+    expect(requests.filter(({ method, path }) => method === "POST" && path.endsWith("/cart/items"))).toHaveLength(1);
+  }, 15000);
+
+  it("keeps a guest cart line visible and blocks checkout when stock reaches zero", async () => {
+    installGuestLifecycleApi({
+      initiallyAuthenticated: false,
+      catalogueStockQuantity: 0,
+    });
+    window.history.replaceState({}, "", "/preview");
+    renderCart({ cartProduct: { ...product, stockQuantity: 4 } });
+
+    const add = await screen.findByRole("button", { name: "Add to cart" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+
+    expect(await screen.findByText("Aloe product")).toBeVisible();
+    expect(await screen.findByText("Out of stock")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
+    expect(localStorage.getItem("healthyways.guest-cart.v1")).toContain(productId);
+  }, 15000);
+
+  it("uses the current sale price for guest cart lines and subtotal", async () => {
+    installGuestLifecycleApi({
+      initiallyAuthenticated: false,
+      catalogueSalePriceCents: 10000,
+    });
+    window.history.replaceState({}, "", "/preview");
+    renderCart({ cartProduct: { ...product, priceCents: 10000 } });
+
+    const add = await screen.findByRole("button", { name: "Add to cart" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+    expect(await screen.findByText("SALE", { selector: ".cart-item-sale-badge" })).toBeVisible();
+    expect(screen.getByText(getZarPriceMatcher(unitPriceCents), { selector: "del" })).toBeVisible();
+    expect(screen.getByText(getZarPriceMatcher(10000), { selector: ".cart-item-price" })).toBeVisible();
+    expect(screen.getByText(getZarPriceMatcher(10000), { selector: ".cart-subtotal" })).toBeVisible();
+    expect(screen.getByText(getZarPriceMatcher(10000), { selector: ".cart-summary strong" })).toBeVisible();
   }, 15000);
 
   it("merges guest products into the signed-in cart without duplicating matching lines", async () => {

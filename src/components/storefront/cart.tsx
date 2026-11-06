@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import {
   createContext,
@@ -20,14 +20,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ApiHttpError, CsrfTokenError, PreviewMutationBlockedError } from "@/lib/api/client";
+import { catalogueApi, getSellingPriceCents, type PublicProduct } from "@/lib/api/catalogue";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
 import { authApi } from "@/lib/api/auth";
+import { getAllowedProductImageUrls } from "@/lib/image-url";
 import { formatZarCents } from "@/lib/money";
 
 interface CartContextValue {
   isOpen: boolean;
   setIsOpen: (nextValue: boolean) => void;
   cart: Cart | undefined;
+  isGuest: boolean;
   isCartLoading: boolean;
   cartError: Error | null;
   retryCart: () => Promise<unknown>;
@@ -51,11 +54,19 @@ interface GuestCartProduct {
   name: string;
   slug: string;
   priceCents: number;
+  stockQuantity?: number;
 }
 
 interface PendingGuestCartMerge {
   userId: string;
   quantities: Record<string, number>;
+}
+
+class CartValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CartValidationError";
+  }
 }
 
 function makeCart(items: CartLine[]): Cart {
@@ -64,7 +75,13 @@ function makeCart(items: CartLine[]): Cart {
   if (!Number.isSafeInteger(totalCents) || !Number.isSafeInteger(itemCount)) {
     throw new Error("Cart totals exceed the supported limit.");
   }
-  return { items, itemCount, currency: "ZAR", totalCents, hasUnavailableItems: false };
+  const hasUnavailableItems = items.some(
+    (item) =>
+      !item.available ||
+      (item.stockQuantity !== undefined &&
+        (item.stockQuantity === 0 || item.quantity > item.stockQuantity)),
+  );
+  return { items, itemCount, currency: "ZAR", totalCents, hasUnavailableItems };
 }
 
 function readGuestCart(): Cart {
@@ -103,7 +120,11 @@ function readGuestCart(): Cart {
       !("unitPriceCents" in entry) ||
       typeof entry.unitPriceCents !== "number" ||
       !Number.isSafeInteger(entry.unitPriceCents) ||
-      entry.unitPriceCents <= 0
+      entry.unitPriceCents <= 0 ||
+      ("stockQuantity" in entry &&
+        (typeof entry.stockQuantity !== "number" ||
+          !Number.isSafeInteger(entry.stockQuantity) ||
+          entry.stockQuantity < 0))
     ) {
       throw new Error("The saved guest cart contains an invalid item.");
     }
@@ -115,6 +136,9 @@ function readGuestCart(): Cart {
       productId: entry.productId,
       quantity: entry.quantity,
       available: true,
+      ...("stockQuantity" in entry && typeof entry.stockQuantity === "number"
+        ? { stockQuantity: entry.stockQuantity }
+        : {}),
       product: { name: entry.product.name, slug: entry.product.slug },
       unitPriceCents: entry.unitPriceCents,
       lineSubtotalCents,
@@ -179,6 +203,16 @@ function getCartErrorMessage(error: unknown): string {
       typeof error.body === "object" &&
       error.body !== null &&
       !Array.isArray(error.body) &&
+      "message" in error.body &&
+      typeof error.body.message === "string" &&
+      error.body.message.trim()
+    ) {
+      return error.body.message;
+    }
+    if (
+      typeof error.body === "object" &&
+      error.body !== null &&
+      !Array.isArray(error.body) &&
       "error" in error.body &&
       typeof error.body.error === "string" &&
       error.body.error.trim()
@@ -191,6 +225,9 @@ function getCartErrorMessage(error: unknown): string {
     return "The cart request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
   }
   if (error instanceof PreviewMutationBlockedError) {
+    return error.message;
+  }
+  if (error instanceof CartValidationError) {
     return error.message;
   }
   return "The cart could not be reached. Check your connection and try again.";
@@ -244,6 +281,27 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
     mutationFn: async ({ product, quantity }: { product: GuestCartProduct; quantity: number }) => {
       const mutationUserId = cartUserId;
       try {
+        if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
+          throw new CartValidationError("Cart quantity must be between 1 and 99.");
+        }
+        const currentCart =
+          mutationUserId === "anonymous"
+            ? readGuestCart()
+            : queryClient.getQueryData<Cart>(["cart", mutationUserId]);
+        const existing = currentCart?.items.find((item) => item.productId === product.id);
+        const nextQuantity = (existing?.quantity ?? 0) + quantity;
+        if (nextQuantity > 99) {
+          throw new CartValidationError("A cart can contain up to 99 units of each product.");
+        }
+        const stockQuantity = product.stockQuantity ?? existing?.stockQuantity;
+        if (stockQuantity !== undefined && nextQuantity > stockQuantity) {
+          throw new CartValidationError(
+            stockQuantity === 0
+              ? "This product is out of stock."
+              : `Only ${stockQuantity} left in stock.`,
+          );
+        }
+
         if (mutationUserId === "anonymous") {
           if (
             !/^[a-f\d]{24}$/i.test(product.id) ||
@@ -253,25 +311,22 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
             !product.slug.trim() ||
             !Number.isSafeInteger(product.priceCents) ||
             product.priceCents <= 0 ||
-            !Number.isSafeInteger(quantity) ||
-            quantity < 1 ||
-            quantity > 99
+            (product.stockQuantity !== undefined &&
+              (!Number.isSafeInteger(product.stockQuantity) || product.stockQuantity < 0))
           ) {
             throw new Error("Product details are not valid for a guest cart.");
           }
-          const current = readGuestCart();
-          const existing = current.items.find((item) => item.productId === product.id);
-          const nextQuantity = Math.min(99, (existing?.quantity ?? 0) + quantity);
           const line: CartLine = {
             productId: product.id,
             quantity: nextQuantity,
             available: true,
+            ...(stockQuantity !== undefined ? { stockQuantity } : {}),
             product: { name: product.name, slug: product.slug },
             unitPriceCents: product.priceCents,
             lineSubtotalCents: product.priceCents * nextQuantity,
           };
           const updated = makeCart([
-            ...current.items.filter((item) => item.productId !== product.id),
+            ...(currentCart?.items ?? []).filter((item) => item.productId !== product.id),
             line,
           ]);
           saveGuestCart(updated);
@@ -306,6 +361,14 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
             throw new Error("Cart quantity must be between 1 and 99.");
           }
           const current = readGuestCart();
+          const currentItem = current.items.find((item) => item.productId === productId);
+          if (currentItem?.stockQuantity !== undefined && quantity > currentItem.stockQuantity) {
+            throw new CartValidationError(
+              currentItem.stockQuantity === 0
+                ? "This product is out of stock."
+                : `Only ${currentItem.stockQuantity} left in stock.`,
+            );
+          }
           const updated = makeCart(current.items.map((item) => item.productId === productId
             ? {
                 ...item,
@@ -467,6 +530,7 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
       isOpen,
       setIsOpen,
       cart: resolvedCart,
+      isGuest: cartUserId === "anonymous",
       isCartLoading,
       cartError,
       retryCart,
@@ -497,6 +561,7 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
     [
       addItemMutation,
       cartError,
+      cartUserId,
       clearCartMutation,
       isOpen,
       isSyncingGuestCart,
@@ -533,6 +598,184 @@ function getItemLineLabel(item: CartLine): string {
   return "Unavailable product";
 }
 
+interface CartLineView {
+  item: CartLine;
+  product?: PublicProduct;
+  stockQuantity?: number;
+  priceCents: number | null;
+  originalPriceCents?: number;
+  subtotalCents: number | null;
+  imageUrl?: string;
+  unavailable: boolean;
+  availabilityPending: boolean;
+  availabilityMessage: string | null;
+}
+
+function useCartLineViews(
+  items: CartLine[],
+  isGuest: boolean,
+  enabled = true,
+): CartLineView[] {
+  const productQueries = useQueries({
+    queries: items.map((item) => ({
+      queryKey: ["catalogue", "product", item.product?.slug ?? ""],
+      queryFn: () => {
+        if (!item.product?.slug) throw new Error("This cart item has no product reference.");
+        return catalogueApi.getProductBySlug(item.product.slug);
+      },
+      enabled: enabled && Boolean(item.product?.slug),
+      staleTime: 0,
+      retry: false,
+    })),
+  });
+
+  return items.map((item, index) => {
+    const query = productQueries[index];
+    const product = query?.data?.product;
+    const stockQuantity = product?.stockQuantity ?? item.stockQuantity;
+    const priceCents =
+      !item.available || item.unitPriceCents === null
+        ? null
+        : isGuest && product
+          ? getSellingPriceCents(product)
+          : item.unitPriceCents;
+    const salePriceApplies =
+      product?.salePriceCents !== undefined && priceCents === product.salePriceCents;
+    const unavailable =
+      !item.available ||
+      stockQuantity === 0 ||
+      (stockQuantity !== undefined && item.quantity > stockQuantity) ||
+      (query?.error instanceof ApiHttpError && query.error.status === 404);
+    const availabilityMessage =
+      stockQuantity === 0
+        ? "Out of stock"
+        : !item.available || (query?.error instanceof ApiHttpError && query.error.status === 404)
+          ? "Currently unavailable"
+          : stockQuantity !== undefined && item.quantity > stockQuantity
+            ? `Only ${stockQuantity} left in stock. Reduce the quantity to continue.`
+            : stockQuantity !== undefined && stockQuantity <= 5
+              ? `Only ${stockQuantity} left in stock`
+              : null;
+    const subtotalCents =
+      priceCents === null
+        ? null
+        : isGuest && product
+          ? priceCents * item.quantity
+          : item.lineSubtotalCents;
+
+    return {
+      item,
+      ...(product ? { product } : {}),
+      ...(stockQuantity !== undefined ? { stockQuantity } : {}),
+      priceCents,
+      ...(salePriceApplies && product ? { originalPriceCents: product.priceCents } : {}),
+      subtotalCents,
+      ...(product ? { imageUrl: getAllowedProductImageUrls(product.imageReferences)[0] } : {}),
+      unavailable,
+      availabilityPending: Boolean(query?.isFetching),
+      availabilityMessage,
+    };
+  });
+}
+
+function CartItemRow({
+  view,
+  isBusy,
+  onUpdate,
+  onRemove,
+}: {
+  view: CartLineView;
+  isBusy: boolean;
+  onUpdate: (productId: string, quantity: number) => void;
+  onRemove: (productId: string) => void;
+}) {
+  const { item } = view;
+  const label = getItemLineLabel(item);
+
+  return (
+    <div className="cart-item">
+      {view.imageUrl ? (
+        <img className="cart-product-image" src={view.imageUrl} alt="" loading="lazy" />
+      ) : (
+        <div className="cart-product-image cart-product-image-placeholder" aria-hidden="true">
+          <ShoppingBag size={18} />
+        </div>
+      )}
+      <div className="cart-item-copy">
+        <span className="cart-item-name">{label}</span>
+        {view.priceCents !== null ? (
+          <span className="cart-item-price-stack">
+            {view.originalPriceCents ? (
+              <>
+                <span className="cart-item-sale-badge">SALE</span>
+                <del>{formatZarCents(view.originalPriceCents)}</del>
+              </>
+            ) : null}
+            <span className="cart-item-price">{formatZarCents(view.priceCents)}</span>
+          </span>
+        ) : (
+          <span className="cart-item-price cart-item-unavailable">Price unavailable</span>
+        )}
+        {view.availabilityMessage ? (
+          <span
+            className={`cart-item-stock ${view.unavailable ? "cart-item-unavailable" : ""}`}
+            role={view.unavailable ? "alert" : undefined}
+          >
+            {view.availabilityMessage}
+          </span>
+        ) : null}
+      </div>
+      <div className="cart-item-controls">
+        <div className="cart-quantity-row">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="cart-quantity-button"
+            aria-label={`Decrease quantity for ${label}`}
+            onClick={() => onUpdate(item.productId, Math.max(1, item.quantity - 1))}
+            disabled={isBusy || !item.available || item.quantity <= 1}
+          >
+            <Minus aria-hidden="true" size={14} />
+          </Button>
+          <span aria-live="polite">{item.quantity}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="cart-quantity-button"
+            aria-label={`Increase quantity for ${label}`}
+            onClick={() => onUpdate(item.productId, Math.min(99, item.quantity + 1))}
+            disabled={
+              isBusy ||
+              !item.available ||
+              item.quantity >= 99 ||
+              (view.stockQuantity !== undefined && item.quantity >= view.stockQuantity)
+            }
+          >
+            <Plus aria-hidden="true" size={14} />
+          </Button>
+        </div>
+        {view.subtotalCents !== null ? (
+          <span className="cart-subtotal">{formatZarCents(view.subtotalCents)}</span>
+        ) : (
+          <span className="cart-subtotal cart-item-unavailable">—</span>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={`Remove ${label} from cart`}
+          onClick={() => onRemove(item.productId)}
+          disabled={isBusy}
+        >
+          <Trash2 aria-hidden="true" size={15} />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function CartTrigger() {
   const cart = useOptionalCart();
   const totalQuantity = cart?.totalQuantity ?? 0;
@@ -558,6 +801,7 @@ export function CartSheet({ onSignIn, onCheckout }: { onSignIn?: () => void; onC
     isOpen,
     setIsOpen,
     cart,
+    isGuest,
     isCartLoading,
     cartError,
     retryCart,
@@ -571,6 +815,13 @@ export function CartSheet({ onSignIn, onCheckout }: { onSignIn?: () => void; onC
   } = useCart();
 
   const cartItems = cart?.items ?? [];
+  const lineViews = useCartLineViews(cartItems, isGuest, isOpen);
+  const hasUnavailableItems =
+    Boolean(cart?.hasUnavailableItems) || lineViews.some((view) => view.unavailable);
+  const availabilityPending = lineViews.some((view) => view.availabilityPending);
+  const subtotalCents = isGuest
+    ? lineViews.reduce((total, view) => total + (view.subtotalCents ?? 0), 0)
+    : cart?.totalCents ?? 0;
 
   return (
     <Sheet
@@ -631,79 +882,33 @@ export function CartSheet({ onSignIn, onCheckout }: { onSignIn?: () => void; onC
         ) : (
           <>
             <div className="cart-list" aria-live="polite">
-              {cartItems.map((item) => (
-                <div className="cart-item" key={item.productId}>
-                  <div className="cart-item-copy">
-                    <span className="cart-item-name">{getItemLineLabel(item)}</span>
-                    {item.available && item.unitPriceCents !== null ? (
-                      <span className="cart-item-price">{formatZarCents(item.unitPriceCents)}</span>
-                    ) : (
-                      <span className="cart-item-price cart-item-unavailable">Unavailable</span>
-                    )}
-                  </div>
-
-                  <div className="cart-item-controls">
-                    <div className="cart-quantity-row">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="cart-quantity-button"
-                        aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
-                        onClick={() =>
-                          void updateItem(item.productId, Math.max(1, item.quantity - 1)).catch(
-                            () => undefined,
-                          )
-                        }
-                        disabled={isBusy || item.quantity <= 1}
-                      >
-                        <Minus aria-hidden="true" size={14} />
-                      </Button>
-                      <span aria-live="polite">{item.quantity}</span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="cart-quantity-button"
-                        aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
-                        onClick={() =>
-                          void updateItem(item.productId, Math.min(99, item.quantity + 1)).catch(
-                            () => undefined,
-                          )
-                        }
-                        disabled={isBusy || item.quantity >= 99}
-                      >
-                        <Plus aria-hidden="true" size={14} />
-                      </Button>
-                    </div>
-
-                    {item.available && item.lineSubtotalCents !== null ? (
-                      <span className="cart-subtotal">
-                        {formatZarCents(item.lineSubtotalCents)}
-                      </span>
-                    ) : (
-                      <span className="cart-subtotal cart-item-unavailable">—</span>
-                    )}
-
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Remove ${getItemLineLabel(item)} from cart`}
-                      onClick={() => void removeItem(item.productId).catch(() => undefined)}
-                      disabled={isBusy}
-                    >
-                      <Trash2 aria-hidden="true" size={15} />
-                    </Button>
-                  </div>
-                </div>
+              {lineViews.map((view) => (
+                <CartItemRow
+                  key={view.item.productId}
+                  view={view}
+                  isBusy={isBusy}
+                  onUpdate={(productId, quantity) =>
+                    void updateItem(productId, quantity).catch(() => undefined)
+                  }
+                  onRemove={(productId) => void removeItem(productId).catch(() => undefined)}
+                />
               ))}
             </div>
 
+            {availabilityPending ? (
+              <p className="cart-availability-status" role="status">
+                Checking current product availability…
+              </p>
+            ) : null}
+            {hasUnavailableItems ? (
+              <p className="cart-unavailable-summary" role="alert">
+                Update or remove unavailable items before checkout.
+              </p>
+            ) : null}
             <div className="cart-summary">
               <div>
                 <span className="cart-summary-label">Merchandise subtotal</span>
-                <strong>{formatZarCents(cart.totalCents)}</strong>
+                <strong>{formatZarCents(subtotalCents)}</strong>
               </div>
               <Button
                 variant="outline"
@@ -713,21 +918,32 @@ export function CartSheet({ onSignIn, onCheckout }: { onSignIn?: () => void; onC
                 Clear cart
               </Button>
             </div>
-            <Button
-              type="button"
-              variant="default"
-              disabled={isBusy || cart.hasUnavailableItems}
-              onClick={() => {
-                void syncGuestCart()
-                  .then(() => {
-                    setIsOpen(false);
-                    onCheckout?.();
-                  })
-                  .catch(() => undefined);
-              }}
-            >
-              Continue to checkout
-            </Button>
+            <div className="cart-sheet-actions">
+              <Button
+                type="button"
+                variant="default"
+                className="cart-checkout-button"
+                disabled={isBusy || availabilityPending || hasUnavailableItems}
+                onClick={() => {
+                  void syncGuestCart()
+                    .then(() => {
+                      setIsOpen(false);
+                      onCheckout?.();
+                    })
+                    .catch(() => undefined);
+                }}
+              >
+                Continue to checkout
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="cart-continue-button"
+                onClick={() => setIsOpen(false)}
+              >
+                Continue shopping
+              </Button>
+            </div>
           </>
         )}
       </SheetContent>
@@ -746,6 +962,7 @@ export function CartPage({
 }) {
   const {
     cart,
+    isGuest,
     isCartLoading,
     cartError,
     retryCart,
@@ -756,6 +973,13 @@ export function CartPage({
     clearCart,
     syncGuestCart,
   } = useCart();
+  const lineViews = useCartLineViews(cart?.items ?? [], isGuest);
+  const hasUnavailableItems =
+    Boolean(cart?.hasUnavailableItems) || lineViews.some((view) => view.unavailable);
+  const availabilityPending = lineViews.some((view) => view.availabilityPending);
+  const subtotalCents = isGuest
+    ? lineViews.reduce((total, view) => total + (view.subtotalCents ?? 0), 0)
+    : cart?.totalCents ?? 0;
 
   return (
     <section className="catalogue-section" aria-labelledby="cart-page-title">
@@ -800,69 +1024,32 @@ export function CartPage({
       ) : (
         <>
           <div className="cart-list" aria-live="polite">
-            {cart.items.map((item) => (
-              <div className="cart-item" key={item.productId}>
-                <div className="cart-item-copy">
-                  <span className="cart-item-name">{getItemLineLabel(item)}</span>
-                  {item.available && item.unitPriceCents !== null ? (
-                    <span className="cart-item-price">{formatZarCents(item.unitPriceCents)}</span>
-                  ) : (
-                    <span className="cart-item-price cart-item-unavailable">
-                      Unavailable — remove this item to continue
-                    </span>
-                  )}
-                </div>
-                <div className="cart-item-controls">
-                  <div className="cart-quantity-row">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label={`Decrease quantity for ${getItemLineLabel(item)}`}
-                      disabled={isBusy || !item.available || item.quantity <= 1}
-                      onClick={() =>
-                        void updateItem(item.productId, item.quantity - 1).catch(() => undefined)
-                      }
-                    >
-                      <Minus aria-hidden="true" size={14} />
-                    </Button>
-                    <span aria-live="polite">{item.quantity}</span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label={`Increase quantity for ${getItemLineLabel(item)}`}
-                      disabled={isBusy || !item.available || item.quantity >= 99}
-                      onClick={() =>
-                        void updateItem(item.productId, item.quantity + 1).catch(() => undefined)
-                      }
-                    >
-                      <Plus aria-hidden="true" size={14} />
-                    </Button>
-                  </div>
-                  {item.available && item.lineSubtotalCents !== null ? (
-                    <span className="cart-subtotal">{formatZarCents(item.lineSubtotalCents)}</span>
-                  ) : (
-                    <span className="cart-subtotal cart-item-unavailable">—</span>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Remove ${getItemLineLabel(item)} from cart`}
-                    disabled={isBusy}
-                    onClick={() => void removeItem(item.productId).catch(() => undefined)}
-                  >
-                    <Trash2 aria-hidden="true" size={15} />
-                  </Button>
-                </div>
-              </div>
+            {lineViews.map((view) => (
+              <CartItemRow
+                key={view.item.productId}
+                view={view}
+                isBusy={isBusy}
+                onUpdate={(productId, quantity) =>
+                  void updateItem(productId, quantity).catch(() => undefined)
+                }
+                onRemove={(productId) => void removeItem(productId).catch(() => undefined)}
+              />
             ))}
           </div>
+          {availabilityPending ? (
+            <p className="cart-availability-status" role="status">
+              Checking current product availability…
+            </p>
+          ) : null}
+          {hasUnavailableItems ? (
+            <p className="cart-unavailable-summary" role="alert">
+              Update or remove unavailable items before checkout.
+            </p>
+          ) : null}
           <div className="cart-summary">
             <div>
               <span className="cart-summary-label">Merchandise subtotal</span>
-              <strong>{formatZarCents(cart.totalCents)}</strong>
+              <strong>{formatZarCents(subtotalCents)}</strong>
             </div>
             <Button
               type="button"
@@ -875,7 +1062,7 @@ export function CartPage({
           </div>
           <Button
             type="button"
-            disabled={isBusy || cart.hasUnavailableItems}
+            disabled={isBusy || availabilityPending || hasUnavailableItems}
             onClick={() => {
               void syncGuestCart().then(onCheckout).catch(() => undefined);
             }}

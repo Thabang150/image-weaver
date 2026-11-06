@@ -1160,12 +1160,25 @@ body {
   font-weight: 700;
 }
 .healthyways-preview-scope .cart-sheet {
+  display: flex;
+  width: min(440px, 100vw);
   max-width: min(440px, 100%);
+  height: 100dvh;
+  max-height: 100dvh;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  border-color: var(--border);
+  background: var(--background);
 }
 .healthyways-preview-scope .cart-sheet-header {
-  margin-bottom: 8px;
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  padding-right: 28px;
+  text-align: left;
 }
 .healthyways-preview-scope .cart-notice {
+  flex: 0 0 auto;
   margin: 0 0 12px;
   border: 1px solid var(--border);
   background: color-mix(in oklab, var(--secondary) 88%, transparent);
@@ -1187,31 +1200,83 @@ body {
   padding: 30px 12px;
 }
 .healthyways-preview-scope .cart-list {
+  min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
 }
 .healthyways-preview-scope .cart-item {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
   gap: 12px;
-  padding: 12px 0;
+  padding: 12px 0 14px;
   border-bottom: 1px solid var(--border);
 }
 .healthyways-preview-scope .cart-item-copy {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 .healthyways-preview-scope .cart-item-name {
   font-weight: 600;
+  line-height: 1.35;
 }
 .healthyways-preview-scope .cart-item-price,
 .healthyways-preview-scope .cart-subtotal {
   font-size: 12px;
   color: var(--muted-foreground);
+}
+.healthyways-preview-scope .cart-item-price-stack {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+}
+.healthyways-preview-scope .cart-item-price-stack del {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.healthyways-preview-scope .cart-item-price-stack .cart-item-price {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+.healthyways-preview-scope .cart-item-sale-badge,
+.healthyways-preview-scope .product-sale-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  background: color-mix(in oklab, var(--gold) 20%, var(--background));
+  color: var(--primary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.5;
+  padding: 2px 5px;
+}
+.healthyways-preview-scope .cart-item-stock {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.healthyways-preview-scope .cart-availability-status,
+.healthyways-preview-scope .cart-unavailable-summary {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.healthyways-preview-scope .cart-availability-status {
+  color: var(--muted-foreground);
+}
+.healthyways-preview-scope .cart-unavailable-summary {
+  color: var(--destructive);
 }
 .healthyways-preview-scope .cart-item-unavailable {
   color: var(--destructive);
@@ -1219,7 +1284,7 @@ body {
 .healthyways-preview-scope .cart-item-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .healthyways-preview-scope .cart-quantity-row {
   display: inline-flex;
@@ -1231,13 +1296,63 @@ body {
   height: 28px;
 }
 .healthyways-preview-scope .cart-summary {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-top: 18px;
-  padding-top: 16px;
+  margin-top: 0;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+.healthyways-preview-scope .cart-sheet-actions {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+.healthyways-preview-scope .cart-sheet-actions > button {
+  width: 100%;
+}
+.healthyways-preview-scope .cart-product-image {
+  width: 56px;
+  height: 56px;
+  flex-basis: 56px;
+  border-radius: 3px;
+}
+.healthyways-preview-scope .product-price-sale {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+}
+.healthyways-preview-scope .product-price-sale del {
+  color: var(--muted-foreground);
+  font-size: 0.82em;
+  font-weight: 400;
+}
+.healthyways-preview-scope .product-price-sale strong {
+  color: var(--primary);
+  font-size: inherit;
+}
+.healthyways-preview-scope .product-sale-saving {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 400;
+}
+.healthyways-preview-scope .product-stock-notice {
+  margin: 5px 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.healthyways-preview-scope .product-stock-out {
+  color: var(--destructive);
+  font-weight: 600;
+}
+.healthyways-preview-scope .preview-featured-price {
+  margin: 7px 0;
+  font-size: 15px;
 }
 .healthyways-preview-scope .cart-summary-label {
   display: block;
@@ -1281,9 +1396,9 @@ body {
   color: var(--primary-foreground);
 }
 .healthyways-preview-scope .cart-product-image {
-  width: 64px;
-  height: 64px;
-  flex: 0 0 64px;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
   object-fit: cover;
   border-radius: 5px;
   background: var(--muted);
@@ -1295,6 +1410,27 @@ body {
 }
 .healthyways-preview-scope .cart-item-copy {
   flex: 1;
+}
+@media (max-width: 640px) {
+  .healthyways-preview-scope .cart-sheet {
+    width: 100vw;
+    max-width: 100vw;
+    padding: 18px;
+  }
+  .healthyways-preview-scope .cart-item {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 8px 10px;
+  }
+  .healthyways-preview-scope .cart-product-image {
+    width: 48px;
+    height: 48px;
+    grid-row: span 2;
+    flex-basis: 48px;
+  }
+  .healthyways-preview-scope .cart-item-controls {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
 }
 .healthyways-preview-scope .checkout-panel {
   display: grid;
@@ -3373,6 +3509,24 @@ body {
   font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card > .preview-featured-price {
+  margin: 10px 0 0;
+  color: #344538;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card > .product-stock-notice {
+  margin: 8px 0 0;
+  color: #697066;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.healthyways-preview-scope .preview-home-product-grid .preview-featured-card > .product-stock-out {
+  color: var(--destructive);
 }
 .healthyways-preview-scope .preview-home-product-grid .preview-featured-card > button:last-child {
   width: 100%;

@@ -26,13 +26,134 @@ interface CartContextValue {
   isBusy: boolean;
   notice: string | null;
   setNotice: (nextNotice: string | null) => void;
-  addItem: (productId: string, quantity?: number) => Promise<void>;
+  addItem: (product: GuestCartProduct, quantity?: number) => Promise<void>;
   updateItem: (productId: string, quantity: number) => Promise<void>;
   removeItem: (productId: string) => Promise<void>;
   clearCart: () => Promise<void>;
+  syncGuestCart: () => Promise<void>;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
+const GUEST_CART_KEY = "healthyways.guest-cart.v1";
+const GUEST_CART_MERGE_KEY = "healthyways.guest-cart-merge.v1";
+
+interface GuestCartProduct {
+  id: string;
+  name: string;
+  slug: string;
+  priceCents: number;
+}
+
+interface PendingGuestCartMerge {
+  userId: string;
+  quantities: Record<string, number>;
+}
+
+function makeCart(items: CartLine[]): Cart {
+  const totalCents = items.reduce((total, item) => total + (item.lineSubtotalCents ?? 0), 0);
+  const itemCount = items.reduce((total, item) => total + item.quantity, 0);
+  if (!Number.isSafeInteger(totalCents) || !Number.isSafeInteger(itemCount)) {
+    throw new Error("Cart totals exceed the supported limit.");
+  }
+  return { items, itemCount, currency: "ZAR", totalCents, hasUnavailableItems: false };
+}
+
+function readGuestCart(): Cart {
+  if (typeof window === "undefined") return makeCart([]);
+  const saved = window.localStorage.getItem(GUEST_CART_KEY);
+  if (saved === null) return makeCart([]);
+
+  let value: unknown;
+  try {
+    value = JSON.parse(saved) as unknown;
+  } catch (error) {
+    throw new Error("The saved guest cart could not be read.", { cause: error });
+  }
+  if (typeof value !== "object" || value === null || !("items" in value) || !Array.isArray(value.items)) {
+    throw new Error("The saved guest cart has an invalid format.");
+  }
+
+  const items = value.items.map((entry): CartLine => {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      !("productId" in entry) ||
+      typeof entry.productId !== "string" ||
+      !("quantity" in entry) ||
+      typeof entry.quantity !== "number" ||
+      !Number.isSafeInteger(entry.quantity) ||
+      entry.quantity < 1 ||
+      entry.quantity > 99 ||
+      !("product" in entry) ||
+      typeof entry.product !== "object" ||
+      entry.product === null ||
+      !("name" in entry.product) ||
+      typeof entry.product.name !== "string" ||
+      !("slug" in entry.product) ||
+      typeof entry.product.slug !== "string" ||
+      !("unitPriceCents" in entry) ||
+      typeof entry.unitPriceCents !== "number" ||
+      !Number.isSafeInteger(entry.unitPriceCents) ||
+      entry.unitPriceCents <= 0
+    ) {
+      throw new Error("The saved guest cart contains an invalid item.");
+    }
+    const lineSubtotalCents = entry.unitPriceCents * entry.quantity;
+    if (!Number.isSafeInteger(lineSubtotalCents)) {
+      throw new Error("The saved guest cart contains an invalid total.");
+    }
+    return {
+      productId: entry.productId,
+      quantity: entry.quantity,
+      available: true,
+      product: { name: entry.product.name, slug: entry.product.slug },
+      unitPriceCents: entry.unitPriceCents,
+      lineSubtotalCents,
+    };
+  });
+  return makeCart(items);
+}
+
+function saveGuestCart(cart: Cart): void {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(GUEST_CART_KEY, JSON.stringify(cart));
+  }
+}
+
+function readPendingGuestCartMerge(): PendingGuestCartMerge | null {
+  if (typeof window === "undefined") return null;
+  const saved = window.localStorage.getItem(GUEST_CART_MERGE_KEY);
+  if (saved === null) return null;
+
+  let value: unknown;
+  try {
+    value = JSON.parse(saved) as unknown;
+  } catch (error) {
+    throw new Error("The saved cart transfer could not be read.", { cause: error });
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("userId" in value) ||
+    typeof value.userId !== "string" ||
+    !("quantities" in value) ||
+    typeof value.quantities !== "object" ||
+    value.quantities === null ||
+    Array.isArray(value.quantities)
+  ) {
+    throw new Error("The saved cart transfer has an invalid format.");
+  }
+  for (const [productId, quantity] of Object.entries(value.quantities)) {
+    if (!/^[a-f\d]{24}$/i.test(productId) || typeof quantity !== "number" || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
+      throw new Error("The saved cart transfer contains an invalid item.");
+    }
+  }
+  const quantities: Record<string, number> = {};
+  for (const [productId, quantity] of Object.entries(value.quantities)) {
+    if (typeof quantity === "number") quantities[productId] = quantity;
+  }
+  return { userId: value.userId, quantities };
+}
 
 function getCartErrorMessage(error: unknown): string {
   if (error instanceof ApiHttpError) {
@@ -86,19 +207,24 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
   const {
     data: cart,
     isPending: isCartPending,
-    error: cartError,
-    refetch: retryCart,
+    error: cartQueryError,
+    refetch: refetchCart,
   } = useQuery({
     queryKey: ["cart", cartUserId],
-    queryFn: () => cartApi.getCart(),
+    queryFn: () => hasAuthenticatedSession ? cartApi.getCart() : readGuestCart(),
     retry: false,
     staleTime: 30_000,
-    enabled: enabled && !isAdminAuthPage && hasAuthenticatedSession === true,
+    enabled: enabled && !isAdminAuthPage && sessionQuery.isSuccess,
   });
   const isCartLoading =
-    enabled && !isAdminAuthPage && hasAuthenticatedSession === true && isCartPending;
+    enabled &&
+    !isAdminAuthPage &&
+    (sessionQuery.isPending || (sessionQuery.isSuccess && isCartPending));
+  const cartError = cartQueryError ?? (sessionQuery.isError ? sessionQuery.error : null);
+  const resolvedCart = cart ?? (!enabled ? makeCart([]) : undefined);
+  const retryCart = sessionQuery.isError ? sessionQuery.refetch : refetchCart;
 
-  const totalQuantity = cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
+  const totalQuantity = resolvedCart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
 
   const currentCartUserId = () => {
     const session = queryClient.getQueryData<{ status: string; user?: { id: string } }>(["session"]);
@@ -106,10 +232,43 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
   };
 
   const addItemMutation = useMutation({
-    mutationFn: async ({ productId, quantity }: { productId: string; quantity: number }) => {
+    mutationFn: async ({ product, quantity }: { product: GuestCartProduct; quantity: number }) => {
       const mutationUserId = cartUserId;
       try {
-        return { cart: await cartApi.addItem(productId, quantity), mutationUserId };
+        if (mutationUserId === "anonymous") {
+          if (
+            !/^[a-f\d]{24}$/i.test(product.id) ||
+            typeof product.name !== "string" ||
+            !product.name.trim() ||
+            typeof product.slug !== "string" ||
+            !product.slug.trim() ||
+            !Number.isSafeInteger(product.priceCents) ||
+            product.priceCents <= 0 ||
+            !Number.isSafeInteger(quantity) ||
+            quantity < 1 ||
+            quantity > 99
+          ) {
+            throw new Error("Product details are not valid for a guest cart.");
+          }
+          const current = readGuestCart();
+          const existing = current.items.find((item) => item.productId === product.id);
+          const nextQuantity = Math.min(99, (existing?.quantity ?? 0) + quantity);
+          const line: CartLine = {
+            productId: product.id,
+            quantity: nextQuantity,
+            available: true,
+            product: { name: product.name, slug: product.slug },
+            unitPriceCents: product.priceCents,
+            lineSubtotalCents: product.priceCents * nextQuantity,
+          };
+          const updated = makeCart([
+            ...current.items.filter((item) => item.productId !== product.id),
+            line,
+          ]);
+          saveGuestCart(updated);
+          return { cart: updated, mutationUserId };
+        }
+        return { cart: await cartApi.addItem(product.id, quantity), mutationUserId };
       } catch (error) {
         throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId });
       }
@@ -132,7 +291,24 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
   const updateItemMutation = useMutation({
     mutationFn: async ({ productId, quantity }: { productId: string; quantity: number }) => {
       const mutationUserId = cartUserId;
-      try { return { cart: await cartApi.updateItem(productId, quantity), mutationUserId }; }
+      try {
+        if (mutationUserId === "anonymous") {
+          if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
+            throw new Error("Cart quantity must be between 1 and 99.");
+          }
+          const current = readGuestCart();
+          const updated = makeCart(current.items.map((item) => item.productId === productId
+            ? {
+                ...item,
+                quantity,
+                lineSubtotalCents: (item.unitPriceCents ?? 0) * quantity,
+              }
+            : item));
+          saveGuestCart(updated);
+          return { cart: updated, mutationUserId };
+        }
+        return { cart: await cartApi.updateItem(productId, quantity), mutationUserId };
+      }
       catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId }); }
     },
     onSuccess: ({ cart: updatedCart, mutationUserId }, variables) => {
@@ -147,7 +323,14 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
   const removeItemMutation = useMutation({
     mutationFn: async ({ productId }: { productId: string }) => {
       const mutationUserId = cartUserId;
-      try { return { cart: await cartApi.removeItem(productId), mutationUserId }; }
+      try {
+        if (mutationUserId === "anonymous") {
+          const updated = makeCart(readGuestCart().items.filter((item) => item.productId !== productId));
+          saveGuestCart(updated);
+          return { cart: updated, mutationUserId };
+        }
+        return { cart: await cartApi.removeItem(productId), mutationUserId };
+      }
       catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId }); }
     },
     onSuccess: ({ cart: updatedCart, mutationUserId }) => {
@@ -162,7 +345,17 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
   const clearCartMutation = useMutation({
     mutationFn: async () => {
       const mutationUserId = cartUserId;
-      try { return { cart: await cartApi.clearCart(), mutationUserId }; }
+      try {
+        if (mutationUserId === "anonymous") {
+          const updated = makeCart([]);
+          saveGuestCart(updated);
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem(GUEST_CART_MERGE_KEY);
+          }
+          return { cart: updated, mutationUserId };
+        }
+        return { cart: await cartApi.clearCart(), mutationUserId };
+      }
       catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Cart update failed"), { mutationUserId }); }
     },
     onSuccess: ({ cart: updatedCart, mutationUserId }) => {
@@ -174,11 +367,59 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
     },
   });
 
+  const [isSyncingGuestCart, setIsSyncingGuestCart] = useState(false);
+  const syncGuestCart = async () => {
+    if (cartUserId === "anonymous") return;
+    const guestCart = readGuestCart();
+    if (guestCart.items.length === 0) return;
+
+    setIsSyncingGuestCart(true);
+    try {
+      let pending = readPendingGuestCartMerge();
+      if (!pending || pending.userId !== cartUserId) {
+        const remoteCart = await cartApi.getCart();
+        const quantities = Object.fromEntries(guestCart.items.map((item) => {
+          const existingQuantity = remoteCart.items.find((remoteItem) => remoteItem.productId === item.productId)?.quantity ?? 0;
+          return [item.productId, Math.min(99, existingQuantity + item.quantity)];
+        }));
+        pending = { userId: cartUserId, quantities };
+        window.localStorage.setItem(GUEST_CART_MERGE_KEY, JSON.stringify(pending));
+      }
+
+      for (const [productId, targetQuantity] of Object.entries(pending.quantities)) {
+        let remoteCart = await cartApi.getCart();
+        const existing = remoteCart.items.find((item) => item.productId === productId);
+        if (!existing || existing.quantity < targetQuantity) {
+          remoteCart = existing
+            ? await cartApi.updateItem(productId, targetQuantity)
+            : await cartApi.addItem(productId, targetQuantity);
+        }
+        queryClient.setQueryData(["cart", cartUserId], remoteCart);
+
+        const remaining = makeCart(readGuestCart().items.filter((item) => item.productId !== productId));
+        saveGuestCart(remaining);
+        delete pending.quantities[productId];
+        if (Object.keys(pending.quantities).length === 0) {
+          window.localStorage.removeItem(GUEST_CART_MERGE_KEY);
+        } else {
+          window.localStorage.setItem(GUEST_CART_MERGE_KEY, JSON.stringify(pending));
+        }
+      }
+      queryClient.setQueryData(["cart", "anonymous"], readGuestCart());
+      setNotice("Your guest cart has been added to your account cart.");
+    } catch (error) {
+      setNotice(getCartErrorMessage(error));
+      throw error;
+    } finally {
+      setIsSyncingGuestCart(false);
+    }
+  };
+
   const value = useMemo<CartContextValue>(
     () => ({
       isOpen,
       setIsOpen,
-      cart,
+      cart: resolvedCart,
       isCartLoading,
       cartError,
       retryCart,
@@ -187,11 +428,12 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
         addItemMutation.isPending ||
         updateItemMutation.isPending ||
         removeItemMutation.isPending ||
-        clearCartMutation.isPending,
+        clearCartMutation.isPending ||
+        isSyncingGuestCart,
       notice,
       setNotice,
-      addItem: async (productId: string, quantity = 1) => {
-        await addItemMutation.mutateAsync({ productId, quantity });
+      addItem: async (product: GuestCartProduct, quantity = 1) => {
+        await addItemMutation.mutateAsync({ product, quantity });
       },
       updateItem: async (productId: string, quantity: number) => {
         await updateItemMutation.mutateAsync({ productId, quantity });
@@ -202,15 +444,18 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
       clearCart: async () => {
         await clearCartMutation.mutateAsync();
       },
+      syncGuestCart,
     }),
     [
       addItemMutation,
-      cart,
       cartError,
       clearCartMutation,
       isOpen,
+      isSyncingGuestCart,
       notice,
       removeItemMutation,
+      resolvedCart,
+      syncGuestCart,
       totalQuantity,
       updateItemMutation,
       isCartLoading,
@@ -274,6 +519,7 @@ export function CartSheet({ onSignIn, onCheckout }: { onSignIn?: () => void; onC
     updateItem,
     removeItem,
     clearCart,
+    syncGuestCart,
   } = useCart();
 
   const cartItems = cart?.items ?? [];
@@ -419,7 +665,19 @@ export function CartSheet({ onSignIn, onCheckout }: { onSignIn?: () => void; onC
                 Clear cart
               </Button>
             </div>
-            <Button type="button" variant="default" disabled={isBusy || cart.hasUnavailableItems} onClick={() => { setIsOpen(false); onCheckout?.(); }}>
+            <Button
+              type="button"
+              variant="default"
+              disabled={isBusy || cart.hasUnavailableItems}
+              onClick={() => {
+                void syncGuestCart()
+                  .then(() => {
+                    setIsOpen(false);
+                    onCheckout?.();
+                  })
+                  .catch(() => undefined);
+              }}
+            >
               Continue to checkout
             </Button>
           </>
@@ -448,6 +706,7 @@ export function CartPage({
     updateItem,
     removeItem,
     clearCart,
+    syncGuestCart,
   } = useCart();
 
   return (
@@ -566,7 +825,13 @@ export function CartPage({
               Clear cart
             </Button>
           </div>
-          <Button type="button" disabled={isBusy || cart.hasUnavailableItems} onClick={onCheckout}>
+          <Button
+            type="button"
+            disabled={isBusy || cart.hasUnavailableItems}
+            onClick={() => {
+              void syncGuestCart().then(onCheckout).catch(() => undefined);
+            }}
+          >
             Continue to checkout
           </Button>
           <Button type="button" variant="outline" onClick={onContinueShopping}>
@@ -579,12 +844,12 @@ export function CartPage({
 }
 
 export function CartAddButton({
-  productId,
+  product,
   quantity = 1,
   disabled = false,
   children,
 }: {
-  productId: string;
+  product: GuestCartProduct;
   quantity?: number;
   disabled?: boolean;
   children?: ReactNode;
@@ -601,7 +866,7 @@ export function CartAddButton({
       aria-busy={isBusy}
       onClick={() => {
         if (!cart) return;
-        void cart.addItem(productId, quantity).catch(() => undefined);
+        void cart.addItem(product, quantity).catch(() => undefined);
       }}
     >
       {isBusy ? "Adding…" : (children ?? "Add to cart")}

@@ -237,7 +237,15 @@ function ShopProductCard({
           <p className="product-price shop-card-price">{formatZarCents(product.priceCents)}</p>
         ) : null}
         <div className="shop-card-actions">
-          <CartAddButton productId={product.id} quantity={1}>
+          <CartAddButton
+            product={{
+              id: product.id,
+              name: product.name,
+              slug: product.slug,
+              priceCents: product.priceCents,
+            }}
+            quantity={1}
+          >
             Add to cart
           </CartAddButton>
           <Button
@@ -700,7 +708,15 @@ function ProductDetail({
             </p>
           ) : null}
           <div className="product-detail-actions">
-            <CartAddButton productId={productQuery.data.product.id} quantity={1}>
+            <CartAddButton
+              product={{
+                id: productQuery.data.product.id,
+                name: productQuery.data.product.name,
+                slug: productQuery.data.product.slug,
+                priceCents: productQuery.data.product.priceCents,
+              }}
+              quantity={1}
+            >
               Add to cart
             </CartAddButton>
           </div>

@@ -92,7 +92,15 @@ function FeaturedProduct({ product, onSelect }: { product: PublicProduct; onSele
         {product.shortDescription ? <p className="home-product-description">{product.shortDescription}</p> : null}
         <div className="home-product-buy">
           <span>{formatZarCents(product.priceCents)}</span>
-          <CartAddButton productId={product.id} quantity={1}>
+          <CartAddButton
+            product={{
+              id: product.id,
+              name: product.name,
+              slug: product.slug,
+              priceCents: product.priceCents,
+            }}
+            quantity={1}
+          >
             Add to cart
           </CartAddButton>
         </div>

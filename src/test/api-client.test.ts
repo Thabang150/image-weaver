@@ -94,6 +94,42 @@ describe("API requests", () => {
     ).resolves.toEqual({ ok: true });
   });
 
+  it("allows only customer cart writes from the preview route", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse({ ok: true }));
+    const client = createApiClient({
+      baseUrl,
+      csrfTokenProvider: vi.fn().mockResolvedValue("csrf-1"),
+      fetcher,
+    });
+
+    window.history.pushState({}, "", "/preview");
+    await expect(
+      client.request("/cart/items", {
+        method: "POST",
+        json: { productId: "507f1f77bcf86cd799439011", quantity: 1 },
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      client.request("/cart/items/507f1f77bcf86cd799439011", {
+        method: "PATCH",
+        json: { quantity: 2 },
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      client.request("/cart/items/507f1f77bcf86cd799439011", { method: "DELETE" }),
+    ).resolves.toEqual({ ok: true });
+    await expect(client.request("/cart", { method: "DELETE" })).resolves.toEqual({ ok: true });
+
+    await expect(client.request("/orders", { method: "POST", json: {} })).rejects.toBeInstanceOf(
+      PreviewMutationBlockedError,
+    );
+    await expect(
+      client.request("/cart/items/not-an-id", { method: "DELETE" }),
+    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    window.history.pushState({}, "", "/account/login");
+  });
+
   it("includes browser session cookies and serializes JSON requests", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

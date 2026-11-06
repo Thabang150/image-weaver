@@ -24,9 +24,19 @@ export function isPreviewPath(pathname: string): boolean {
   return normalized === "/preview";
 }
 
-function isPreviewMutationAllowed(): boolean {
+function isCustomerCartMutation(method: string, endpoint: string): boolean {
+  const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
+  if (method === "POST") return path === "cart/items";
+  if (method === "DELETE") {
+    return path === "cart" || /^cart\/items\/[a-f\d]{24}$/i.test(path);
+  }
+  return method === "PATCH" && /^cart\/items\/[a-f\d]{24}$/i.test(path);
+}
+
+function isPreviewMutationAllowed(method: string, endpoint: string): boolean {
   if (typeof window === "undefined") return false;
-  return !isPreviewPath(window.location.pathname);
+  // Customer cart writes stay behind the backend's customer-role and CSRF checks.
+  return !isPreviewPath(window.location.pathname) || isCustomerCartMutation(method, endpoint);
 }
 
 export interface ApiClientOptions {
@@ -302,7 +312,7 @@ export function createApiClient(options: ApiClientOptions) {
         throw new PreviewMutationBlockedError();
       }
       if (requestOptions.origin !== "outside-preview" &&
-        (requestOptions.origin === "preview" || !isPreviewMutationAllowed())) {
+        !isPreviewMutationAllowed(method, endpoint)) {
         throw new PreviewMutationBlockedError();
       }
     }

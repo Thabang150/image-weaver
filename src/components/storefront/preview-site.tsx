@@ -750,7 +750,7 @@ function PreviewHome({
                     {product.name}
                   </button>
                   <strong>{formatZarCents(product.priceCents)}</strong>
-                  <CartAddButton productId={product.id} quantity={1}>
+                  <CartAddButton product={product} quantity={1}>
                     Add to bag
                   </CartAddButton>
                 </article>

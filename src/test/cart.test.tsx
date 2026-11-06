@@ -7,6 +7,12 @@ import { formatZarCents } from "@/lib/money";
 
 const productId = "507f1f77bcf86cd799439011";
 const unitPriceCents = 14550;
+const product = {
+  id: productId,
+  name: "Aloe product",
+  slug: "aloe-product",
+  priceCents: unitPriceCents,
+};
 
 function makeCart(quantity = 0) {
   const items =
@@ -130,7 +136,7 @@ function renderCart() {
     <QueryClientProvider client={queryClient}>
       <CartProvider>
         <CartTrigger />
-        <CartAddButton productId={productId} />
+        <CartAddButton product={product} />
         <CartSheet />
       </CartProvider>
     </QueryClientProvider>,
@@ -144,6 +150,9 @@ function getZarPriceMatcher(cents: number) {
 }
 
 afterEach(() => {
+  window.localStorage.removeItem("healthyways.guest-cart.v1");
+  window.localStorage.removeItem("healthyways.guest-cart-merge.v1");
+  window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -221,5 +230,33 @@ describe("storefront cart", () => {
     expect(await screen.findByRole("button", { name: "Adding…" })).toBeDisabled();
     await act(async () => releaseAdd());
     expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
+  }, 15000);
+
+  it("persists an unauthenticated preview cart locally without backend mutations", async () => {
+    const requests: string[] = [];
+    vi.stubEnv("VITE_BACKEND_BASE_URL", "https://api.example.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(String(input));
+        requests.push(`${url.pathname}${url.search}`);
+        return jsonResponse({ error: "Authentication required." }, 401);
+      }),
+    );
+    window.history.replaceState({}, "", "/preview");
+
+    const firstRender = renderCart();
+    fireEvent.click(await screen.findByRole("button", { name: "Add to cart" }));
+    expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Increase quantity for Aloe product" }));
+    expect(await screen.findByText("2", { selector: ".cart-quantity-row span" })).toBeVisible();
+    firstRender.unmount();
+
+    renderCart();
+    fireEvent.click(await screen.findByRole("button", { name: "Open cart with 2 items" }));
+    expect(await screen.findByText("Aloe product")).toBeVisible();
+    expect(screen.getByText("2", { selector: ".cart-quantity-row span" })).toBeVisible();
+    expect(localStorage.getItem("healthyways.guest-cart.v1")).toContain(productId);
+    expect(requests.some((path) => path.includes("/cart"))).toBe(false);
   }, 15000);
 });

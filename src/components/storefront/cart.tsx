@@ -19,7 +19,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { ApiHttpError, CsrfTokenError, PreviewMutationBlockedError } from "@/lib/api/client";
+import { ApiHttpError, CsrfTokenError } from "@/lib/api/client";
 import { catalogueApi, getSellingPriceCents, type PublicProduct } from "@/lib/api/catalogue";
 import { cartApi, type Cart, type CartLine } from "@/lib/api/cart";
 import { authApi } from "@/lib/api/auth";
@@ -224,9 +224,6 @@ function getCartErrorMessage(error: unknown): string {
   }
   if (error instanceof CsrfTokenError) {
     return "The cart request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
-  }
-  if (error instanceof PreviewMutationBlockedError) {
-    return error.message;
   }
   if (error instanceof CartValidationError) {
     return error.message;

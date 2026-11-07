@@ -21,7 +21,6 @@ import {
   ApiHttpError,
   ApiResponseError,
   CsrfTokenError,
-  PreviewMutationBlockedError,
   buildApiUrl,
   getBackendBaseUrl,
 } from "@/lib/api/client";
@@ -140,9 +139,6 @@ function describeAuthError(error: unknown, action: string): string {
   }
   if (error instanceof CsrfTokenError) {
     return "This request could not be secured because a CSRF token was unavailable. Refresh the page and try again.";
-  }
-  if (error instanceof PreviewMutationBlockedError) {
-    return error.message;
   }
   if (error instanceof TypeError) {
     return `${action} could not be completed because the browser could not complete the network request. Check the API URL, browser network or CORS configuration, your connection, and blockers, then try again.`;

@@ -2,79 +2,10 @@ export const API_PREFIX = "/api/v1";
 
 export type CsrfTokenProvider = () => Promise<string>;
 
-export class PreviewMutationBlockedError extends Error {
-  constructor() {
-    super(
-      "This action is unavailable in the storefront preview. Preview mutations require a separate staging backend; no production data has been changed.",
-    );
-    this.name = "PreviewMutationBlockedError";
-  }
-}
-
-export function isPreviewPath(pathname: string): boolean {
-  let path = pathname;
-  try {
-    path = pathname.includes("://") || pathname.startsWith("//")
-      ? new URL(pathname, "https://preview.invalid").pathname
-      : pathname.split(/[?#]/, 1)[0] ?? pathname;
-  } catch {
-    return false;
-  }
-  const normalized = path.replace(/\/+$/, "");
-  return normalized === "/preview";
-}
-
-function isCustomerCartMutation(method: string, endpoint: string): boolean {
-  const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
-  if (method === "POST") return path === "cart/items";
-  if (method === "DELETE") {
-    return path === "cart" || /^cart\/items\/[a-f\d]{24}$/i.test(path);
-  }
-  return method === "PATCH" && /^cart\/items\/[a-f\d]{24}$/i.test(path);
-}
-
-function isCustomerAddressMutation(method: string, endpoint: string): boolean {
-  const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
-  if (method === "POST") return path === "users/me/addresses";
-  if (method === "DELETE") return /^users\/me\/addresses\/[a-f\d]{24}$/i.test(path);
-  return method === "PATCH" &&
-    /^users\/me\/addresses\/[a-f\d]{24}(?:\/default)?$/i.test(path);
-}
-
-const customerAuthMutationPaths = new Set([
-  "auth/login",
-  "auth/register",
-  "auth/logout",
-  "auth/request-verification",
-  "auth/verify-email",
-  "auth/forgot-password",
-  "auth/reset-password",
-  "auth/login/verify-email-otp",
-  "auth/login/resend-email-otp",
-]);
-
-function isCustomerAuthMutation(method: string, endpoint: string): boolean {
-  if (method !== "POST") return false;
-  const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
-  return customerAuthMutationPaths.has(path);
-}
-
 function isAdminInventoryAdjustment(method: string, endpoint: string): boolean {
   if (method !== "POST") return false;
   const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
   return /^admin\/products\/[^/]+\/inventory-adjustments$/.test(path);
-}
-
-function isAllowedPreviewMutation(method: string, endpoint: string): boolean {
-  // These narrowly scoped operations still rely on backend session, role, and CSRF checks.
-  return isCustomerAuthMutation(method, endpoint) ||
-    isCustomerCartMutation(method, endpoint) ||
-    isCustomerAddressMutation(method, endpoint);
-}
-
-function isPreviewMutationAllowed(method: string, endpoint: string): boolean {
-  if (typeof window === "undefined") return false;
-  return !isPreviewPath(window.location.pathname) || isAllowedPreviewMutation(method, endpoint);
 }
 
 function inventoryDiagnosticRoute(method: string, endpoint: string): string | null {
@@ -89,7 +20,6 @@ function inventoryErrorCategory(status: number | null, body?: unknown): string {
       ? (body as Record<string, string>)["error"]
       : undefined;
   if (
-    error === "preview_mutation_blocked" ||
     error === "csrf_acquisition_failed" ||
     error === "network_request_failed" ||
     error === "client_validation" ||
@@ -143,7 +73,6 @@ export interface ApiRequestOptions {
   body?: BodyInit;
   signal?: AbortSignal;
   regeneratesSession?: boolean;
-  origin?: "preview" | "outside-preview";
 }
 
 export type ApiErrorKind = "unauthorized" | "forbidden" | "http";
@@ -247,11 +176,11 @@ function isUnsafeMethod(method: string): boolean {
 
 function normalizeRequestMethod(method: string | undefined): string {
   if (typeof method !== "string" || !/^[A-Za-z]+$/.test(method.trim())) {
-    throw new PreviewMutationBlockedError();
+    throw new TypeError("API request method must contain only letters.");
   }
   const normalized = method.trim().toUpperCase();
   if (!["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"].includes(normalized)) {
-    throw new PreviewMutationBlockedError();
+    throw new TypeError(`Unsupported API request method: ${normalized}.`);
   }
   return normalized;
 }
@@ -399,31 +328,6 @@ export function createApiClient(options: ApiClientOptions) {
     const method = normalizeRequestMethod(requestOptions.method ?? "GET");
     const diagnosticRoute = inventoryDiagnosticRoute(method, endpoint);
     const diagnosticStartedAt = diagnosticRoute ? performance.now() : 0;
-    if (isUnsafeMethod(method)) {
-      if (
-        requestOptions.origin === "preview" &&
-        (typeof window === "undefined" || !isAllowedPreviewMutation(method, endpoint))
-      ) {
-        if (diagnosticRoute) {
-          logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
-            error: "preview_mutation_blocked",
-          });
-        }
-        throw new PreviewMutationBlockedError();
-      }
-      if (
-        requestOptions.origin !== "outside-preview" &&
-        requestOptions.origin !== "preview" &&
-        (typeof window === "undefined" || !isPreviewMutationAllowed(method, endpoint))
-      ) {
-        if (diagnosticRoute) {
-          logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
-            error: "preview_mutation_blocked",
-          });
-        }
-        throw new PreviewMutationBlockedError();
-      }
-    }
     const headers = new Headers(requestOptions.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
 

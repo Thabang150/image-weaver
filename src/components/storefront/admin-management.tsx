@@ -6,7 +6,6 @@ import {
   ApiHttpError,
   ApiResponseError,
   CsrfTokenError,
-  PreviewMutationBlockedError,
 } from "@/lib/api/client";
 import {
   adminApi,
@@ -48,9 +47,6 @@ function safeAdminError(error: unknown, action: string): string {
     if (error.status === 429) return "Too many requests. Wait before trying again.";
     if (error.status === 404) return `${action} failed because the product or endpoint was not found.`;
     if (error.status >= 500) return `${action} failed because the backend is temporarily unavailable.`;
-  }
-  if (error instanceof PreviewMutationBlockedError) {
-    return `${action} was blocked by the storefront preview safety policy.`;
   }
   if (error instanceof ApiResponseError) {
     return `${action} failed because the backend response was invalid.`;

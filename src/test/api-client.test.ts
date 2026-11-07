@@ -3,11 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ApiHttpError,
   ApiResponseError,
-  PreviewMutationBlockedError,
   buildApiUrl,
   createApiClient,
   getBackendBaseUrl,
-  isPreviewPath,
   normalizeApiBaseUrl,
 } from "@/lib/api/client";
 
@@ -21,13 +19,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("API URL configuration", () => {
-  it("recognizes preview paths with trailing slashes", () => {
-    expect(isPreviewPath("/preview")).toBe(true);
-    expect(isPreviewPath("/preview/")).toBe(true);
-    expect(isPreviewPath("/preview?view=shop")).toBe(true);
-    expect(isPreviewPath("/shop")).toBe(false);
-  });
-
   it("adds the API prefix once, whether or not it is already in the base URL", () => {
     expect(normalizeApiBaseUrl(baseUrl)).toBe(`${baseUrl}/api/v1/`);
     expect(normalizeApiBaseUrl(`${baseUrl}/api/v1/`)).toBe(`${baseUrl}/api/v1/`);
@@ -68,7 +59,7 @@ describe("API URL configuration", () => {
 });
 
 describe("API requests", () => {
-  it("blocks unsafe methods on preview routes and preserves dedicated-route mutations", async () => {
+  it("sends unsafe methods from the preview route with CSRF protection", async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
       jsonResponse({ ok: true }),
     );
@@ -76,20 +67,12 @@ describe("API requests", () => {
     const client = createApiClient({ baseUrl, csrfTokenProvider, fetcher });
 
     window.history.pushState({}, "", "/preview?view=shop");
-    await expect(client.request("/resource", { method: "POST" })).rejects.toBeInstanceOf(
-      PreviewMutationBlockedError,
-    );
-    await expect(client.request("/resource", { method: "put" })).rejects.toBeInstanceOf(
-      PreviewMutationBlockedError,
-    );
-    await expect(client.request("/resource", { method: "PATCH" })).rejects.toBeInstanceOf(
-      PreviewMutationBlockedError,
-    );
-    await expect(client.request("/resource", { method: "DELETE" })).rejects.toBeInstanceOf(
-      PreviewMutationBlockedError,
-    );
+    await expect(client.request("/resource", { method: "POST" })).resolves.toEqual({ ok: true });
+    await expect(client.request("/resource", { method: "put" })).resolves.toEqual({ ok: true });
+    await expect(client.request("/resource", { method: "PATCH" })).resolves.toEqual({ ok: true });
+    await expect(client.request("/resource", { method: "DELETE" })).resolves.toEqual({ ok: true });
     await expect(client.request("/products")).resolves.toEqual({ ok: true });
-    expect(csrfTokenProvider).not.toHaveBeenCalled();
+    expect(csrfTokenProvider).toHaveBeenCalledOnce();
 
     window.history.pushState({}, "", "/account/login");
     await expect(
@@ -97,7 +80,7 @@ describe("API requests", () => {
     ).resolves.toEqual({ ok: true });
   });
 
-  it("allows customer authentication and cart writes but blocks protected preview mutations", async () => {
+  it("sends customer and storefront mutations to the API from preview", async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse({ ok: true }));
     const client = createApiClient({
       baseUrl,
@@ -167,26 +150,21 @@ describe("API requests", () => {
       "/orders",
       "/payments",
     ]) {
-      await expect(client.request(endpoint, { method: "POST", json: {} })).rejects.toBeInstanceOf(
-        PreviewMutationBlockedError,
-      );
+      await expect(client.request(endpoint, { method: "POST", json: {} })).resolves.toEqual({
+        ok: true,
+      });
     }
     await expect(
-      client.request("/users/me/addresses/not-an-id", { method: "DELETE" }),
-    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
-    await expect(
-      client.request("/users/me/addresses/507f1f77bcf86cd799439011/default", {
-        method: "DELETE",
+      client.request("/admin/products/507f1f77bcf86cd799439011", {
+        method: "PATCH",
+        json: { status: "active" },
       }),
-    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
-    await expect(
-      client.request("/cart/items/not-an-id", { method: "DELETE" }),
-    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
-    expect(fetcher).toHaveBeenCalledTimes(18);
+    ).resolves.toEqual({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(24);
     window.history.pushState({}, "", "/account/login");
   });
 
-  it("allows only the admin inventory adjustment POST through the preview guard and logs sanitized diagnostics", async () => {
+  it("logs sanitized diagnostics for admin inventory requests made from preview", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
         status: 201,
@@ -215,7 +193,7 @@ describe("API requests", () => {
         method: "PATCH",
         json: { status: "active" },
       }),
-    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
+    ).resolves.toEqual({ ok: true });
 
     const diagnostic = log.mock.calls.find(([message]) => message === "[admin-inventory-request]")?.[1];
     expect(diagnostic).toMatchObject({
@@ -226,7 +204,7 @@ describe("API requests", () => {
       errorCategory: "none",
     });
     expect(JSON.stringify(diagnostic)).not.toContain("507f1f77bcf86cd799439011");
-    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledTimes(2);
     window.history.pushState({}, "", "/account/login");
     log.mockRestore();
   });

@@ -51,12 +51,72 @@ function isCustomerAuthMutation(method: string, endpoint: string): boolean {
   return customerAuthMutationPaths.has(path);
 }
 
+function isAdminInventoryAdjustment(method: string, endpoint: string): boolean {
+  if (method !== "POST") return false;
+  const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
+  return /^admin\/products\/[^/]+\/inventory-adjustments$/.test(path);
+}
+
 function isPreviewMutationAllowed(method: string, endpoint: string): boolean {
   if (typeof window === "undefined") return false;
-  // Auth and cart operations remain protected by the backend's session, role, and CSRF checks.
+  // These narrowly scoped operations still rely on backend session, role, and CSRF checks.
   return !isPreviewPath(window.location.pathname) ||
     isCustomerAuthMutation(method, endpoint) ||
-    isCustomerCartMutation(method, endpoint);
+    isCustomerCartMutation(method, endpoint) ||
+    isAdminInventoryAdjustment(method, endpoint);
+}
+
+function inventoryDiagnosticRoute(method: string, endpoint: string): string | null {
+  if (!isAdminInventoryAdjustment(method, endpoint)) return null;
+  return "/admin/products/:productId/inventory-adjustments";
+}
+
+function inventoryErrorCategory(status: number | null, body?: unknown): string {
+  const error =
+    typeof body === "object" && body !== null && !Array.isArray(body) &&
+      typeof (body as Record<string, unknown>)["error"] === "string"
+      ? (body as Record<string, string>)["error"]
+      : undefined;
+  if (
+    error === "preview_mutation_blocked" ||
+    error === "csrf_acquisition_failed" ||
+    error === "network_request_failed" ||
+    error === "client_validation" ||
+    error === "client_stock_validation"
+  ) return error;
+  if (
+    typeof body === "object" &&
+    body !== null &&
+    !Array.isArray(body) &&
+    error === "Invalid or missing CSRF token."
+  ) return "csrf";
+  if (status === null) return "network_or_client";
+  if (status === 401) return "authentication";
+  if (status === 403) return "permission";
+  if (status === 404) return "route_or_product_not_found";
+  if (status === 400 || status === 409 || status === 422) return "validation_or_conflict";
+  if (status === 429) return "rate_limited";
+  if (status >= 500) return "backend_error";
+  return status >= 200 && status < 300 ? "none" : "http_error";
+}
+
+function logInventoryRequest(
+  method: string,
+  route: string,
+  startedAt: number,
+  status: number | null,
+  body?: unknown,
+  correlationId: string | null = null,
+): void {
+  console.info("[admin-inventory-request]", {
+    method,
+    route,
+    status,
+    durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    correlationId:
+      correlationId && /^[A-Za-z0-9._:-]{1,128}$/.test(correlationId) ? correlationId : null,
+    errorCategory: inventoryErrorCategory(status, body),
+  });
 }
 
 export interface ApiClientOptions {
@@ -326,13 +386,25 @@ export function createApiClient(options: ApiClientOptions) {
     requestOptions: ApiRequestOptions = {},
   ): Promise<{ body: T | undefined; status: number }> {
     const method = normalizeRequestMethod(requestOptions.method ?? "GET");
+    const diagnosticRoute = inventoryDiagnosticRoute(method, endpoint);
+    const diagnosticStartedAt = diagnosticRoute ? performance.now() : 0;
     if (isUnsafeMethod(method)) {
       if (requestOptions.origin === "preview" ||
         (requestOptions.origin !== "outside-preview" && typeof window === "undefined")) {
+        if (diagnosticRoute) {
+          logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
+            error: "preview_mutation_blocked",
+          });
+        }
         throw new PreviewMutationBlockedError();
       }
       if (requestOptions.origin !== "outside-preview" &&
         !isPreviewMutationAllowed(method, endpoint)) {
+        if (diagnosticRoute) {
+          logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
+            error: "preview_mutation_blocked",
+          });
+        }
         throw new PreviewMutationBlockedError();
       }
     }
@@ -369,6 +441,11 @@ export function createApiClient(options: ApiClientOptions) {
           console.info("[admin-registration] CSRF acquisition succeeded.");
         }
       } catch (error) {
+        if (diagnosticRoute) {
+          logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
+            error: "csrf_acquisition_failed",
+          });
+        }
         if (isAdminRegistration) {
           console.info(
             "[admin-registration] CSRF acquisition failed.",
@@ -396,6 +473,11 @@ export function createApiClient(options: ApiClientOptions) {
     try {
       response = await fetcher(buildApiUrl(apiBaseUrl, endpoint), init);
     } catch (error) {
+      if (diagnosticRoute) {
+        logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
+          error: "network_request_failed",
+        });
+      }
       if (endpoint === "/auth/admin/register") {
         console.info(
           "[admin-registration] Registration fetch threw.",
@@ -441,7 +523,33 @@ export function createApiClient(options: ApiClientOptions) {
         }
       }
 
-      if (!response.ok) throw apiError;
+      if (!response.ok) {
+        if (diagnosticRoute) {
+          const correlationId =
+            response.headers.get("x-correlation-id") ?? response.headers.get("x-request-id");
+          logInventoryRequest(
+            method,
+            diagnosticRoute,
+            diagnosticStartedAt,
+            response.status,
+            responseBody,
+            correlationId,
+          );
+        }
+        throw apiError;
+      }
+    }
+    if (diagnosticRoute) {
+      const correlationId =
+        response.headers.get("x-correlation-id") ?? response.headers.get("x-request-id");
+      logInventoryRequest(
+        method,
+        diagnosticRoute,
+        diagnosticStartedAt,
+        response.status,
+        undefined,
+        correlationId,
+      );
     }
 
     if (requestOptions.regeneratesSession) {

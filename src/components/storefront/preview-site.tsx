@@ -686,12 +686,12 @@ function CartProviderView({
   return (
     <>
       {content}
-      {view !== "cart" ? (
+      {view !== "cart" && view !== "admin" ? (
         <div className="fixed bottom-5 right-5 z-40">
           <CartTrigger />
         </div>
       ) : null}
-      <CartSheet onSignIn={onSignIn} onCheckout={onCheckout} />
+      {view !== "admin" ? <CartSheet onSignIn={onSignIn} onCheckout={onCheckout} /> : null}
     </>
   );
 }
@@ -951,13 +951,8 @@ function PreviewHome({
                         : {}),
                     }}
                     quantity={1}
-                    disabled={product.stockQuantity === 0 || product.isAvailable === false}
                   >
-                    {product.stockQuantity === 0
-                      ? "Out of stock"
-                      : product.isAvailable === false
-                        ? "Currently unavailable"
-                        : "Add to bag"}
+                    Add to bag
                   </CartAddButton>
                 </article>
               );

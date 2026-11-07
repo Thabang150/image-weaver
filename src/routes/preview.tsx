@@ -91,7 +91,7 @@ function Preview() {
   const view = search.view ?? "home";
   const cartEnabled =
     !["login", "customer-login", "register", "verify-email", "forgot-password", "reset-password",
-      "admin-login", "admin-register", "admin-forgot-password"].includes(view);
+      "admin-login", "admin-register", "admin-forgot-password", "admin"].includes(view);
   const emailLinkFallbackStartedRef = useRef(false);
 
   useEffect(() => {

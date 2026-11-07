@@ -6,6 +6,7 @@ import {
   ApiHttpError,
   ApiResponseError,
   CsrfTokenError,
+  PreviewMutationBlockedError,
 } from "@/lib/api/client";
 import {
   adminApi,
@@ -45,6 +46,11 @@ function safeAdminError(error: unknown, action: string): string {
     if (error.status === 413) return "The upload exceeded the backend's image size limit.";
     if (error.status === 415) return "The backend does not support one or more selected image formats.";
     if (error.status === 429) return "Too many requests. Wait before trying again.";
+    if (error.status === 404) return `${action} failed because the product or endpoint was not found.`;
+    if (error.status >= 500) return `${action} failed because the backend is temporarily unavailable.`;
+  }
+  if (error instanceof PreviewMutationBlockedError) {
+    return `${action} was blocked by the storefront preview safety policy.`;
   }
   if (error instanceof ApiResponseError) {
     return `${action} failed because the backend response was invalid.`;
@@ -1485,13 +1491,30 @@ function InventoryManagement() {
     event.preventDefault();
     if (adjustmentLockRef.current || adjustmentMutation.isPending) return;
     setAdjustmentError(null);
+    const startedAt = performance.now();
     const delta = Number(quantityDelta);
     if (!productId || !Number.isSafeInteger(delta) || delta === 0 || reason.trim().length < 3) {
+      console.info("[admin-inventory-request]", {
+        method: "POST",
+        route: "/admin/products/:productId/inventory-adjustments",
+        status: null,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        correlationId: null,
+        errorCategory: "client_validation",
+      });
       setAdjustmentError(new Error("Select a product, enter a non-zero whole quantity and give a reason of at least 3 characters."));
       return;
     }
     const selectedItem = inventoryQuery.data?.inventory.find((item) => item.productId === productId);
     if (delta < 0 && selectedItem && selectedItem.stockQuantity + delta < 0) {
+      console.info("[admin-inventory-request]", {
+        method: "POST",
+        route: "/admin/products/:productId/inventory-adjustments",
+        status: null,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        correlationId: null,
+        errorCategory: "client_stock_validation",
+      });
       setAdjustmentError(
         new Error(`Only ${selectedItem.stockQuantity} units are currently recorded; the adjustment cannot reduce stock below zero.`),
       );

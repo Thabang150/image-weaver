@@ -88,7 +88,7 @@ function submitPayFast(checkout: PayFastCheckout) {
 
 export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigate: (view: any, returnTo?: any, orderId?: string) => void }) {
   const queryClient = useQueryClient();
-  const { cart, retryCart } = useCart();
+  const { cart, retryCart, removeItem, isBusy } = useCart();
   const [addressId, setAddressId] = useState(() => user.addresses.find((a: PublicAddress) => a.isDefault)?.id ?? user.addresses[0]?.id ?? "");
   const [order, setOrder] = useState<CustomerOrder | null>(null);
   const [rates, setRates] = useState<any[]>([]);
@@ -125,6 +125,11 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
 
   const deliveryCharge = order?.shippingQuote?.chargeCents ?? 0;
   const hasUnavailable = Boolean(cart?.hasUnavailableItems);
+  const unavailableItems = cart?.items.filter((item) =>
+    !item.available ||
+    (item.stockQuantity !== undefined &&
+      (item.stockQuantity === 0 || item.quantity > item.stockQuantity)),
+  ) ?? [];
   const canCreate = Boolean(addressId && cart?.items.length && !hasUnavailable);
 
   async function saveAddress(event: FormEvent) {
@@ -173,7 +178,18 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
         const latestCart = await cartApi.getCart();
         queryClient.setQueryData(["cart", user.id], latestCart);
         if (latestCart.hasUnavailableItems) {
-          setMessage("Stock or availability changed. Your cart has been refreshed; review it before continuing.");
+          const unavailableNames = latestCart.items
+            .filter((item) =>
+              !item.available ||
+              (item.stockQuantity !== undefined &&
+                (item.stockQuantity === 0 || item.quantity > item.stockQuantity)),
+            )
+            .map((item) => `${item.product?.name ?? item.productId} (quantity ${item.quantity})`);
+          setMessage(
+            unavailableNames.length > 0
+              ? `Checkout is blocked because these cart items are unavailable: ${unavailableNames.join(", ")}. Remove them or reduce quantities, then try again.`
+              : "Stock or availability changed. Your cart has been refreshed; review it before continuing.",
+          );
           return;
         }
         if (cartFingerprint(latestCart) !== cartFingerprint(cart)) {
@@ -234,7 +250,16 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
   return <main className="mx-auto max-w-5xl px-5 py-10">
     <span className="eyebrow">Secure checkout</span><h1 className="section-title mt-3">Delivery and payment</h1>
     {message ? <p role="status" className="mt-5 rounded-md border border-border bg-muted/40 p-3 text-sm">{message}</p> : null}
-    {hasUnavailable ? <div className="mt-5 rounded-md border border-destructive/40 p-4"><p>One or more products in your cart is unavailable or the price may have changed.</p><Button variant="outline" onClick={() => void retryCart()}>Refresh cart</Button></div> : null}
+    {hasUnavailable ? <div className="mt-5 rounded-md border border-destructive/40 p-4">
+      <p>Unavailable products cannot be checked out. Remove them or reduce the quantity of items that exceed available stock.</p>
+      {unavailableItems.length > 0 ? <ul className="mt-3 space-y-2">
+        {unavailableItems.map((item) => <li key={item.productId} className="flex items-center justify-between gap-3 text-sm">
+          <span>{item.product?.name ?? item.productId} · quantity {item.quantity}{item.stockQuantity !== undefined ? ` · ${item.stockQuantity} available` : ""}</span>
+          <Button type="button" variant="outline" disabled={isBusy} onClick={() => void removeItem(item.productId).catch(() => setMessage("This unavailable item could not be removed. Please retry from your cart."))}>Remove</Button>
+        </li>)}
+      </ul> : null}
+      <Button variant="outline" className="mt-3" onClick={() => void retryCart()}>Refresh cart</Button>
+    </div> : null}
     {recoveryState === "loading" ? <p role="status" className="mt-5 text-sm">Checking your saved order…</p> : null}
     {order && recoveryBlocked ? <div role="alert" className="mt-5 rounded-md border border-destructive/40 p-4 text-sm"><p>{!recovery.eligible ? recovery.reason : !recoveredAddressMatches ? "The saved order used a different delivery address. It cannot be reused for the address currently selected." : "Your cart has changed since this order was created. The saved order cannot be continued with the current cart."}</p><Button variant="outline" className="mt-3" onClick={() => { sessionStorage.removeItem(ORDER_KEY); setOrder(null); setRates([]); setSelectedQuote(""); setRecoveryState("none"); setMessage("The saved checkout has been cleared. Review your current cart and address, then start a new checkout."); }}>Start a fresh checkout</Button></div> : null}
     <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_340px]">

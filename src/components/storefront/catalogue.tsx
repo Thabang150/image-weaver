@@ -51,7 +51,11 @@ export function ProductStockNotice({ product }: { product: PublicProduct }) {
   }
 
   if (product.isAvailable === false) {
-    return <p className="product-stock-notice product-stock-out">Currently unavailable</p>;
+    return (
+      <p className="product-stock-notice product-stock-out">
+        Currently unavailable. You can add it to your cart, but checkout requires available stock.
+      </p>
+    );
   }
 
   if (product.stockQuantity === undefined) return null;
@@ -294,13 +298,8 @@ function ShopProductCard({
               ...(product.isAvailable !== undefined ? { isAvailable: product.isAvailable } : {}),
             }}
             quantity={1}
-            disabled={product.stockQuantity === 0 || product.isAvailable === false}
           >
-            {product.stockQuantity === 0
-              ? "Out of stock"
-              : product.isAvailable === false
-                ? "Currently unavailable"
-                : "Add to cart"}
+            Add to cart
           </CartAddButton>
           <Button
             variant="ghost"
@@ -773,16 +772,8 @@ function ProductDetail({
                   : {}),
               }}
               quantity={1}
-              disabled={
-                productQuery.data.product.stockQuantity === 0 ||
-                productQuery.data.product.isAvailable === false
-              }
             >
-              {productQuery.data.product.stockQuantity === 0
-                ? "Out of stock"
-                : productQuery.data.product.isAvailable === false
-                  ? "Currently unavailable"
-                  : "Add to cart"}
+              Add to cart
             </CartAddButton>
           </div>
           <p className="product-detail-note">

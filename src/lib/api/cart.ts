@@ -92,7 +92,12 @@ function parseCartLine(value: unknown): CartLine {
   }
 
   const unavailableProduct = parseProductSummary(value["product"]);
-  if (unitPriceCents !== null || lineSubtotalCents !== null) {
+  const hasNoPrice = unitPriceCents === null && lineSubtotalCents === null;
+  const hasValidPrice = isSafeInteger(unitPriceCents) &&
+    unitPriceCents > 0 &&
+    isSafeInteger(lineSubtotalCents) &&
+    lineSubtotalCents === unitPriceCents * quantity;
+  if (!hasNoPrice && !hasValidPrice) {
     invalidCartResponse();
   }
 
@@ -102,8 +107,8 @@ function parseCartLine(value: unknown): CartLine {
     available: false,
     ...(isSafeInteger(stockQuantity) ? { stockQuantity } : {}),
     product: unavailableProduct,
-    unitPriceCents: null,
-    lineSubtotalCents: null,
+    unitPriceCents: hasValidPrice ? unitPriceCents : null,
+    lineSubtotalCents: hasValidPrice ? lineSubtotalCents : null,
   };
 }
 

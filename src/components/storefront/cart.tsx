@@ -285,9 +285,6 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
         if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
           throw new CartValidationError("Cart quantity must be between 1 and 99.");
         }
-        if (product.isAvailable === false) {
-          throw new CartValidationError("This product is currently unavailable.");
-        }
         const currentCart =
           mutationUserId === "anonymous"
             ? readGuestCart()
@@ -298,13 +295,6 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
           throw new CartValidationError("A cart can contain up to 99 units of each product.");
         }
         const stockQuantity = product.stockQuantity ?? existing?.stockQuantity;
-        if (stockQuantity !== undefined && nextQuantity > stockQuantity) {
-          throw new CartValidationError(
-            stockQuantity === 0
-              ? "This product is out of stock."
-              : `Only ${stockQuantity} left in stock.`,
-          );
-        }
 
         if (mutationUserId === "anonymous") {
           if (
@@ -366,13 +356,6 @@ export function CartProvider({ children, enabled = true }: { children: ReactNode
           }
           const current = readGuestCart();
           const currentItem = current.items.find((item) => item.productId === productId);
-          if (currentItem?.stockQuantity !== undefined && quantity > currentItem.stockQuantity) {
-            throw new CartValidationError(
-              currentItem.stockQuantity === 0
-                ? "This product is out of stock."
-                : `Only ${currentItem.stockQuantity} left in stock.`,
-            );
-          }
           const updated = makeCart(current.items.map((item) => item.productId === productId
             ? {
                 ...item,
@@ -638,7 +621,7 @@ function useCartLineViews(
     const product = query?.data?.product;
     const stockQuantity = product?.stockQuantity ?? item.stockQuantity;
     const priceCents =
-      !item.available || item.unitPriceCents === null
+      item.unitPriceCents === null
         ? null
         : isGuest && product
           ? getSellingPriceCents(product)
@@ -653,16 +636,16 @@ function useCartLineViews(
       (query?.error instanceof ApiHttpError && query.error.status === 404);
     const availabilityMessage =
       stockQuantity === 0
-        ? "Out of stock"
-        : !item.available || (query?.error instanceof ApiHttpError && query.error.status === 404)
-          ? "Currently unavailable"
-          : product?.isAvailable === false
-            ? "Currently unavailable"
+        ? "Currently out of stock. You can keep this product in your cart, but it cannot be checked out until stock becomes available."
+        : !item.available ||
+          product?.isAvailable === false ||
+          (query?.error instanceof ApiHttpError && query.error.status === 404)
+          ? "Currently unavailable. You can keep this product in your cart, but checkout is blocked until it becomes available."
           : stockQuantity !== undefined && item.quantity > stockQuantity
-            ? `Only ${stockQuantity} left in stock. Reduce the quantity to continue.`
-            : stockQuantity !== undefined && stockQuantity <= 5
-              ? `Only ${stockQuantity} left in stock`
-              : null;
+          ? `Only ${stockQuantity} left in stock. Reduce the quantity to continue.`
+          : stockQuantity !== undefined && stockQuantity <= 5
+            ? `Only ${stockQuantity} left in stock`
+            : null;
     const subtotalCents =
       priceCents === null
         ? null
@@ -756,8 +739,7 @@ function CartItemRow({
             disabled={
               isBusy ||
               !item.available ||
-              item.quantity >= 99 ||
-              (view.stockQuantity !== undefined && item.quantity >= view.stockQuantity)
+              item.quantity >= 99
             }
           >
             <Plus aria-hidden="true" size={14} />
@@ -1107,9 +1089,7 @@ export function CartAddButton({
       disabled={
         !cart ||
         disabled ||
-        isBusy ||
-        product.isAvailable === false ||
-        product.stockQuantity === 0
+        isBusy
       }
       aria-busy={isBusy}
       onClick={() => {

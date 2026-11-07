@@ -128,7 +128,7 @@ describe("public catalogue", () => {
     expect(screen.getByText("Only 4 left in stock")).toBeVisible();
   });
 
-  it("labels zero-stock products and disables adding them", async () => {
+  it("labels zero-stock products and allows adding them to a cart", async () => {
     const catalogueProduct = withProductFields({ stockQuantity: 0 });
     installApi((url) => {
       if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [category] });
@@ -142,10 +142,10 @@ describe("public catalogue", () => {
     expect(
       await screen.findByText("Out of stock", { selector: ".product-stock-notice" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Out of stock" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add to cart" })).toBeVisible();
   });
 
-  it("uses the backend availability flag without inferring stock quantity", async () => {
+  it("shows a backend-unavailable product while keeping add-to-cart available", async () => {
     const unavailableProduct = withProductFields({ isAvailable: false });
     installApi((url) => {
       if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [category] });
@@ -156,8 +156,8 @@ describe("public catalogue", () => {
     });
     renderCatalogue();
 
-    expect(await screen.findByText("Currently unavailable", { selector: ".product-stock-notice" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Currently unavailable" })).toBeDisabled();
+    expect(await screen.findByText(/Currently unavailable\./, { selector: ".product-stock-notice" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add to cart" })).toBeVisible();
     expect(screen.queryByText("Out of stock")).not.toBeInTheDocument();
   });
 

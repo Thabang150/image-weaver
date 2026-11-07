@@ -154,6 +154,51 @@ describe("API requests", () => {
     window.history.pushState({}, "", "/account/login");
   });
 
+  it("allows only the admin inventory adjustment POST through the preview guard and logs sanitized diagnostics", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "x-correlation-id": "inventory-request-123",
+        },
+      }),
+    );
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const client = createApiClient({
+      baseUrl,
+      csrfTokenProvider: vi.fn().mockResolvedValue("csrf-admin"),
+      fetcher,
+    });
+
+    window.history.pushState({}, "", "/preview?view=admin");
+    await expect(
+      client.request("/admin/products/507f1f77bcf86cd799439011/inventory-adjustments", {
+        method: "POST",
+        json: { quantityDelta: 1, reason: "Stock received" },
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      client.request("/admin/products/507f1f77bcf86cd799439011", {
+        method: "PATCH",
+        json: { status: "active" },
+      }),
+    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
+
+    const diagnostic = log.mock.calls.find(([message]) => message === "[admin-inventory-request]")?.[1];
+    expect(diagnostic).toMatchObject({
+      method: "POST",
+      route: "/admin/products/:productId/inventory-adjustments",
+      status: 201,
+      correlationId: "inventory-request-123",
+      errorCategory: "none",
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain("507f1f77bcf86cd799439011");
+    expect(fetcher).toHaveBeenCalledOnce();
+    window.history.pushState({}, "", "/account/login");
+    log.mockRestore();
+  });
+
   it("includes browser session cookies and serializes JSON requests", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

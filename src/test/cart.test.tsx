@@ -430,22 +430,45 @@ describe("storefront cart", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open cart with 1 items" }));
     expect(await screen.findByText("Aloe product")).toBeVisible();
-    expect(await screen.findByText("Out of stock")).toBeVisible();
+    expect(await screen.findByText(/Currently out of stock/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove Aloe product from cart" })).toBeEnabled();
   }, 15000);
 
-  it("does not submit an unavailable catalogue product", async () => {
+  it("allows an unavailable product to be saved for later cart review", async () => {
     const { fetcher } = installCartApi();
     window.history.replaceState({}, "", "/preview");
     renderCart({ cartProduct: { ...product, isAvailable: false } });
 
-    expect(await screen.findByRole("button", { name: "Add to cart" })).toBeDisabled();
+    const addButton = await screen.findByRole("button", { name: "Add to cart" });
+    await waitFor(() => expect(addButton).toBeEnabled());
+    fireEvent.click(addButton);
+    expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
+    expect(fetcher.mock.calls.some(([input, init]) =>
+      new URL(String(input)).pathname.endsWith("/cart/items") && init?.method === "POST",
+    )).toBe(true);
+  }, 15000);
+
+  it("allows guest carts to retain zero-stock products while preventing checkout", async () => {
+    const { fetcher } = installGuestLifecycleApi({
+      initiallyAuthenticated: false,
+      catalogueStockQuantity: 0,
+    });
+    window.history.replaceState({}, "", "/preview");
+    renderCart({ cartProduct: { ...product, stockQuantity: 0 } });
+
+    const addButton = await screen.findByRole("button", { name: "Add to cart" });
+    await waitFor(() => expect(addButton).toBeEnabled());
+    fireEvent.click(addButton);
+
+    expect(await screen.findByText("Aloe product")).toBeVisible();
+    expect(await screen.findByText(/Currently out of stock/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
+    expect(localStorage.getItem("healthyways.guest-cart.v1")).toContain(productId);
     expect(fetcher.mock.calls.some(([input, init]) =>
       new URL(String(input)).pathname.endsWith("/cart/items") && init?.method === "POST",
     )).toBe(false);
   }, 15000);
-
   it("prevents duplicate adds while a cart mutation is pending", async () => {
     const { releaseAdd } = installCartApi({ delayAdd: true });
     renderCart();
@@ -489,7 +512,7 @@ describe("storefront cart", () => {
     expect(requests.some((path) => path.includes("/cart"))).toBe(false);
   }, 15000);
 
-  it("allows low-stock additions only up to the backend-reported quantity", async () => {
+  it("allows adding beyond current low stock but blocks checkout for excess quantity", async () => {
     const { requests } = installGuestLifecycleApi({
       initiallyAuthenticated: true,
       catalogueStockQuantity: 1,
@@ -506,8 +529,11 @@ describe("storefront cart", () => {
     ).toBeVisible();
     fireEvent.click(add);
 
-    expect(await screen.findByText("Only 1 left in stock.")).toBeVisible();
-    expect(requests.filter(({ method, path }) => method === "POST" && path.endsWith("/cart/items"))).toHaveLength(1);
+    await waitFor(() => {
+      expect(requests.filter(({ method, path }) => method === "POST" && path.endsWith("/cart/items"))).toHaveLength(2);
+    });
+    expect(await screen.findByText("Only 1 left in stock. Reduce the quantity to continue.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
   }, 15000);
 
   it("keeps a guest cart line visible and blocks checkout when stock reaches zero", async () => {
@@ -523,7 +549,7 @@ describe("storefront cart", () => {
     fireEvent.click(add);
 
     expect(await screen.findByText("Aloe product")).toBeVisible();
-    expect(await screen.findByText("Out of stock")).toBeVisible();
+    expect(await screen.findByText(/Currently out of stock/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
     expect(localStorage.getItem("healthyways.guest-cart.v1")).toContain(productId);
   }, 15000);

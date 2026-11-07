@@ -65,14 +65,16 @@ function isAdminInventoryAdjustment(method: string, endpoint: string): boolean {
   return /^admin\/products\/[^/]+\/inventory-adjustments$/.test(path);
 }
 
+function isAllowedPreviewMutation(method: string, endpoint: string): boolean {
+  // These narrowly scoped operations still rely on backend session, role, and CSRF checks.
+  return isCustomerAuthMutation(method, endpoint) ||
+    isCustomerCartMutation(method, endpoint) ||
+    isCustomerAddressMutation(method, endpoint);
+}
+
 function isPreviewMutationAllowed(method: string, endpoint: string): boolean {
   if (typeof window === "undefined") return false;
-  // These narrowly scoped operations still rely on backend session, role, and CSRF checks.
-  return !isPreviewPath(window.location.pathname) ||
-    isCustomerAuthMutation(method, endpoint) ||
-    isCustomerCartMutation(method, endpoint) ||
-    isCustomerAddressMutation(method, endpoint) ||
-    isAdminInventoryAdjustment(method, endpoint);
+  return !isPreviewPath(window.location.pathname) || isAllowedPreviewMutation(method, endpoint);
 }
 
 function inventoryDiagnosticRoute(method: string, endpoint: string): string | null {
@@ -398,8 +400,10 @@ export function createApiClient(options: ApiClientOptions) {
     const diagnosticRoute = inventoryDiagnosticRoute(method, endpoint);
     const diagnosticStartedAt = diagnosticRoute ? performance.now() : 0;
     if (isUnsafeMethod(method)) {
-      if (requestOptions.origin === "preview" ||
-        (requestOptions.origin !== "outside-preview" && typeof window === "undefined")) {
+      if (
+        requestOptions.origin === "preview" &&
+        (typeof window === "undefined" || !isAllowedPreviewMutation(method, endpoint))
+      ) {
         if (diagnosticRoute) {
           logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
             error: "preview_mutation_blocked",
@@ -407,8 +411,11 @@ export function createApiClient(options: ApiClientOptions) {
         }
         throw new PreviewMutationBlockedError();
       }
-      if (requestOptions.origin !== "outside-preview" &&
-        !isPreviewMutationAllowed(method, endpoint)) {
+      if (
+        requestOptions.origin !== "outside-preview" &&
+        requestOptions.origin !== "preview" &&
+        (typeof window === "undefined" || !isPreviewMutationAllowed(method, endpoint))
+      ) {
         if (diagnosticRoute) {
           logInventoryRequest(method, diagnosticRoute, diagnosticStartedAt, null, {
             error: "preview_mutation_blocked",

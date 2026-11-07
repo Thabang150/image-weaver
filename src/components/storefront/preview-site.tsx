@@ -352,32 +352,29 @@ export function PreviewSite({
   const [authModalView, setAuthModalView] = useState<CustomerAuthModalView>("customer-login");
   const [authModalReturnTo, setAuthModalReturnTo] = useState<"checkout" | "storefront">("storefront");
   const [authModalError, setAuthModalError] = useState<string | null>(null);
-  const [cartSyncFailed, setCartSyncFailed] = useState(false);
   const [googleSignInBusy, setGoogleSignInBusy] = useState(false);
 
   function openCustomerAuth(returnTarget: "checkout" | "storefront") {
     setAuthModalReturnTo(returnTarget);
     setAuthModalView("customer-login");
     setAuthModalError(null);
-    setCartSyncFailed(false);
     setAuthModalOpen(true);
   }
 
   const completeCustomerAuth = useCallback(async (returnTarget = authModalReturnTo) => {
     setAuthModalError(null);
-    setCartSyncFailed(false);
+    window.sessionStorage.removeItem("healthyways.google-sign-in-return");
+    onClearGoogleOAuthResult?.();
+    setAuthModalOpen(false);
     try {
       await cart?.syncGuestCart();
-      window.sessionStorage.removeItem("healthyways.google-sign-in-return");
-      onClearGoogleOAuthResult?.();
-      setAuthModalOpen(false);
-      if (returnTarget === "checkout") onNavigate("checkout");
     } catch (error) {
-      setCartSyncFailed(true);
-      setAuthModalError(
+      cart?.setNotice(
         `You are signed in, but your saved cart could not be synced. ${describeAuthError(error, "Cart sync")}`,
       );
+      cart?.setIsOpen(true);
     }
+    if (returnTarget === "checkout") onNavigate("checkout");
   }, [authModalReturnTo, cart, onClearGoogleOAuthResult, onNavigate]);
 
   useEffect(() => {
@@ -406,7 +403,6 @@ export function PreviewSite({
     ) {
       setAuthModalView(nextView);
       setAuthModalError(null);
-      setCartSyncFailed(false);
       return;
     }
     if (nextView === "account" || nextView === "cart" || nextView === "checkout") {
@@ -655,17 +651,6 @@ export function PreviewSite({
           </DialogHeader>
           {authModalError ? (
             <p className="healthyways-auth-modal-error" role="alert">{authModalError}</p>
-          ) : null}
-          {cartSyncFailed ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="mb-4 w-full"
-              disabled={cart?.isBusy}
-              onClick={() => void completeCustomerAuth()}
-            >
-              {cart?.isBusy ? "Syncing cart…" : "Retry cart sync"}
-            </Button>
           ) : null}
           {authModalView === "customer-login" ? (
             <LoginPage
@@ -1427,6 +1412,7 @@ function LoginPage({
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const factorSubmissionRef = useRef(false);
 
   async function submitCredentials(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1459,6 +1445,8 @@ function LoginPage({
 
   async function submitFactor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (factorSubmissionRef.current) return;
+    factorSubmissionRef.current = true;
     setBusy(true);
     setFeedback(null);
     try {
@@ -1494,6 +1482,7 @@ function LoginPage({
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Two-factor verification") });
     } finally {
+      factorSubmissionRef.current = false;
       setBusy(false);
     }
   }

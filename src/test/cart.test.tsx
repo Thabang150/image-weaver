@@ -353,6 +353,11 @@ describe("storefront cart", () => {
 
     expect(await screen.findByText("Added 1 item to your cart.")).toBeVisible();
     expect(screen.getByText("Aloe product")).toBeVisible();
+    const cartDialog = screen.getByRole("dialog");
+    const productList = cartDialog.querySelector(".cart-list");
+    expect(productList).toBeInTheDocument();
+    expect(productList?.nextElementSibling).toHaveClass("cart-summary");
+    expect(productList?.nextElementSibling?.nextElementSibling).toHaveClass("cart-sheet-actions");
     expect(
       screen.getByText(getZarPriceMatcher(unitPriceCents), { selector: ".cart-item-price" }),
     ).toBeVisible();

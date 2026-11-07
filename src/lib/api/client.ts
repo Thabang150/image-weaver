@@ -33,6 +33,14 @@ function isCustomerCartMutation(method: string, endpoint: string): boolean {
   return method === "PATCH" && /^cart\/items\/[a-f\d]{24}$/i.test(path);
 }
 
+function isCustomerAddressMutation(method: string, endpoint: string): boolean {
+  const path = endpoint.split(/[?#]/, 1)[0]?.replace(/^\/+/, "") ?? "";
+  if (method === "POST") return path === "users/me/addresses";
+  if (method === "DELETE") return /^users\/me\/addresses\/[a-f\d]{24}$/i.test(path);
+  return method === "PATCH" &&
+    /^users\/me\/addresses\/[a-f\d]{24}(?:\/default)?$/i.test(path);
+}
+
 const customerAuthMutationPaths = new Set([
   "auth/login",
   "auth/register",
@@ -63,6 +71,7 @@ function isPreviewMutationAllowed(method: string, endpoint: string): boolean {
   return !isPreviewPath(window.location.pathname) ||
     isCustomerAuthMutation(method, endpoint) ||
     isCustomerCartMutation(method, endpoint) ||
+    isCustomerAddressMutation(method, endpoint) ||
     isAdminInventoryAdjustment(method, endpoint);
 }
 

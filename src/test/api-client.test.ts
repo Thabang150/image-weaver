@@ -122,6 +122,27 @@ describe("API requests", () => {
       client.request("/cart/items/507f1f77bcf86cd799439011", { method: "DELETE" }),
     ).resolves.toEqual({ ok: true });
     await expect(client.request("/cart", { method: "DELETE" })).resolves.toEqual({ ok: true });
+    await expect(client.request("/users/me")).resolves.toEqual({ ok: true });
+    await expect(
+      client.request("/users/me/addresses", { method: "POST", json: { label: "Home" } }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      client.request("/users/me/addresses/507f1f77bcf86cd799439011", {
+        method: "PATCH",
+        json: { label: "Home" },
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      client.request("/users/me/addresses/507f1f77bcf86cd799439011/default", {
+        method: "PATCH",
+        json: {},
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      client.request("/users/me/addresses/507f1f77bcf86cd799439011", {
+        method: "DELETE",
+      }),
+    ).resolves.toEqual({ ok: true });
 
     for (const endpoint of [
       "/auth/login",
@@ -151,9 +172,17 @@ describe("API requests", () => {
       );
     }
     await expect(
+      client.request("/users/me/addresses/not-an-id", { method: "DELETE" }),
+    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
+    await expect(
+      client.request("/users/me/addresses/507f1f77bcf86cd799439011/default", {
+        method: "DELETE",
+      }),
+    ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
+    await expect(
       client.request("/cart/items/not-an-id", { method: "DELETE" }),
     ).rejects.toBeInstanceOf(PreviewMutationBlockedError);
-    expect(fetcher).toHaveBeenCalledTimes(13);
+    expect(fetcher).toHaveBeenCalledTimes(18);
     window.history.pushState({}, "", "/account/login");
   });
 

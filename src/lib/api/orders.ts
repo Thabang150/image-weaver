@@ -64,12 +64,19 @@ export type CustomerPaymentState =
   | "cancelled"
   | "successful";
 
+export const CUSTOMER_ORDER_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function classifyCustomerPayment(order: CustomerOrder): CustomerPaymentState {
   if (order.status === "paid") return "successful";
   if (order.status === "payment_reconciliation") return "confirmation-pending";
+  if (order.status === "cancelled" && order.paymentAttempts.length === 0) return "cancelled";
   const latest = order.paymentAttempts.at(-1);
   if (latest?.status === "reconciliation") return "confirmation-pending";
-  if (latest?.status === "pending") return "processing";
+  if (latest?.status === "pending") {
+    return Date.parse(latest.createdAt) + CUSTOMER_ORDER_LIFETIME_MS <= Date.now()
+      ? "confirmation-pending"
+      : "processing";
+  }
   if (latest?.status === "failed") return "failed";
   if (latest?.status === "cancelled") return "cancelled";
   if (latest?.status === "complete") return "successful";
@@ -77,17 +84,51 @@ export function classifyCustomerPayment(order: CustomerOrder): CustomerPaymentSt
 }
 
 export function canRetryCustomerPayment(order: CustomerOrder): boolean {
-  const latest = order.paymentAttempts.at(-1);
-  const hasUnresolvedAttempt = order.paymentAttempts.some((attempt) =>
+  const attempts = order.paymentAttempts ?? [];
+  const latest = attempts.at(-1);
+  const hasUnresolvedAttempt = attempts.some((attempt) =>
     attempt.status === "pending" || attempt.status === "reconciliation",
   );
-  const hasCompletedAttempt = order.paymentAttempts.some((attempt) => attempt.status === "complete");
+  const hasCompletedAttempt = attempts.some((attempt) => attempt.status === "complete");
+  const quote = order.shippingQuote;
+  const confirmedAt = quote ? Date.parse(quote.confirmedAt) : Number.NaN;
+  const orderCreatedAt = Date.parse(order.createdAt);
+  const quoteIsCurrent = quote?.status === "confirmed"
+    && Number.isFinite(orderCreatedAt)
+    && orderCreatedAt + CUSTOMER_ORDER_LIFETIME_MS > Date.now()
+    && Number.isFinite(confirmedAt)
+    && confirmedAt + CUSTOMER_ORDER_LIFETIME_MS > Date.now()
+    && (!quote.expiresAt || Date.parse(quote.expiresAt) > Date.now());
   return (
     order.status === "pending_payment" &&
     order.stockReservationStatus === "reserved" &&
+    quoteIsCurrent &&
     !hasUnresolvedAttempt &&
     !hasCompletedAttempt &&
-    (latest?.status === "failed" || latest?.status === "cancelled")
+    (attempts.length === 0 || latest?.status === "failed" || latest?.status === "cancelled")
+  );
+}
+
+export function canCancelCustomerOrder(order: CustomerOrder): boolean {
+  const attempts = order.paymentAttempts ?? [];
+  const hasCompletedAttempt = attempts.some((attempt) => attempt.status === "complete");
+  const hasReconciliation = attempts.some((attempt) => attempt.status === "reconciliation");
+  const freshPendingAttempt = attempts.some((attempt) =>
+    attempt.status === "pending"
+    && Date.parse(attempt.createdAt) + CUSTOMER_ORDER_LIFETIME_MS > Date.now(),
+  );
+  return order.status === "pending_payment"
+    && order.stockReservationStatus === "reserved"
+    && !hasCompletedAttempt
+    && !hasReconciliation
+    && !freshPendingAttempt;
+}
+
+export function canArchiveCustomerOrder(order: CustomerOrder): boolean {
+  if (order.status !== "cancelled") return false;
+  return order.paymentAttempts.every((attempt) =>
+    attempt.status === "failed"
+    || (attempt.status === "cancelled" && Boolean(attempt.paymentStatus)),
   );
 }
 
@@ -136,6 +177,12 @@ export function createOrdersApi(client: OrdersApiClient) {
       if (!record(response) || typeof response.checkoutUrl !== 'string' || !record(response.fields) || typeof response.method !== 'string') invalid();
       return response as unknown as PayFastCheckout;
     },
+    async cancelCustomerOrder(orderId: string): Promise<void> {
+      await client.request<unknown>(`/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST", json: {} });
+    },
+    async archiveCustomerOrder(orderId: string): Promise<void> {
+      await client.request<unknown>(`/orders/${encodeURIComponent(orderId)}/archive`, { method: "POST", json: {} });
+    },
     async getShippingQuotes(orderId: string) {
       const response = await client.request<unknown>(`/orders/${encodeURIComponent(orderId)}/shipping/quote`, { method: 'POST', json: {} });
       if (!record(response)) invalid();
@@ -156,6 +203,8 @@ export const ordersApi = {
   createOrder: (addressId: string, idempotencyKey: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createOrder(addressId, idempotencyKey),
   getTracking: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getTracking(orderId),
   createPayFastCheckout: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createPayFastCheckout(orderId),
+  cancelCustomerOrder: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).cancelCustomerOrder(orderId),
+  archiveCustomerOrder: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).archiveCustomerOrder(orderId),
   getShippingQuotes: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getShippingQuotes(orderId),
   selectShippingQuote: (orderId: string, quoteId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).selectShippingQuote(orderId, quoteId),
 };

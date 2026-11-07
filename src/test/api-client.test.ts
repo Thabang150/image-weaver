@@ -40,11 +40,14 @@ describe("API URL configuration", () => {
     expect(() => normalizeApiBaseUrl("javascript:alert(1)")).toThrow("HTTP(S) URL");
   });
 
-  it("uses the configured backend locally and the relative API path in production", () => {
+  it("uses the configured backend locally and same-origin API URLs in production", () => {
     expect(getBackendBaseUrl(baseUrl, true)).toBe(`${baseUrl}/api/v1/`);
     expect(getBackendBaseUrl(baseUrl, false)).toBe("/api/v1/");
     expect(buildApiUrl(getBackendBaseUrl(baseUrl, false), "/auth/login")).toBe(
       "/api/v1/auth/login",
+    );
+    expect(buildApiUrl(getBackendBaseUrl(baseUrl, false), "/auth/google/start")).toBe(
+      "/api/v1/auth/google/start",
     );
   });
 

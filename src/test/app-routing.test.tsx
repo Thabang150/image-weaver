@@ -112,6 +112,23 @@ describe("App routing", () => {
     expect(router.state.location.pathname).toBe("/preview");
   }, 15000);
 
+  it("resumes Google sign-in at the email verification step", async () => {
+    await renderPreviewAt("/preview?google=otp", createPreviewFetcher({}));
+
+    expect(await screen.findByLabelText("Six-digit code")).toBeVisible();
+    expect(screen.getByText("Enter the six-digit code sent to your email to finish signing in.")).toBeVisible();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  }, 15000);
+
+  it("shows a safe sign-in error after a Google callback failure", async () => {
+    await renderPreviewAt("/preview?google=error", createPreviewFetcher({}));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Google sign-in could not be completed. Please try again.",
+    );
+    expect(screen.getByLabelText("Password")).toBeVisible();
+  }, 15000);
+
   it("resolves /verify-email through /preview and clears the link token after capture", async () => {
     const token = "v".repeat(40);
     const fetcher = createPreviewFetcher({});

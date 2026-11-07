@@ -56,6 +56,7 @@ export const Route = createFileRoute("/preview")({
     const token = search["token"];
     const emailLink = search["emailLink"];
     const orderId = search["orderId"];
+    const google = search["google"];
     return {
       ...(typeof product === "string" && productSlugPattern.test(product) ? { product } : {}),
       ...(isPreviewView(view) ? { view } : {}),
@@ -63,6 +64,7 @@ export const Route = createFileRoute("/preview")({
       ...(typeof token === "string" ? { token } : {}),
       ...(typeof orderId === "string" && /^[a-f\d]{24}$/i.test(orderId) ? { orderId } : {}),
       ...(emailLink === 1 || emailLink === "1" ? { emailLink: 1 as const } : {}),
+      ...(google === "otp" || google === "error" ? { google } : {}),
     };
   },
   head: () => ({
@@ -91,7 +93,8 @@ function Preview() {
   const view = search.view ?? "home";
   const cartEnabled =
     !["login", "customer-login", "register", "verify-email", "forgot-password", "reset-password",
-      "admin-login", "admin-register", "admin-forgot-password", "admin"].includes(view);
+      "admin-login", "admin-register", "admin-forgot-password", "admin"].includes(view) &&
+    search.google === undefined;
   const emailLinkFallbackStartedRef = useRef(false);
 
   useEffect(() => {
@@ -157,7 +160,11 @@ function Preview() {
         returnTo={search.returnTo}
         verificationToken={search.token}
         orderId={search.orderId}
+        googleOAuthResult={search.google}
         isEmailLink={search.emailLink === 1}
+        onClearGoogleOAuthResult={() => {
+          void navigate({ to: "/preview", search: { view }, replace: true });
+        }}
         onClearEmailLink={() => {
           void navigate({
             to: "/preview",

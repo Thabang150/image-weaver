@@ -81,8 +81,10 @@ interface PreviewSiteProps {
   returnTo: "cart" | "account" | "admin" | undefined;
   verificationToken: string | undefined;
   orderId: string | undefined;
+  googleOAuthResult?: "otp" | "error";
   isEmailLink: boolean;
   onClearEmailLink: () => void;
+  onClearGoogleOAuthResult?: () => void;
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin", orderId?: string) => void;
   onSelectProduct: (slug: string) => void;
   onBackToCatalogue: () => void;
@@ -325,8 +327,10 @@ export function PreviewSite({
   returnTo,
   verificationToken,
   orderId,
+  googleOAuthResult,
   isEmailLink,
   onClearEmailLink,
+  onClearGoogleOAuthResult,
   onNavigate,
   onSelectProduct,
   onBackToCatalogue,
@@ -364,6 +368,8 @@ export function PreviewSite({
     setCartSyncFailed(false);
     try {
       await cart?.syncGuestCart();
+      window.sessionStorage.removeItem("healthyways.google-sign-in-return");
+      onClearGoogleOAuthResult?.();
       setAuthModalOpen(false);
       if (returnTarget === "checkout") onNavigate("checkout");
     } catch (error) {
@@ -372,7 +378,22 @@ export function PreviewSite({
         `You are signed in, but your saved cart could not be synced. ${describeAuthError(error, "Cart sync")}`,
       );
     }
-  }, [authModalReturnTo, cart, onNavigate]);
+  }, [authModalReturnTo, cart, onClearGoogleOAuthResult, onNavigate]);
+
+  useEffect(() => {
+    if (googleOAuthResult === undefined) return;
+    const returnTarget = window.sessionStorage.getItem("healthyways.google-sign-in-return");
+    setAuthModalReturnTo(returnTarget === "checkout" ? "checkout" : "storefront");
+    setAuthModalView("customer-login");
+    setAuthModalOpen(true);
+    setGoogleSignInBusy(false);
+    if (googleOAuthResult === "error") {
+      window.sessionStorage.removeItem("healthyways.google-sign-in-return");
+      setAuthModalError("Google sign-in could not be completed. Please try again.");
+    } else {
+      setAuthModalError(null);
+    }
+  }, [googleOAuthResult]);
 
   function handleCustomerAuthNavigate(nextView: PreviewView) {
     if (
@@ -415,6 +436,7 @@ export function PreviewSite({
 
   useEffect(() => {
     async function resumeGoogleSignIn() {
+      if (googleOAuthResult !== undefined) return;
       const returnTarget = window.sessionStorage.getItem("healthyways.google-sign-in-return");
       if (!returnTarget) return;
       window.sessionStorage.removeItem("healthyways.google-sign-in-return");
@@ -441,7 +463,7 @@ export function PreviewSite({
       window.removeEventListener("focus", resumeGoogleSignIn);
       window.removeEventListener("pageshow", resumeGoogleSignIn);
     };
-  }, [queryClient, completeCustomerAuth]);
+  }, [queryClient, completeCustomerAuth, googleOAuthResult]);
 
   useEffect(() => {
     const previousUserId = previousUserIdRef.current;
@@ -511,6 +533,7 @@ export function PreviewSite({
         onNavigate={onNavigate}
         onGoogleSignIn={() => void startGoogleSignIn()}
         googleSignInBusy={googleSignInBusy}
+        googleOtpRequired={googleOAuthResult === "otp"}
       />
     );
   } else if (view === "admin-login") {
@@ -651,6 +674,7 @@ export function PreviewSite({
               returnTo={authModalReturnTo === "checkout" ? "cart" : "account"}
               onGoogleSignIn={() => void startGoogleSignIn()}
               googleSignInBusy={googleSignInBusy}
+              googleOtpRequired={googleOAuthResult === "otp"}
             />
           ) : authModalView === "register" ? (
             <RegisterPage experience="customer" onNavigate={handleCustomerAuthNavigate} />
@@ -1351,11 +1375,13 @@ function CustomerLoginPage({
   returnTo,
   onGoogleSignIn,
   googleSignInBusy,
+  googleOtpRequired,
 }: {
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
   returnTo?: "cart" | "account" | "admin";
   onGoogleSignIn?: () => void;
   googleSignInBusy?: boolean;
+  googleOtpRequired?: boolean;
 }) {
   return (
     <LoginPage
@@ -1364,6 +1390,7 @@ function CustomerLoginPage({
       returnTo={returnTo}
       onGoogleSignIn={onGoogleSignIn}
       googleSignInBusy={googleSignInBusy}
+      googleOtpRequired={googleOtpRequired}
     />
   );
 }
@@ -1382,18 +1409,20 @@ function LoginPage({
   returnTo,
   onGoogleSignIn,
   googleSignInBusy = false,
+  googleOtpRequired = false,
 }: {
   experience: LoginExperience;
   onNavigate: (view: PreviewView, returnTo?: "cart" | "account" | "admin") => void;
   returnTo: "cart" | "account" | "admin" | undefined;
   onGoogleSignIn?: () => void;
   googleSignInBusy?: boolean;
+  googleOtpRequired?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [step, setStep] = useState<LoginStep>("credentials");
+  const [step, setStep] = useState<LoginStep>(googleOtpRequired ? "email-otp" : "credentials");
   const [provisioningUri, setProvisioningUri] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);

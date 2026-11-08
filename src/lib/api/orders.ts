@@ -23,7 +23,7 @@ export interface CustomerOrder {
   status: "pending_payment" | "paid" | "cancelled" | "payment_reconciliation";
   fulfillmentStatus: "awaiting_payment" | "processing" | "shipped" | "delivered" | "cancelled";
   stockReservationStatus: "reserved" | "committed" | "released";
-  shippingQuote?: { chargeCents: number; serviceName: string; confirmedAt: string; status: "confirmed"; expiresAt?: string };
+  shippingQuote?: { quoteId?: string; chargeCents: number; serviceName: string; confirmedAt: string; status: "confirmed"; expiresAt?: string };
   shippingQuoteOptions?: Array<{ quoteId: string; serviceLevel: { name: string; code?: string }; rateCents: number; currency: "ZAR" }>;
   paymentAttempts: PaymentAttempt[];
   deliveryAddress: { recipientName: string; phoneNumber: string; addressLine1: string; addressLine2?: string; localArea?: string; city: string; province: string; postalCode: string; country: string; deliveryInstructions?: string };
@@ -46,6 +46,20 @@ export interface PayFastCheckout {
   checkoutUrl: string;
   method: "POST";
   fields: Record<string, string>;
+}
+
+export interface CartShippingRate {
+  quoteId: string;
+  serviceLevel: { id: string; code: string; name: string };
+  rateCents: number;
+  currency: "ZAR";
+}
+
+export interface CartShippingQuote {
+  quoteId: string;
+  expiresAt: string;
+  currency: "ZAR";
+  rates: CartShippingRate[];
 }
 
 export interface OrderTracking {
@@ -162,8 +176,25 @@ export function createOrdersApi(client: OrdersApiClient) {
       if (!record(response) || !record(response.order)) invalid();
       return parseOrder(response.order);
     },
-    async createOrder(addressId: string, idempotencyKey: string): Promise<CustomerOrder> {
-      const response = await client.request<{ order?: unknown }>('/orders', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, json: { addressId } });
+    async createCartShippingQuote(addressId: string): Promise<CartShippingQuote> {
+      const response = await client.request<unknown>('/shipping/quote', { method: 'POST', json: { addressId } });
+      if (!record(response) || typeof response.quoteId !== 'string' || typeof response.expiresAt !== 'string' || response.currency !== "ZAR" || !Array.isArray(response.rates)) invalid();
+      const rates = response.rates.map((rate): CartShippingRate => {
+        if (!record(rate) || typeof rate.quoteId !== "string" || !record(rate.serviceLevel) || typeof rate.serviceLevel.id !== "string" || typeof rate.serviceLevel.code !== "string" || typeof rate.serviceLevel.name !== "string" || !integer(rate.rateCents) || rate.currency !== "ZAR") invalid();
+        return {
+          quoteId: rate.quoteId,
+          serviceLevel: { id: rate.serviceLevel.id, code: rate.serviceLevel.code, name: rate.serviceLevel.name },
+          rateCents: rate.rateCents,
+          currency: "ZAR",
+        };
+      });
+      return { quoteId: response.quoteId, expiresAt: response.expiresAt, currency: "ZAR", rates };
+    },
+    async selectCartShippingRate(quoteId: string, rateId: string): Promise<void> {
+      await client.request<unknown>(`/shipping/quote/${encodeURIComponent(quoteId)}/select`, { method: 'POST', json: { rateId } });
+    },
+    async createOrder(addressId: string, shippingQuoteId: string, idempotencyKey: string): Promise<CustomerOrder> {
+      const response = await client.request<{ order?: unknown }>('/orders', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, json: { addressId, shippingQuoteId } });
       if (!record(response) || !record(response.order)) invalid();
       return parseOrder(response.order);
     },
@@ -200,7 +231,9 @@ let configuredOrdersApi: ReturnType<typeof createOrdersApi> | undefined;
 export const ordersApi = {
   listCustomerOrders: (page?: number, limit?: number) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).listCustomerOrders(page, limit),
   getCustomerOrder: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getCustomerOrder(orderId),
-  createOrder: (addressId: string, idempotencyKey: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createOrder(addressId, idempotencyKey),
+  createCartShippingQuote: (addressId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createCartShippingQuote(addressId),
+  selectCartShippingRate: (quoteId: string, rateId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).selectCartShippingRate(quoteId, rateId),
+  createOrder: (addressId: string, shippingQuoteId: string, idempotencyKey: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createOrder(addressId, shippingQuoteId, idempotencyKey),
   getTracking: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getTracking(orderId),
   createPayFastCheckout: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createPayFastCheckout(orderId),
   cancelCustomerOrder: (orderId: string) => (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).cancelCustomerOrder(orderId),

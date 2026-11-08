@@ -95,6 +95,25 @@ export interface InventoryAdjustmentResult {
   replayed: boolean;
 }
 
+export interface AdminOrderSummary {
+  id: string;
+  orderNumber: string;
+  customerEmail: string;
+  status: string;
+  fulfillmentStatus: string;
+  totalCents: number;
+  currency: "ZAR";
+  createdAt: string;
+  shipmentBooking: null | {
+    status: string;
+    attempts: number;
+    providerShipmentId?: string;
+    trackingReference?: string;
+    lastErrorCode?: string;
+    bookedAt?: string;
+  };
+}
+
 export type AdminApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -549,6 +568,50 @@ export function createAdminApi(client: AdminApiClient) {
         })}`,
       );
     },
+    async getOrders(page = 1, limit = 20): Promise<{ orders: AdminOrderSummary[]; pagination: InventoryList["pagination"] }> {
+      const response = await client.request<unknown>(`/admin/orders${buildQuery({ page, limit })}`);
+      if (!isRecord(response) || !Array.isArray(response.orders) || !isRecord(response.pagination)) return invalidAdminResponse();
+      const pagination = response.pagination;
+      if (!isSafeInteger(pagination.page) || !isSafeInteger(pagination.limit) || !isSafeInteger(pagination.total) || !isSafeInteger(pagination.totalPages)) return invalidAdminResponse();
+      const orders = response.orders.map((order): AdminOrderSummary => {
+        if (!isRecord(order) || typeof order.id !== "string" || typeof order.orderNumber !== "string" || typeof order.customerEmail !== "string" || typeof order.status !== "string" || typeof order.fulfillmentStatus !== "string" || !isSafeInteger(order.totalCents) || order.currency !== "ZAR" || typeof order.createdAt !== "string") return invalidAdminResponse();
+        let shipmentBooking: AdminOrderSummary["shipmentBooking"] = null;
+        if (order.shipmentBooking !== undefined && order.shipmentBooking !== null) {
+          if (!isRecord(order.shipmentBooking) || typeof order.shipmentBooking.status !== "string" || !isSafeInteger(order.shipmentBooking.attempts)) return invalidAdminResponse();
+          shipmentBooking = {
+            status: order.shipmentBooking.status,
+            attempts: order.shipmentBooking.attempts,
+            ...(typeof order.shipmentBooking.providerShipmentId === "string" ? { providerShipmentId: order.shipmentBooking.providerShipmentId } : {}),
+            ...(typeof order.shipmentBooking.trackingReference === "string" ? { trackingReference: order.shipmentBooking.trackingReference } : {}),
+            ...(typeof order.shipmentBooking.lastErrorCode === "string" ? { lastErrorCode: order.shipmentBooking.lastErrorCode } : {}),
+            ...(typeof order.shipmentBooking.bookedAt === "string" ? { bookedAt: order.shipmentBooking.bookedAt } : {}),
+          };
+        }
+        return {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          customerEmail: order.customerEmail,
+          status: order.status,
+          fulfillmentStatus: order.fulfillmentStatus,
+          totalCents: order.totalCents,
+          currency: "ZAR",
+          createdAt: order.createdAt,
+          shipmentBooking,
+        };
+      });
+      return { orders, pagination: pagination as InventoryList["pagination"] };
+    },
+    async retryShipmentBooking(orderId: string): Promise<void> {
+      await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/shipment/retry`, { method: "POST", json: {} });
+    },
+    async cancelShipment(orderId: string): Promise<void> {
+      await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/shipment/cancel`, { method: "POST", json: {} });
+    },
+    async getShipmentWaybill(orderId: string): Promise<string> {
+      const response = await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/shipment/waybill`);
+      if (!isRecord(response) || typeof response.url !== "string" || !isHttpsUrl(response.url)) return invalidAdminResponse();
+      return response.url;
+    },
     async createProduct(payload: Record<string, unknown>) {
       return parseAdminProduct(
         await client.request<unknown>("/admin/products", { method: "POST", json: payload }),
@@ -627,6 +690,10 @@ export const adminApi = {
     report: Parameters<ReturnType<typeof createAdminApi>["getAnalytics"]>[0],
     options?: Parameters<ReturnType<typeof createAdminApi>["getAnalytics"]>[1],
   ) => getConfiguredAdminApi().getAnalytics(report, options),
+  getOrders: (page?: number, limit?: number) => getConfiguredAdminApi().getOrders(page, limit),
+  retryShipmentBooking: (orderId: string) => getConfiguredAdminApi().retryShipmentBooking(orderId),
+  cancelShipment: (orderId: string) => getConfiguredAdminApi().cancelShipment(orderId),
+  getShipmentWaybill: (orderId: string) => getConfiguredAdminApi().getShipmentWaybill(orderId),
   createProduct: (payload: Record<string, unknown>) =>
     getConfiguredAdminApi().createProduct(payload),
   updateProduct: (productId: string, payload: Record<string, unknown>) =>

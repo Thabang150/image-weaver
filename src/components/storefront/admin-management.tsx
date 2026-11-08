@@ -11,12 +11,13 @@ import {
   adminApi,
   type AdminCategory,
   type AdminInventoryItem,
+  type AdminOrderSummary,
   type AdminProduct,
   type InventoryList,
 } from "@/lib/api/admin";
 import { isAllowedProductImageUrl } from "@/lib/image-url";
 
-type AdminSection = "overview" | "products" | "categories" | "inventory" | "analytics";
+type AdminSection = "overview" | "products" | "categories" | "inventory" | "analytics" | "orders";
 type ProductStatus = AdminProduct["status"];
 
 function isProductStatus(value: string): value is ProductStatus {
@@ -29,6 +30,7 @@ const sections: Array<{ id: AdminSection; label: string }> = [
   { id: "categories", label: "Categories" },
   { id: "inventory", label: "Inventory" },
   { id: "analytics", label: "Analytics" },
+  { id: "orders", label: "Orders" },
 ];
 
 function safeAdminError(error: unknown, action: string): string {
@@ -156,19 +158,65 @@ function AdminManagement() {
       {activeSection === "categories" ? <CategoryManagement /> : null}
       {activeSection === "inventory" ? <InventoryManagement /> : null}
       {activeSection === "analytics" ? <AnalyticsReports /> : null}
-      <section className="admin-contract-note">
-        <h3>Orders</h3>
-        <p>
-          This backend documents order cancellation but does not provide an administrator order-list
-          endpoint. Orders cannot be displayed or safely selected for cancellation here. Payment,
-          refunds and fulfilment are not available.
-        </p>
-      </section>
+      {activeSection === "orders" ? <OrderManagement /> : null}
     </div>
   );
 }
 
 export { AdminManagement };
+
+function OrderManagement() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: ["admin", "orders"],
+    queryFn: () => adminApi.getOrders(1, 50),
+    retry: false,
+  });
+  const retryMutation = useMutation({
+    mutationFn: (orderId: string) => adminApi.retryShipmentBooking(orderId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "orders"] }),
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (orderId: string) => adminApi.cancelShipment(orderId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "orders"] }),
+  });
+  const [waybills, setWaybills] = useState<Record<string, string>>({});
+  const [waybillError, setWaybillError] = useState<string | null>(null);
+  if (query.isPending) return <section className="admin-card"><h3>Orders and fulfilment</h3><p role="status">Loading orders…</p></section>;
+  if (query.isError) return <section className="admin-card"><h3>Orders and fulfilment</h3><QueryError error={query.error} action="Order loading" /><Button variant="outline" onClick={() => void query.refetch()}>Retry</Button></section>;
+  return (
+    <section className="admin-card admin-wide">
+      <h3>Orders and fulfilment</h3>
+      <p className="admin-muted">Shipment booking starts only after verified PayFast payment. Ambiguous provider outcomes require manual provider reconciliation and cannot be retried automatically.</p>
+      {retryMutation.isError ? <QueryError error={retryMutation.error} action="Shipment booking retry" /> : null}
+      {cancelMutation.isError ? <QueryError error={cancelMutation.error} action="Carrier shipment cancellation" /> : null}
+      {waybillError ? <Feedback error>{waybillError}</Feedback> : null}
+      {!query.data.orders.length ? <p>No orders found.</p> : (
+        <div className="space-y-4">
+          {query.data.orders.map((order: AdminOrderSummary) => {
+            const booking = order.shipmentBooking;
+            return (
+              <article key={order.id} className="rounded-md border border-border p-4">
+                <div className="flex flex-wrap justify-between gap-2">
+                  <div><strong>{order.orderNumber}</strong><p className="text-sm">{order.customerEmail}</p></div>
+                  <div className="text-right"><strong>{(order.totalCents / 100).toLocaleString("en-ZA", { style: "currency", currency: "ZAR" })}</strong><p className="text-sm">{order.status} · {order.fulfillmentStatus}</p></div>
+                </div>
+                <p className="mt-2 text-sm">ShipLogic: {booking?.status ?? "not booked"}{booking?.trackingReference ? ` · ${booking.trackingReference}` : ""}{booking?.lastErrorCode ? ` · ${booking.lastErrorCode}` : ""}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {booking?.status === "failed" ? <Button variant="outline" disabled={retryMutation.isPending} onClick={() => retryMutation.mutate(order.id)}>Retry rejected booking</Button> : null}
+                  {booking?.status === "booked" && order.fulfillmentStatus === "processing" ? <Button variant="outline" disabled={cancelMutation.isPending} onClick={() => { if (window.confirm("Cancel this carrier shipment? This does not refund the customer order.")) cancelMutation.mutate(order.id); }}>Cancel carrier shipment</Button> : null}
+                  {booking?.status === "booked" ? <Button variant="outline" onClick={() => { setWaybillError(null); void adminApi.getShipmentWaybill(order.id).then((url) => setWaybills((current) => ({ ...current, [order.id]: url }))).catch(() => setWaybillError("The waybill could not be retrieved. Retry; signed URLs expire after 24 hours.")); }}>Get waybill</Button> : null}
+                  {waybills[order.id] ? <a className="inline-flex min-h-10 items-center rounded-md border px-4 py-2 text-sm" href={waybills[order.id]} target="_blank" rel="noopener noreferrer">Open waybill</a> : null}
+                  {booking?.status === "unknown" || booking?.status === "cancellation_unknown" ? <span className="text-sm text-destructive">Check the provider before retrying; the request may have completed.</span> : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function AdminOverview() {
   const overviewQuery = useQuery({

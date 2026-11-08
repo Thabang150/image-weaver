@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
-import { ordersApi, type CustomerOrder, type PayFastCheckout } from "@/lib/api/orders";
+import { CUSTOMER_ORDER_LIFETIME_MS, ordersApi, type CustomerOrder, type PayFastCheckout } from "@/lib/api/orders";
 import { cartApi } from "@/lib/api/cart";
 import { formatZarCents } from "@/lib/money";
 import { useCart } from "@/components/storefront/cart";
@@ -11,6 +11,7 @@ import { ApiHttpError } from "@/lib/api/client";
 const inputClass = "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
 const ORDER_KEY = "healthyways.checkout.orderId";
 const IDEMPOTENCY_KEYS = "healthyways.checkout.idempotencyKeys";
+const SHIPLOGIC_RATE_LIFETIME_MS = 5 * 60 * 1000;
 
 type CartFingerprintSource = {
   items: Array<{ productId: string; quantity: number }>;
@@ -63,12 +64,27 @@ function matchesCart(order: CustomerOrder, cart: CartFingerprintSource | undefin
 }
 
 function recoverableOrder(order: CustomerOrder) {
+  if (Date.parse(order.createdAt) + CUSTOMER_ORDER_LIFETIME_MS <= Date.now()) {
+    return { eligible: false, reason: "This order has expired. Review or cancel it from My Orders." };
+  }
   const unresolved = order.paymentAttempts.some((attempt) => attempt.status === "pending" || attempt.status === "reconciliation");
   if (order.status === "paid") return { eligible: false, reason: "This order has already been paid." };
   if (order.status === "cancelled") return { eligible: false, reason: "This order has been cancelled." };
   if (order.status === "payment_reconciliation" || unresolved) return { eligible: false, reason: "Payment confirmation or reconciliation is unresolved. Do not create another order; continue from My Orders." };
   if (order.stockReservationStatus !== "reserved") return { eligible: false, reason: "This order's stock reservation has expired or is no longer active." };
   return { eligible: order.status === "pending_payment", reason: "This order can continue checkout." };
+}
+
+function currentShippingQuote(order: CustomerOrder): boolean {
+  const quote = order.shippingQuote;
+  const confirmedAt = quote ? Date.parse(quote.confirmedAt) : Number.NaN;
+  const orderCreatedAt = Date.parse(order.createdAt);
+  return quote?.status === "confirmed"
+    && Number.isFinite(confirmedAt)
+    && confirmedAt + SHIPLOGIC_RATE_LIFETIME_MS > Date.now()
+    && Number.isFinite(orderCreatedAt)
+    && orderCreatedAt + CUSTOMER_ORDER_LIFETIME_MS > Date.now()
+    && (!quote.expiresAt || Date.parse(quote.expiresAt) > Date.now());
 }
 
 function submitPayFast(checkout: PayFastCheckout) {
@@ -93,6 +109,7 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
   const [order, setOrder] = useState<CustomerOrder | null>(null);
   const [rates, setRates] = useState<any[]>([]);
   const [selectedQuote, setSelectedQuote] = useState<string>("");
+  const [cartQuoteId, setCartQuoteId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [showAddressForm, setShowAddressForm] = useState(false);
@@ -107,7 +124,7 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
       .then((recovered) => {
         setRecoveryState("eligible");
         setOrder(recovered);
-        if (recovered.shippingQuote) setSelectedQuote(recovered.shippingQuote.serviceName);
+        if (recovered.shippingQuote) setSelectedQuote(recovered.shippingQuote.quoteId ?? "");
       })
       .catch(() => {
         sessionStorage.removeItem(ORDER_KEY);
@@ -121,7 +138,11 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
   const recovery = order ? recoverableOrder(order) : { eligible: false, reason: "" };
   const recoveredAddressMatches = Boolean(order && selectedAddress && matchesSelectedAddress(order, selectedAddress));
   const recoveredCartMatches = Boolean(order && matchesCart(order, cart));
-  const recoveryBlocked = Boolean(order && (!recovery.eligible || !recoveredAddressMatches || !recoveredCartMatches));
+  const recoveryBlocked = Boolean(order && (
+    !recovery.eligible
+    || !recoveredAddressMatches
+    || (cart?.items.length !== 0 && !recoveredCartMatches)
+  ));
 
   const deliveryCharge = order?.shippingQuote?.chargeCents ?? 0;
   const hasUnavailable = Boolean(cart?.hasUnavailableItems);
@@ -157,7 +178,7 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
     try {
       const quoteResponse = await ordersApi.getShippingQuotes(existingOrder.id);
       setRates(quoteResponse.rates ?? []);
-      setSelectedQuote(existingOrder.shippingQuote ? existingOrder.shippingQuote.serviceName : "");
+      setSelectedQuote("");
       setOrder(await ordersApi.getCustomerOrder(existingOrder.id));
     } catch (error) {
       setSelectedQuote("");
@@ -169,56 +190,63 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
     }
   }
 
+  async function requestCartQuotes() {
+    if (!canCreate || order) return;
+    setBusy(true); setMessage(null);
+    setRates([]); setSelectedQuote(""); setCartQuoteId("");
+    try {
+      const latestCart = await cartApi.getCart();
+      queryClient.setQueryData(["cart", user.id], latestCart);
+      if (latestCart.hasUnavailableItems || cartFingerprint(latestCart) !== cartFingerprint(cart)) {
+        setMessage("Your cart availability changed. Review the refreshed cart before requesting delivery rates.");
+        return;
+      }
+      const response = await ordersApi.createCartShippingQuote(addressId);
+      setCartQuoteId(response.quoteId);
+      setRates(response.rates);
+      if (response.rates.length === 0) setMessage("No delivery options are available for this address.");
+    } catch (error) {
+      setMessage(error instanceof ApiHttpError && error.status === 422
+        ? "No delivery quote is available for this address. Review it or choose another saved address."
+        : "Delivery quotes are temporarily unavailable. No order has been created and your cart remains unchanged.");
+    } finally { setBusy(false); }
+  }
+
   async function create() {
-    if (!canCreate || recoveryBlocked) return;
+    if (!canCreate || recoveryBlocked || !cartQuoteId || !selectedQuote) return;
     setBusy(true); setMessage(null);
     try {
-      let next = order;
-      if (!next) {
-        const latestCart = await cartApi.getCart();
-        queryClient.setQueryData(["cart", user.id], latestCart);
-        if (latestCart.hasUnavailableItems) {
-          const unavailableNames = latestCart.items
-            .filter((item) =>
-              !item.available ||
-              (item.stockQuantity !== undefined &&
-                (item.stockQuantity === 0 || item.quantity > item.stockQuantity)),
-            )
-            .map((item) => `${item.product?.name ?? item.productId} (quantity ${item.quantity})`);
-          setMessage(
-            unavailableNames.length > 0
-              ? `Checkout is blocked because these cart items are unavailable: ${unavailableNames.join(", ")}. Remove them or reduce quantities, then try again.`
-              : "Stock or availability changed. Your cart has been refreshed; review it before continuing.",
-          );
-          return;
-        }
-        if (cartFingerprint(latestCart) !== cartFingerprint(cart)) {
-          setMessage("Your cart changed while checkout was open. Review the refreshed cart before continuing.");
-          return;
-        }
-        next = await ordersApi.createOrder(
-          addressId,
-          idempotencyKey(user.id, addressId, latestCart),
-        );
-        sessionStorage.setItem(ORDER_KEY, next.id);
+      const latestCart = await cartApi.getCart();
+      queryClient.setQueryData(["cart", user.id], latestCart);
+      if (latestCart.hasUnavailableItems || cartFingerprint(latestCart) !== cartFingerprint(cart)) {
+        setMessage("Stock or cart contents changed after delivery rates were requested. Review the refreshed cart and request new rates.");
+        return;
       }
+      const next = await ordersApi.createOrder(
+        addressId,
+        cartQuoteId,
+        idempotencyKey(user.id, addressId, latestCart),
+      );
+      sessionStorage.setItem(ORDER_KEY, next.id);
       setOrder(next);
-      await loadQuotes(next);
     } catch (error) {
       if (error instanceof ApiHttpError && error.status === 409) {
-        setMessage("Checkout conflicted with an existing order or unavailable stock. Refresh the order status before continuing; do not submit another checkout.");
+        setMessage("The delivery rate expired or your order/cart changed. Request fresh rates and retry; no order was created.");
       } else {
-        setMessage(error instanceof ApiHttpError && error.status === 410
-          ? "The stock reservation expired. Review your cart and checkout again with a new checkout request."
-          : "We could not create the order. Your cart and checkout details are still here; please try again.");
+        setMessage("We could not create the order. Your cart and checkout details are still here; please try again.");
       }
     } finally { setBusy(false); }
   }
 
   async function selectRate(quoteId: string) {
-    if (!order) return;
     setBusy(true); setMessage(null);
     try {
+      if (!order) {
+        if (!cartQuoteId) throw new Error("Missing delivery quote.");
+        await ordersApi.selectCartShippingRate(cartQuoteId, quoteId);
+        setSelectedQuote(quoteId);
+        return;
+      }
       const result = await ordersApi.selectShippingQuote(order.id, quoteId);
       setSelectedQuote(quoteId);
       const authoritative = await ordersApi.getCustomerOrder(order.id);
@@ -232,13 +260,14 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
       if (order.shippingQuote) {
         try { setOrder(await ordersApi.getCustomerOrder(order.id)); } catch { /* Keep the checkout visible while status refresh fails. */ }
       }
-      setMessage("That delivery quote is no longer available. Request the delivery quotes again; no old quote is being used for payment.");
+      setSelectedQuote("");
+      setMessage("That delivery quote is no longer available. Request delivery quotes again; no old quote is being used for payment.");
     }
     finally { setBusy(false); }
   }
 
   async function pay() {
-    if (!order || !order.shippingQuote || recoveryBlocked) {
+    if (!order || !currentShippingQuote(order) || recoveryBlocked) {
       setMessage("Payment is blocked until the saved checkout matches the current cart and address and the order is eligible for payment.");
       return;
     }
@@ -265,7 +294,7 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
     <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_340px]">
       <section className="rounded-lg border border-border bg-card p-5">
         <h2 className="text-xl font-medium">Delivery address</h2>
-        {user.addresses.length ? <div className="mt-4 space-y-3">{user.addresses.map((entry: PublicAddress) => <label key={entry.id} className="flex gap-3 rounded-md border border-border p-3 text-sm"><input type="radio" checked={addressId === entry.id} onChange={() => setAddressId(entry.id)} disabled={Boolean(order)} /><span><strong>{entry.label}</strong>{entry.isDefault ? " · Default" : null}<br />{entry.recipientName}<br />{entry.addressLine1}{entry.addressLine2 ? `, ${entry.addressLine2}` : ""}{entry.localArea ? `, ${entry.localArea}` : ""}, {entry.city}, {entry.province}<br />{entry.postalCode}</span></label>)}</div> : <p className="mt-3 text-sm">Add a delivery address to continue.</p>}
+        {user.addresses.length ? <div className="mt-4 space-y-3">{user.addresses.map((entry: PublicAddress) => <label key={entry.id} className="flex gap-3 rounded-md border border-border p-3 text-sm"><input type="radio" checked={addressId === entry.id} onChange={() => { setAddressId(entry.id); setRates([]); setSelectedQuote(""); setCartQuoteId(""); }} disabled={Boolean(order)} /><span><strong>{entry.label}</strong>{entry.isDefault ? " · Default" : null}<br />{entry.recipientName}<br />{entry.addressLine1}{entry.addressLine2 ? `, ${entry.addressLine2}` : ""}{entry.localArea ? `, ${entry.localArea}` : ""}, {entry.city}, {entry.province}<br />{entry.postalCode}</span></label>)}</div> : <p className="mt-3 text-sm">Add a delivery address to continue.</p>}
         {!order ? <Button className="mt-4" variant="outline" onClick={() => setShowAddressForm(!showAddressForm)}>{showAddressForm ? "Cancel new address" : "Add a new address"}</Button> : null}
         {showAddressForm ? <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={saveAddress}>{Object.entries(address).filter(([key]) => key !== "country" && key !== "addressLine2" && key !== "deliveryInstructions").map(([key, value]) => <label className="space-y-1 text-sm" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><input required={key !== "addressLine2" && key !== "localArea"} className={inputClass} value={value} onChange={e => setAddress({ ...address, [key]: e.currentTarget.value })} /></label>)}<div className="sm:col-span-2"><Button disabled={busy}>{busy ? "Saving…" : "Save address"}</Button></div></form> : null}
       </section>
@@ -274,8 +303,10 @@ export function CheckoutPage({ user, onNavigate }: { user: PublicUser; onNavigat
         <dl className="mt-4 space-y-2 text-sm"><div className="flex justify-between"><dt>Subtotal</dt><dd>{formatZarCents(order?.subtotalCents ?? cart?.totalCents ?? 0)}</dd></div><div className="flex justify-between"><dt>Delivery</dt><dd>{order?.shippingQuote ? formatZarCents(deliveryCharge) : "Select quote"}</dd></div><div className="flex justify-between border-t border-border pt-2 text-base"><dt><strong>Total</strong></dt><dd><strong>{formatZarCents(order?.totalCents ?? cart?.totalCents ?? 0)}</strong></dd></div></dl>
       </aside>
     </div>
-    {!order ? <Button className="mt-6" disabled={!canCreate || busy || recoveryBlocked} onClick={() => void create()}>{busy ? "Preparing…" : "Confirm address and delivery"}</Button> : null}
-    {order && !order.shippingQuote ? <section className="mt-6 rounded-lg border border-border p-5"><h2 className="text-xl font-medium">Choose delivery</h2>{rates.length ? <div className="mt-4 space-y-3">{rates.map((rate) => <label key={rate.quoteId} className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"><span><input type="radio" name="quote" checked={selectedQuote === rate.quoteId} onChange={() => void selectRate(rate.quoteId)} /> <strong>{rate.serviceLevel?.name ?? rate.serviceName}</strong></span><strong>{formatZarCents(rate.rateCents)}</strong></label>)}</div> : <p className="mt-3 text-sm">Delivery quotes are not available yet. Retry the quotes after reviewing your address.</p>}<Button variant="outline" className="mt-4" disabled={busy || recoveryBlocked} onClick={() => void loadQuotes(order)}>Retry delivery quotes</Button></section> : null}
-    {order?.shippingQuote ? <section className="mt-6 rounded-lg border border-border bg-card p-5"><p className="text-sm"><strong>Selected delivery address:</strong><br />{order.deliveryAddress.recipientName}<br />{order.deliveryAddress.addressLine1}{order.deliveryAddress.addressLine2 ? `, ${order.deliveryAddress.addressLine2}` : ""}{order.deliveryAddress.localArea ? `, ${order.deliveryAddress.localArea}` : ""}<br />{order.deliveryAddress.city}, {order.deliveryAddress.province}, {order.deliveryAddress.postalCode}</p>{recoveryBlocked ? <p role="status" className="mt-4 text-sm text-destructive">Payment is blocked until the checkout issue shown above is resolved.</p> : null}<Button className="mt-4" disabled={busy || recoveryBlocked} onClick={() => void pay()}>{busy ? "Opening PayFast…" : "Continue to PayFast"}</Button></section> : null}
+    {!order && !cartQuoteId ? <Button className="mt-6" disabled={!canCreate || busy || recoveryBlocked} onClick={() => void requestCartQuotes()}>{busy ? "Requesting delivery rates…" : "Request delivery rates"}</Button> : null}
+    {!order && cartQuoteId ? <Button className="mt-6" disabled={!canCreate || busy || recoveryBlocked || !selectedQuote} onClick={() => void create()}>{busy ? "Creating order…" : "Confirm delivery and create order"}</Button> : null}
+    {!order && rates.length ? <section className="mt-6 rounded-lg border border-border p-5"><h2 className="text-xl font-medium">Choose delivery</h2><p className="mt-2 text-sm text-muted-foreground">Rates are valid for five minutes. Confirm delivery before they expire.</p><div className="mt-4 space-y-3">{rates.map((rate) => <label key={rate.quoteId} className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"><span><input type="radio" name="cart-quote" checked={selectedQuote === rate.quoteId} disabled={busy} onChange={() => void selectRate(rate.quoteId)} /> <strong>{rate.serviceLevel?.name ?? rate.serviceName}</strong></span><strong>{formatZarCents(rate.rateCents)}</strong></label>)}</div></section> : null}
+    {order && !currentShippingQuote(order) ? <section className="mt-6 rounded-lg border border-border p-5"><h2 className="text-xl font-medium">Choose delivery</h2><p className="mt-2 text-sm text-muted-foreground">Delivery rates expire after five minutes. Request a current rate before payment.</p>{rates.length ? <div className="mt-4 space-y-3">{rates.map((rate) => <label key={rate.quoteId} className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"><span><input type="radio" name="quote" checked={selectedQuote === rate.quoteId} disabled={busy || recoveryBlocked} onChange={() => void selectRate(rate.quoteId)} /> <strong>{rate.serviceLevel?.name ?? rate.serviceName}</strong></span><strong>{formatZarCents(rate.rateCents)}</strong></label>)}</div> : <p className="mt-3 text-sm">Delivery quotes are not available yet. Request rates after reviewing your address.</p>}<Button variant="outline" className="mt-4" disabled={busy || recoveryBlocked} onClick={() => void loadQuotes(order)}>Request current delivery rates</Button></section> : null}
+    {order && currentShippingQuote(order) ? <section className="mt-6 rounded-lg border border-border bg-card p-5"><p className="text-sm"><strong>Selected delivery address:</strong><br />{order.deliveryAddress.recipientName}<br />{order.deliveryAddress.addressLine1}{order.deliveryAddress.addressLine2 ? `, ${order.deliveryAddress.addressLine2}` : ""}{order.deliveryAddress.localArea ? `, ${order.deliveryAddress.localArea}` : ""}<br />{order.deliveryAddress.city}, {order.deliveryAddress.province}, {order.deliveryAddress.postalCode}</p>{recoveryBlocked ? <p role="status" className="mt-4 text-sm text-destructive">Payment is blocked until the checkout issue shown above is resolved.</p> : null}<Button className="mt-4" disabled={busy || recoveryBlocked} onClick={() => void pay()}>{busy ? "Opening PayFast…" : "Continue to PayFast"}</Button></section> : null}
   </main>;
 }

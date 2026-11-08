@@ -1,9 +1,9 @@
-# Ship Logic shipping quotes
+# ShipLogic storefront checkout and fulfilment
 
-This backend requests shipping rates from Ship Logic and persists the rates against the existing
-order. It does not book shipments, schedule pickups, create waybills, or track parcels. A successful
-provider request has not been confirmed from this environment; configure a real sandbox account and
-test against it before relying on returned rates.
+The storefront requests and selects a shipping rate before creating an order. Backend payment,
+shipment booking, tracking, cancellation and waybill behavior is documented in the backend
+[`docs/SHIPLOGIC.md`](../heathywayssa-backend/docs/SHIPLOGIC.md) and official-doc reference. This
+environment has not contacted ShipLogic or booked a shipment.
 
 ## Configuration
 
@@ -11,7 +11,7 @@ Set these values in the backend environment only:
 
 | Variable | Purpose |
 | --- | --- |
-| `SHIPLOGIC_API_URL` | Explicit HTTPS API origin. The provided sandbox endpoint uses `https://api.shiplogic.com`; configure the production origin from the live account separately. |
+| `SHIPLOGIC_API_URL` | Explicit HTTPS API origin. Sandbox: `https://api.shiplogic.com`; production: `https://api.portal.thecourierguy.co.za`, as documented by ShipLogic. |
 | `SHIPLOGIC_BEARER_TOKEN` | Ship Logic API key sent only in the backend `Authorization: Bearer ...` request header. |
 | `SHIPLOGIC_COLLECTION_COMPANY` | Collection business name; defaults to `Healthy Ways SA`. |
 | `SHIPLOGIC_COLLECTION_STREET_ADDRESS` | Collection street address. |
@@ -20,11 +20,12 @@ Set these values in the backend environment only:
 | `SHIPLOGIC_COLLECTION_ZONE` | Collection province/zone. |
 | `SHIPLOGIC_COLLECTION_POSTAL_CODE` | Collection postal code. |
 | `SHIPLOGIC_COLLECTION_COUNTRY_CODE` | Two-letter country code; currently `ZA`. |
+| `SHIPLOGIC_COLLECTION_CONTACT_NAME` | Collection contact name, required to book a paid order. |
+| `SHIPLOGIC_COLLECTION_CONTACT_EMAIL` | Collection contact email, or configure a mobile number. |
+| `SHIPLOGIC_COLLECTION_CONTACT_MOBILE` | Collection contact mobile number, or configure an email. |
 
-If the URL or token is missing, other backend APIs still start and new rate requests return a safe
-unavailable response. A previously persisted quote can still be selected/used if the configured
-collection address and its fingerprint remain available. Do not commit the token or expose it in
-client-side environment variables. The API URL is an origin; the backend appends `/rates`.
+If the URL or token is missing, other backend APIs still start but rate requests and booking are
+unavailable. The API URL is an origin. Credentials must remain server-side.
 
 ## Trusted data prerequisites
 
@@ -77,7 +78,26 @@ Collection and delivery addresses are validated server-side. The current deliver
 coordinate fields, so `lat` and `lng` are omitted. Only South African delivery country values `ZA`
 and `South Africa` are accepted for quotes; the Ship Logic payload uses `ZA`.
 
-## Quote and selection API
+## Quote-before-order checkout flow
+
+The customer checkout sends the saved `addressId` to `POST /api/v1/shipping/quote`, displays the
+returned rates, then selects the chosen rate through
+`POST /api/v1/shipping/quote/:quoteId/select` using that rate's `quoteId` as `rateId`. The backend
+binds the quote to the authenticated customer, current cart, address and verified parcel data.
+
+Only after a rate is selected does checkout create an order, sending `addressId` and the selected
+`shippingQuoteId` to `POST /api/v1/orders` with the existing `Idempotency-Key`. The backend
+revalidates the quote and stock before reserving inventory or clearing the cart. The browser never
+supplies an authoritative price or provider service identifier.
+
+Rates expire after the provider-documented five-minute service-level lifetime. Checkout handles
+quote expiry or changed rates by requiring a refreshed selection; it must not create an order with
+an invented zero-shipping fallback.
+
+## Legacy existing-order quote and selection API
+
+The order-scoped endpoints below remain for existing pending orders and recovery; new checkout uses
+the cart-scoped flow above.
 
 Both endpoints require an authenticated customer, order ownership, customer role, and the normal
 session CSRF token. Neither accepts a price, dimensions, weight, provider service identifier, or
@@ -199,12 +219,10 @@ clears the prior selection. A selected quote can be used by checkout only while 
 `pending_payment`, stock is reserved, no payment attempt is unresolved, and the stored parcel and
 address fingerprint still matches current backend data.
 
-The supplied rates response has no provider quote identifier or expiry field, and no verified
-expiry rule was available. The backend therefore creates an internal quote ID and records the rate
-retrieval/selection timestamps, but does not invent an expiry duration. Ask the Ship Logic account
-owner to confirm rate-validity policy and request fresh rates shortly before payment. If the
-provider later documents a quote expiry, it can be added to the option and checkout eligibility
-checks.
+The static rates response has no provider quote identifier or expiry timestamp. The shipment-
+creation error documentation says a selected `service_level_id` expires when its rate revision is
+more than five minutes old; the backend expires rate options accordingly and refreshes the selected
+service and amount before payment and booking.
 
 ## PayFast integration
 
@@ -230,25 +248,25 @@ Before quoting:
 3. Add `localArea` to the customer's saved address using `PATCH /api/v1/users/me/addresses/:addressId`
    or include it when creating a saved address. New orders snapshot the selected saved address,
    including `localArea`.
-4. Create an eligible order through the existing cart/order flow. It must be customer-owned,
-   `pending_payment`, and have a `reserved` stock reservation.
-5. Obtain a CSRF token and preserve the customer session as for other authenticated writes.
+4. Obtain a CSRF token and preserve the customer session as for other authenticated writes.
 
 PowerShell with HTTPie, after customer login and creation of `$API`, `$Session`, `$csrf`, and
-`$OrderId`:
+`$AddressId`:
 
 ```powershell
 $quote = http --session=$Session --body --json POST `
-  "$API/orders/$OrderId/shipping/quote" "x-csrf-token:$csrf" '{}' | ConvertFrom-Json
+  "$API/shipping/quote" "x-csrf-token:$csrf" addressId="$AddressId" | ConvertFrom-Json
 $quote | ConvertTo-Json -Depth 8
 
-$quoteId = $quote.rates[0].quoteId
+$quoteId = $quote.quoteId
+$rateId = $quote.rates[0].quoteId
 $selected = http --session=$Session --body --json POST `
-  "$API/orders/$OrderId/shipping/quote/$quoteId/select" "x-csrf-token:$csrf" '{}' | ConvertFrom-Json
+  "$API/shipping/quote/$quoteId/select" "x-csrf-token:$csrf" rateId="$rateId" | ConvertFrom-Json
 $selected | ConvertTo-Json -Depth 8
 ```
 
-Then request `POST /api/v1/orders/:orderId/payfast/checkout` as shown in
+Create an order with `$quoteId` as `shippingQuoteId`, then request
+`POST /api/v1/orders/:orderId/payfast/checkout` as shown in
 [`PAYFAST.md`](./PAYFAST.md), submit the returned signed fields to the PayFast sandbox URL from the
 future storefront, complete payment with a sandbox buyer, and confirm the resulting order using
 `GET /api/v1/orders/:orderId`. A successful quote or checkout response is not proof of a completed

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createApiClient } from "@/lib/api/client";
-import { createOrdersApi } from "@/lib/api/orders";
+import { canRetryCustomerPayment, createOrdersApi, type CustomerOrder } from "@/lib/api/orders";
 
 const order = {
   id: "order-1",
@@ -22,7 +22,9 @@ const order = {
   totalCents: 2500,
   currency: "ZAR",
   status: "pending_payment",
+  fulfillmentStatus: "awaiting_payment",
   stockReservationStatus: "reserved",
+  paymentAttempts: [],
   deliveryAddress: {
     recipientName: "Customer",
     phoneNumber: "0790000000",
@@ -34,26 +36,146 @@ const order = {
   },
   createdAt: "2026-10-17T00:00:00.000Z",
   updatedAt: "2026-10-17T00:00:00.000Z",
-};
+} satisfies CustomerOrder;
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "content-type": "application/json" },
   });
 }
 
 describe("customer order history API", () => {
-  it("parses the documented order-creation envelope and preserves its HTTP status on invalid data", async () => {
+  it("does not allow payment retry with an expired five-minute shipping rate", () => {
+    const now = Date.now();
+    const retryableOrder = {
+      ...order,
+      createdAt: new Date(now).toISOString(),
+      paymentAttempts: [
+        {
+          id: "attempt-1",
+          status: "failed" as const,
+          amountCents: 3300,
+          currency: "ZAR" as const,
+          createdAt: new Date(now).toISOString(),
+          updatedAt: new Date(now).toISOString(),
+        },
+      ],
+      shippingQuote: {
+        chargeCents: 800,
+        serviceName: "Standard",
+        confirmedAt: new Date(now - 6 * 60 * 1000).toISOString(),
+        status: "confirmed" as const,
+      },
+    };
+
+    expect(canRetryCustomerPayment(retryableOrder)).toBe(false);
+  });
+
+  it("sends selected opt-in IDs with cart rate requests and keeps the provider rate as the full delivery amount", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
+      if (url.pathname.endsWith("/shipping/opt-in-rates")) {
+        return jsonResponse({
+          optInRates: [
+            {
+              id: 11,
+              name: "Fragile",
+              chargeType: "fixed",
+              chargeCents: 500,
+              optedInByDefault: false,
+            },
+          ],
+          optInTimeBasedRates: [
+            {
+              id: 22,
+              name: "Weekend",
+              chargeType: "fixed",
+              chargeCents: 800,
+              optedInByDefault: false,
+            },
+          ],
+        });
+      }
+      if (url.pathname.endsWith("/shipping/quote")) {
+        return jsonResponse({
+          quoteId: "quote-1",
+          expiresAt: "2026-10-17T00:05:00.000Z",
+          currency: "ZAR",
+          rates: [
+            {
+              quoteId: "rate-1",
+              serviceLevel: { id: "service-1", code: "standard", name: "Standard" },
+              rateCents: 1800,
+              currency: "ZAR",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    await expect(api.getCartShippingOptInRates("address-1")).resolves.toMatchObject({
+      optInRates: [{ id: 11, chargeCents: 500 }],
+      optInTimeBasedRates: [{ id: 22, chargeCents: 800 }],
+    });
+    const quote = await api.createCartShippingQuote("address-1", {
+      optInRateIds: [11],
+      optInTimeBasedRateIds: [22],
+    });
+
+    expect(quote.rates[0]?.rateCents).toBe(1800);
+    const quoteRequest = fetcher.mock.calls.find(([input]) =>
+      new URL(String(input)).pathname.endsWith("/shipping/quote"),
+    );
+    expect(JSON.parse(String(quoteRequest?.[1]?.body))).toEqual({
+      addressId: "address-1",
+      optInRateIds: [11],
+      optInTimeBasedRateIds: [22],
+    });
+  });
+
+  it("preserves validated opt-in selections on a confirmed order shipping quote", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        order: {
+          ...order,
+          fulfillmentStatus: "awaiting_payment",
+          paymentAttempts: [],
+          totalCents: 3300,
+          shippingQuote: {
+            quoteId: "rate-1",
+            chargeCents: 800,
+            serviceName: "Standard",
+            confirmedAt: "2026-10-17T00:00:00.000Z",
+            status: "confirmed",
+            optInRateIds: [11],
+            optInTimeBasedRateIds: [22],
+          },
+        },
+      }),
+    );
+    const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
+
+    const result = await api.getCustomerOrder("order-1");
+
+    expect(result.shippingQuote?.optInRateIds).toEqual([11]);
+    expect(result.shippingQuote?.optInTimeBasedRateIds).toEqual([22]);
+  });
+
+  it("parses the quote-first order-creation envelope and rejects malformed order data", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
       if (url.pathname.endsWith("/orders")) {
         expect(init?.method).toBe("POST");
-        expect(new Headers(init?.headers).get("Idempotency-Key")).toBe(
-          "order-submit-test-0001",
-        );
-        expect(JSON.parse(String(init?.body))).toEqual({ addressId: "address-1" });
+        expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("order-submit-test-0001");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          addressId: "address-1",
+          shippingQuoteId: "shipping-quote-1",
+        });
         return new Response(JSON.stringify({ order, replayed: false }), {
           status: 201,
           headers: { "content-type": "application/json" },
@@ -63,9 +185,9 @@ describe("customer order history API", () => {
     });
     const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
 
-    await expect(api.createCustomerOrder("address-1", "order-submit-test-0001")).resolves.toEqual(
-      order,
-    );
+    await expect(
+      api.createOrder("address-1", "shipping-quote-1", "order-submit-test-0001"),
+    ).resolves.toEqual(order);
 
     const invalidFetcher = vi.fn<typeof fetch>(async (input) => {
       const url = new URL(String(input));
@@ -80,10 +202,10 @@ describe("customer order history API", () => {
     );
 
     await expect(
-      invalidApi.createCustomerOrder("address-1", "order-submit-test-0001"),
+      invalidApi.createOrder("address-1", "shipping-quote-1", "order-submit-test-0001"),
     ).rejects.toMatchObject({
       name: "ApiResponseError",
-      status: 201,
+      status: 200,
     });
   });
 
@@ -116,7 +238,7 @@ describe("customer order history API", () => {
 
     await expect(api.listCustomerOrders()).rejects.toMatchObject({
       name: "ApiResponseError",
-      message: "Backend returned an invalid order history response.",
+      message: "Backend returned an invalid order response.",
     });
   });
 
@@ -156,7 +278,7 @@ describe("customer order history API", () => {
     });
     const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
 
-    const result = await api.initiatePayFastCheckout("order-1");
+    const result = await api.createPayFastCheckout("order-1");
 
     expect(result.amountBreakdown.shippingCents).toBe(800);
     expect(result.amountCents).toBe(3300);
@@ -192,9 +314,9 @@ describe("customer order history API", () => {
     });
     const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
 
-    await expect(api.initiatePayFastCheckout("order-1")).rejects.toMatchObject({
+    await expect(api.createPayFastCheckout("order-1")).rejects.toMatchObject({
       name: "ApiResponseError",
-      message: "Backend returned an invalid order or shipping response.",
+      message: "Backend returned an invalid order response.",
     });
   });
 });

@@ -34,17 +34,20 @@ function renderAdmin(user: PublicUser) {
       const body = init?.body as FormData;
       const files = body.getAll("images") as File[];
       const successfulFiles = files.length > 1 ? files.slice(0, 1) : files;
-      return jsonResponse({
-        images: successfulFiles.map((file) => ({
-          url: `https://images.example.test/${file.name}`,
-          publicId: `products/${file.name}`,
-          originalFilename: file.name,
-          format: file.type.split("/")[1],
-          width: 640,
-          height: 480,
-          bytes: file.size,
-        })),
-      }, files.length > 1 ? 207 : 201);
+      return jsonResponse(
+        {
+          images: successfulFiles.map((file) => ({
+            url: `https://images.example.test/${file.name}`,
+            publicId: `products/${file.name}`,
+            originalFilename: file.name,
+            format: file.type.split("/")[1],
+            width: 640,
+            height: 480,
+            bytes: file.size,
+          })),
+        },
+        files.length > 1 ? 207 : 201,
+      );
     }
     if (url.pathname.endsWith("/admin/categories")) return jsonResponse({ categories: [] });
     if (url.pathname.endsWith("/admin/inventory")) {
@@ -116,6 +119,21 @@ describe("administrator workspace access", () => {
     expect(requestedPaths.some((path) => path === "/api/v1/admin/inventory")).toBe(true);
   });
 
+  it("shows owner-managed product measurements for mixed courier bags", async () => {
+    renderAdmin(userBase);
+    fireEvent.click(await screen.findByRole("button", { name: "Create product" }));
+
+    expect(await screen.findByLabelText("Length (cm)")).toBeVisible();
+    expect(screen.getByLabelText("Width (cm)")).toBeVisible();
+    expect(screen.getByLabelText("Height (cm)")).toBeVisible();
+    const weight = screen.getByLabelText("Product weight (grams)") as HTMLInputElement;
+    expect(weight).toBeVisible();
+    expect(weight.min).toBe("1");
+    expect(weight.step).toBe("1");
+    expect(screen.getByLabelText("Product measurements verified")).toBeVisible();
+    expect(screen.getByText(/excluding the courier bag/)).toBeVisible();
+  });
+
   it("shows a connected file picker in the product form without manual image URL entry", async () => {
     vi.stubEnv("VITE_PRODUCT_IMAGE_ALLOWED_HOSTS", "images.example.test");
     renderAdmin(userBase);
@@ -159,9 +177,11 @@ describe("administrator workspace access", () => {
       expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("test-csrf-token");
       expect(new Headers(init?.headers).has("Content-Type")).toBe(false);
     }
-    expect(((uploadCalls[0]?.[1]?.body as FormData).getAll("images") as File[]).map((item) => item.name))
-      .toEqual(["product.webp", "other.png"]);
-    expect(((uploadCalls[1]?.[1]?.body as FormData).getAll("images") as File[]).map((item) => item.name))
-      .toEqual(["other.png"]);
+    expect(
+      ((uploadCalls[0]?.[1]?.body as FormData).getAll("images") as File[]).map((item) => item.name),
+    ).toEqual(["product.webp", "other.png"]);
+    expect(
+      ((uploadCalls[1]?.[1]?.body as FormData).getAll("images") as File[]).map((item) => item.name),
+    ).toEqual(["other.png"]);
   });
 });

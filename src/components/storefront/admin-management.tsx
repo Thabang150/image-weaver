@@ -2,11 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  ApiHttpError,
-  ApiResponseError,
-  CsrfTokenError,
-} from "@/lib/api/client";
+import { ApiHttpError, ApiResponseError, CsrfTokenError } from "@/lib/api/client";
 import {
   adminApi,
   type AdminCategory,
@@ -45,10 +41,13 @@ function safeAdminError(error: unknown, action: string): string {
       return error.message;
     }
     if (error.status === 413) return "The upload exceeded the backend's image size limit.";
-    if (error.status === 415) return "The backend does not support one or more selected image formats.";
+    if (error.status === 415)
+      return "The backend does not support one or more selected image formats.";
     if (error.status === 429) return "Too many requests. Wait before trying again.";
-    if (error.status === 404) return `${action} failed because the product or endpoint was not found.`;
-    if (error.status >= 500) return `${action} failed because the backend is temporarily unavailable.`;
+    if (error.status === 404)
+      return `${action} failed because the product or endpoint was not found.`;
+    if (error.status >= 500)
+      return `${action} failed because the backend is temporarily unavailable.`;
   }
   if (error instanceof ApiResponseError) {
     return `${action} failed because the backend response was invalid.`;
@@ -64,9 +63,7 @@ function parseZarCents(value: string, allowZero = false): number | undefined {
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return undefined;
   const [whole, fraction = ""] = normalized.split(".");
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
-  return Number.isSafeInteger(cents) && (allowZero ? cents >= 0 : cents > 0)
-    ? cents
-    : undefined;
+  return Number.isSafeInteger(cents) && (allowZero ? cents >= 0 : cents > 0) ? cents : undefined;
 }
 
 function formatZar(cents: number | null | undefined): string {
@@ -182,32 +179,128 @@ function OrderManagement() {
   });
   const [waybills, setWaybills] = useState<Record<string, string>>({});
   const [waybillError, setWaybillError] = useState<string | null>(null);
-  if (query.isPending) return <section className="admin-card"><h3>Orders and fulfilment</h3><p role="status">Loading orders…</p></section>;
-  if (query.isError) return <section className="admin-card"><h3>Orders and fulfilment</h3><QueryError error={query.error} action="Order loading" /><Button variant="outline" onClick={() => void query.refetch()}>Retry</Button></section>;
+  if (query.isPending)
+    return (
+      <section className="admin-card">
+        <h3>Orders and fulfilment</h3>
+        <p role="status">Loading orders…</p>
+      </section>
+    );
+  if (query.isError)
+    return (
+      <section className="admin-card">
+        <h3>Orders and fulfilment</h3>
+        <QueryError error={query.error} action="Order loading" />
+        <Button variant="outline" onClick={() => void query.refetch()}>
+          Retry
+        </Button>
+      </section>
+    );
   return (
     <section className="admin-card admin-wide">
       <h3>Orders and fulfilment</h3>
-      <p className="admin-muted">Shipment booking starts only after verified PayFast payment. Ambiguous provider outcomes require manual provider reconciliation and cannot be retried automatically.</p>
-      {retryMutation.isError ? <QueryError error={retryMutation.error} action="Shipment booking retry" /> : null}
-      {cancelMutation.isError ? <QueryError error={cancelMutation.error} action="Carrier shipment cancellation" /> : null}
+      <p className="admin-muted">
+        Shipment booking starts only after verified PayFast payment. Ambiguous provider outcomes
+        require manual provider reconciliation and cannot be retried automatically.
+      </p>
+      {retryMutation.isError ? (
+        <QueryError error={retryMutation.error} action="Shipment booking retry" />
+      ) : null}
+      {cancelMutation.isError ? (
+        <QueryError error={cancelMutation.error} action="Carrier shipment cancellation" />
+      ) : null}
       {waybillError ? <Feedback error>{waybillError}</Feedback> : null}
-      {!query.data.orders.length ? <p>No orders found.</p> : (
+      {!query.data.orders.length ? (
+        <p>No orders found.</p>
+      ) : (
         <div className="space-y-4">
           {query.data.orders.map((order: AdminOrderSummary) => {
             const booking = order.shipmentBooking;
             return (
               <article key={order.id} className="rounded-md border border-border p-4">
                 <div className="flex flex-wrap justify-between gap-2">
-                  <div><strong>{order.orderNumber}</strong><p className="text-sm">{order.customerEmail}</p></div>
-                  <div className="text-right"><strong>{(order.totalCents / 100).toLocaleString("en-ZA", { style: "currency", currency: "ZAR" })}</strong><p className="text-sm">{order.status} · {order.fulfillmentStatus}</p></div>
+                  <div>
+                    <strong>{order.orderNumber}</strong>
+                    <p className="text-sm">{order.customerEmail}</p>
+                  </div>
+                  <div className="text-right">
+                    <strong>
+                      {(order.totalCents / 100).toLocaleString("en-ZA", {
+                        style: "currency",
+                        currency: "ZAR",
+                      })}
+                    </strong>
+                    <p className="text-sm">
+                      {order.status} · {order.fulfillmentStatus}
+                    </p>
+                  </div>
                 </div>
-                <p className="mt-2 text-sm">ShipLogic: {booking?.status ?? "not booked"}{booking?.trackingReference ? ` · ${booking.trackingReference}` : ""}{booking?.lastErrorCode ? ` · ${booking.lastErrorCode}` : ""}</p>
+                <p className="mt-2 text-sm">
+                  ShipLogic: {booking?.status ?? "not booked"}
+                  {booking?.trackingReference ? ` · ${booking.trackingReference}` : ""}
+                  {booking?.lastErrorCode ? ` · ${booking.lastErrorCode}` : ""}
+                </p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {booking?.status === "failed" ? <Button variant="outline" disabled={retryMutation.isPending} onClick={() => retryMutation.mutate(order.id)}>Retry rejected booking</Button> : null}
-                  {booking?.status === "booked" && order.fulfillmentStatus === "processing" ? <Button variant="outline" disabled={cancelMutation.isPending} onClick={() => { if (window.confirm("Cancel this carrier shipment? This does not refund the customer order.")) cancelMutation.mutate(order.id); }}>Cancel carrier shipment</Button> : null}
-                  {booking?.status === "booked" ? <Button variant="outline" onClick={() => { setWaybillError(null); void adminApi.getShipmentWaybill(order.id).then((url) => setWaybills((current) => ({ ...current, [order.id]: url }))).catch(() => setWaybillError("The waybill could not be retrieved. Retry; signed URLs expire after 24 hours.")); }}>Get waybill</Button> : null}
-                  {waybills[order.id] ? <a className="inline-flex min-h-10 items-center rounded-md border px-4 py-2 text-sm" href={waybills[order.id]} target="_blank" rel="noopener noreferrer">Open waybill</a> : null}
-                  {booking?.status === "unknown" || booking?.status === "cancellation_unknown" ? <span className="text-sm text-destructive">Check the provider before retrying; the request may have completed.</span> : null}
+                  {booking?.status === "failed" ? (
+                    <Button
+                      variant="outline"
+                      disabled={retryMutation.isPending}
+                      onClick={() => retryMutation.mutate(order.id)}
+                    >
+                      Retry rejected booking
+                    </Button>
+                  ) : null}
+                  {booking?.status === "booked" && order.fulfillmentStatus === "processing" ? (
+                    <Button
+                      variant="outline"
+                      disabled={cancelMutation.isPending}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            "Cancel this carrier shipment? This does not refund the customer order.",
+                          )
+                        )
+                          cancelMutation.mutate(order.id);
+                      }}
+                    >
+                      Cancel carrier shipment
+                    </Button>
+                  ) : null}
+                  {booking?.status === "booked" ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setWaybillError(null);
+                        void adminApi
+                          .getShipmentWaybill(order.id)
+                          .then((url) =>
+                            setWaybills((current) => ({ ...current, [order.id]: url })),
+                          )
+                          .catch(() =>
+                            setWaybillError(
+                              "The waybill could not be retrieved. Retry; signed URLs expire after 24 hours.",
+                            ),
+                          );
+                      }}
+                    >
+                      Get waybill
+                    </Button>
+                  ) : null}
+                  {waybills[order.id] ? (
+                    <a
+                      className="inline-flex min-h-10 items-center rounded-md border px-4 py-2 text-sm"
+                      href={waybills[order.id]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open waybill
+                    </a>
+                  ) : null}
+                  {booking?.status === "unknown" || booking?.status === "cancellation_unknown" ? (
+                    <span className="text-sm text-destructive">
+                      Check the provider before retrying; the request may have completed.
+                    </span>
+                  ) : null}
                 </div>
               </article>
             );
@@ -353,18 +446,11 @@ function productToForm(product: AdminProduct): ProductFormState {
     cost: formatZar(product.costCents),
     lowStockThreshold:
       product.lowStockThreshold === undefined ? "" : String(product.lowStockThreshold),
-    packagingAmount:
-      product.packaging === undefined ? "" : String(product.packaging.amount),
+    packagingAmount: product.packaging === undefined ? "" : String(product.packaging.amount),
     packagingUnit: product.packaging?.unit ?? "",
-    shippingParcelLengthCm: product.shippingParcel
-      ? String(product.shippingParcel.lengthCm)
-      : "",
-    shippingParcelWidthCm: product.shippingParcel
-      ? String(product.shippingParcel.widthCm)
-      : "",
-    shippingParcelHeightCm: product.shippingParcel
-      ? String(product.shippingParcel.heightCm)
-      : "",
+    shippingParcelLengthCm: product.shippingParcel ? String(product.shippingParcel.lengthCm) : "",
+    shippingParcelWidthCm: product.shippingParcel ? String(product.shippingParcel.widthCm) : "",
+    shippingParcelHeightCm: product.shippingParcel ? String(product.shippingParcel.heightCm) : "",
     shippingParcelWeightGrams: product.shippingParcel
       ? String(product.shippingParcel.weightGrams)
       : "",
@@ -474,26 +560,37 @@ function ProductManagement() {
         <form className="admin-filter-form" onSubmit={submitSearch}>
           <label>
             Search products
-            <input value={searchText} onChange={(event) => setSearchText(event.currentTarget.value)} />
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.currentTarget.value)}
+            />
           </label>
           <label>
             Category
-            <select value={categoryId} onChange={(event) => {
-              setCategoryId(event.currentTarget.value);
-              setPage(1);
-            }}>
+            <select
+              value={categoryId}
+              onChange={(event) => {
+                setCategoryId(event.currentTarget.value);
+                setPage(1);
+              }}
+            >
               <option value="">All categories</option>
               {(categoriesQuery.data ?? []).map((category) => (
-                <option key={category.id} value={category.id}>{category.name}</option>
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
               ))}
             </select>
           </label>
           <label>
             Status
-            <select value={status} onChange={(event) => {
-              setStatus(event.currentTarget.value);
-              setPage(1);
-            }}>
+            <select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.currentTarget.value);
+                setPage(1);
+              }}
+            >
               <option value="">All statuses</option>
               <option value="draft">Draft</option>
               <option value="active">Active</option>
@@ -529,15 +626,23 @@ function ProductManagement() {
                       <ProductImages product={product} />
                     </td>
                     <td>{product.sku}</td>
-                    <td>{product.priceCents === null ? "Unconfirmed" : `R ${formatZar(product.priceCents)}`}</td>
+                    <td>
+                      {product.priceCents === null
+                        ? "Unconfirmed"
+                        : `R ${formatZar(product.priceCents)}`}
+                    </td>
                     <td>{product.status}</td>
                     <td>
                       {product.priceConfirmed === false ? <p>Price needs confirmation</p> : null}
                       {product.priceConfirmed === true ? <p>Price confirmed</p> : null}
-                      {product.priceConfirmed === undefined ? <p>Price confirmation status unavailable</p> : null}
+                      {product.priceConfirmed === undefined ? (
+                        <p>Price confirmation status unavailable</p>
+                      ) : null}
                       {product.isMockData === true ? <p>Product details require review</p> : null}
                       {product.isMockData === false ? <p>Product details confirmed</p> : null}
-                      {product.isMockData === undefined ? <p>Product detail confirmation unavailable</p> : null}
+                      {product.isMockData === undefined ? (
+                        <p>Product detail confirmation unavailable</p>
+                      ) : null}
                       {product.requiresConfirmation?.length ? (
                         <p>{product.requiresConfirmation.map(labelForKey).join(", ")}</p>
                       ) : null}
@@ -547,28 +652,46 @@ function ProductManagement() {
                     </td>
                     <td>
                       <div className="admin-row-actions">
-                        <Button type="button" variant="outline" onClick={() => {
-                          setCreating(false);
-                          setSelectedProductId(product.id);
-                          setMessage(null);
-                        }}>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            setCreating(false);
+                            setSelectedProductId(product.id);
+                            setMessage(null);
+                          }}
+                        >
                           Edit
                         </Button>
                         {product.status !== "archived" ? (
                           <>
                             {product.status !== "active" ? (
-                              <Button type="button" variant="outline" disabled={statusMutation.isPending}
-                                onClick={() => statusMutation.mutate({ product, status: "active" })}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={statusMutation.isPending}
+                                onClick={() => statusMutation.mutate({ product, status: "active" })}
+                              >
                                 Activate
                               </Button>
                             ) : (
-                              <Button type="button" variant="outline" disabled={statusMutation.isPending}
-                                onClick={() => statusMutation.mutate({ product, status: "inactive" })}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={statusMutation.isPending}
+                                onClick={() =>
+                                  statusMutation.mutate({ product, status: "inactive" })
+                                }
+                              >
                                 Deactivate
                               </Button>
                             )}
-                            <Button type="button" variant="outline" disabled={statusMutation.isPending}
-                              onClick={() => statusMutation.mutate({ product, status: "archived" })}>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={statusMutation.isPending}
+                              onClick={() => statusMutation.mutate({ product, status: "archived" })}
+                            >
                               Archive
                             </Button>
                           </>
@@ -583,9 +706,26 @@ function ProductManagement() {
         ) : null}
         {productQuery.data && productQuery.data.pagination.totalPages > 1 ? (
           <nav className="admin-pagination" aria-label="Product pages">
-            <Button type="button" variant="outline" disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>Previous</Button>
-            <span>Page {page} of {productQuery.data.pagination.totalPages} · {productQuery.data.pagination.total} products</span>
-            <Button type="button" variant="outline" disabled={page >= productQuery.data.pagination.totalPages} onClick={() => setPage((n) => n + 1)}>Next</Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={page <= 1}
+              onClick={() => setPage((n) => n - 1)}
+            >
+              Previous
+            </Button>
+            <span>
+              Page {page} of {productQuery.data.pagination.totalPages} ·{" "}
+              {productQuery.data.pagination.total} products
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={page >= productQuery.data.pagination.totalPages}
+              onClick={() => setPage((n) => n + 1)}
+            >
+              Next
+            </Button>
           </nav>
         ) : null}
         {creating ? (
@@ -626,9 +766,15 @@ function ProductManagement() {
 function ProductImages({ product }: { product: AdminProduct }) {
   return (
     <div className="admin-image-strip" aria-label={`Images for ${product.name}`}>
-      {product.imageReferences.length ? product.imageReferences.map((image) => (
-        <ImagePreview key={image} source={image} alt={`${product.name} product image`} />
-      )) : <span className="admin-image-placeholder" aria-label="No image available">No image</span>}
+      {product.imageReferences.length ? (
+        product.imageReferences.map((image) => (
+          <ImagePreview key={image} source={image} alt={`${product.name} product image`} />
+        ))
+      ) : (
+        <span className="admin-image-placeholder" aria-label="No image available">
+          No image
+        </span>
+      )}
     </div>
   );
 }
@@ -710,7 +856,9 @@ function ProductEditor({
       issues.push("Each image must be 5 MiB or smaller.");
     }
     if (references.length + pendingImages.length + selected.length > 10) {
-      issues.push("A product can have up to 10 image references. Remove an image before adding more.");
+      issues.push(
+        "A product can have up to 10 image references. Remove an image before adding more.",
+      );
     }
     if (issues.length) {
       setUploadFeedback({ kind: "error", message: issues.join(" ") });
@@ -757,10 +905,7 @@ function ProductEditor({
       const filenameCounts = new Map<string, number>();
       uploaded.forEach((image) => {
         const filename = image.originalFilename.toLowerCase();
-        filenameCounts.set(
-          filename,
-          (filenameCounts.get(filename) ?? 0) + 1,
-        );
+        filenameCounts.set(filename, (filenameCounts.get(filename) ?? 0) + 1);
       });
       const successfulIds = new Set<string>();
       pendingImages.forEach(({ id, file }) => {
@@ -779,12 +924,14 @@ function ProductEditor({
       const newReferences = uploaded.map((image) => image.url);
       setForm((current) => {
         const references = current.imageReferences;
-        const mergedReferences = [...references, ...newReferences.filter((url) => !references.includes(url))];
+        const mergedReferences = [
+          ...references,
+          ...newReferences.filter((url) => !references.includes(url)),
+        ];
         return {
           ...current,
           imageReferences: mergedReferences,
-          primaryImageReference:
-            current.primaryImageReference.trim() || mergedReferences[0] || "",
+          primaryImageReference: current.primaryImageReference.trim() || mergedReferences[0] || "",
         };
       });
       setPendingImages((current) => current.filter((image) => !successfulIds.has(image.id)));
@@ -829,9 +976,7 @@ function ProductEditor({
       setError("Enter a positive ZAR price with no more than two decimal places.");
       return;
     }
-    const salePriceCents = form.salePrice.trim()
-      ? parseZarCents(form.salePrice)
-      : undefined;
+    const salePriceCents = form.salePrice.trim() ? parseZarCents(form.salePrice) : undefined;
     if (form.salePrice.trim() && (salePriceCents === undefined || salePriceCents >= priceCents)) {
       setError("Sale price must be valid and lower than the regular price.");
       return;
@@ -873,9 +1018,7 @@ function ProductEditor({
       setError("Low-stock threshold must be a non-negative whole number.");
       return;
     }
-    const packagingAmount = form.packagingAmount.trim()
-      ? Number(form.packagingAmount)
-      : undefined;
+    const packagingAmount = form.packagingAmount.trim() ? Number(form.packagingAmount) : undefined;
     if (
       form.packagingAmount.trim() &&
       (!Number.isFinite(packagingAmount) || (packagingAmount ?? 0) <= 0)
@@ -895,7 +1038,7 @@ function ProductEditor({
     ];
     const hasShippingParcelValues = shippingParcelFields.some(Boolean);
     if (form.shippingParcelVerified && !hasShippingParcelValues) {
-      setError("Enter packed parcel measurements before verifying them.");
+      setError("Enter product measurements before verifying them.");
       return;
     }
     let shippingParcel:
@@ -909,7 +1052,7 @@ function ProductEditor({
       | undefined;
     if (hasShippingParcelValues) {
       if (shippingParcelFields.some((value) => !value)) {
-        setError("Enter length, width, height and packed weight to configure shipping.");
+        setError("Enter length, width, height and product weight to configure shipping.");
         return;
       }
       const lengthCm = Number(form.shippingParcelLengthCm);
@@ -928,7 +1071,7 @@ function ProductEditor({
         return;
       }
       if (!Number.isSafeInteger(weightGrams) || weightGrams <= 0) {
-        setError("Packed weight must be a positive whole number of grams.");
+        setError("Product weight must be a positive whole number of grams.");
         return;
       }
       shippingParcel = {
@@ -965,13 +1108,11 @@ function ProductEditor({
     putChanged("lowStockThreshold", "lowStockThreshold", lowStockThreshold);
     putChanged("status", "status", form.status);
     putChanged("imageReferences", "imageReferences", imageReferences);
-    putChanged(
-      "primaryImageReference",
-      "primaryImageReference",
-      form.primaryImageReference.trim(),
-    );
-    if (form.packagingAmount !== baseline?.packagingAmount ||
-      form.packagingUnit !== baseline?.packagingUnit) {
+    putChanged("primaryImageReference", "primaryImageReference", form.primaryImageReference.trim());
+    if (
+      form.packagingAmount !== baseline?.packagingAmount ||
+      form.packagingUnit !== baseline?.packagingUnit
+    ) {
       if (packagingAmount !== undefined && form.packagingUnit.trim()) {
         payload["packaging"] = { amount: packagingAmount, unit: form.packagingUnit.trim() };
       }
@@ -1017,44 +1158,145 @@ function ProductEditor({
               ? ` Details requiring confirmation: ${product.requiresConfirmation.join(", ")}.`
               : ""}
           </p>
-        ) : <p>Enter only business-approved product information. New products start as drafts.</p>}
+        ) : (
+          <p>Enter only business-approved product information. New products start as drafts.</p>
+        )}
       </div>
       <fieldset className="admin-editor-section">
         <legend>Product details</legend>
         <div className="admin-editor-grid">
-        <label>Product name<input required maxLength={160} value={form.name} onChange={(event) => setField("name", event.currentTarget.value)} /></label>
-        <label>SKU<input required maxLength={64} value={form.sku} onChange={(event) => setField("sku", event.currentTarget.value)} /></label>
-        <label>Slug (optional; backend may derive it from the name)<input maxLength={160} value={form.slug} onChange={(event) => setField("slug", event.currentTarget.value)} /></label>
-        <label>Category<select required value={form.categoryId} onChange={(event) => setField("categoryId", event.currentTarget.value)}>
-          <option value="">Choose a category</option>
-          {categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.isActive ? "" : " (inactive)"}</option>)}
-        </select></label>
-        <label>Status<select value={form.status} onChange={(event) => {
-          const value = event.currentTarget.value;
-          if (isProductStatus(value)) setField("status", value);
-        }}>
-          <option value="draft">Draft</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option>
-        </select></label>
-        <label>Short description<textarea maxLength={300} rows={2} value={form.shortDescription} onChange={(event) => setField("shortDescription", event.currentTarget.value)} /></label>
+          <label>
+            Product name
+            <input
+              required
+              maxLength={160}
+              value={form.name}
+              onChange={(event) => setField("name", event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            SKU
+            <input
+              required
+              maxLength={64}
+              value={form.sku}
+              onChange={(event) => setField("sku", event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Slug (optional; backend may derive it from the name)
+            <input
+              maxLength={160}
+              value={form.slug}
+              onChange={(event) => setField("slug", event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Category
+            <select
+              required
+              value={form.categoryId}
+              onChange={(event) => setField("categoryId", event.currentTarget.value)}
+            >
+              <option value="">Choose a category</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                  {category.isActive ? "" : " (inactive)"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Status
+            <select
+              value={form.status}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                if (isProductStatus(value)) setField("status", value);
+              }}
+            >
+              <option value="draft">Draft</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+          <label>
+            Short description
+            <textarea
+              maxLength={300}
+              rows={2}
+              value={form.shortDescription}
+              onChange={(event) => setField("shortDescription", event.currentTarget.value)}
+            />
+          </label>
         </div>
-        <label>Description<textarea required maxLength={5000} rows={5} value={form.description} onChange={(event) => setField("description", event.currentTarget.value)} /></label>
+        <label>
+          Description
+          <textarea
+            required
+            maxLength={5000}
+            rows={5}
+            value={form.description}
+            onChange={(event) => setField("description", event.currentTarget.value)}
+          />
+        </label>
       </fieldset>
       <fieldset className="admin-editor-section">
         <legend>Pricing and packaging</legend>
         <div className="admin-editor-grid">
-        <label>Price (ZAR)<input inputMode="decimal" required value={form.price} onChange={(event) => setField("price", event.currentTarget.value)} /></label>
-        <label>Sale price (ZAR, optional)<input inputMode="decimal" value={form.salePrice} onChange={(event) => setField("salePrice", event.currentTarget.value)} /></label>
-        <label>Cost (ZAR, optional)<input inputMode="decimal" value={form.cost} onChange={(event) => setField("cost", event.currentTarget.value)} /></label>
-        <label>Packaging amount<input type="number" min="0.01" step="any" value={form.packagingAmount} onChange={(event) => setField("packagingAmount", event.currentTarget.value)} /></label>
-        <label>Packaging unit<input maxLength={40} value={form.packagingUnit} onChange={(event) => setField("packagingUnit", event.currentTarget.value)} /></label>
+          <label>
+            Price (ZAR)
+            <input
+              inputMode="decimal"
+              required
+              value={form.price}
+              onChange={(event) => setField("price", event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Sale price (ZAR, optional)
+            <input
+              inputMode="decimal"
+              value={form.salePrice}
+              onChange={(event) => setField("salePrice", event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Cost (ZAR, optional)
+            <input
+              inputMode="decimal"
+              value={form.cost}
+              onChange={(event) => setField("cost", event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Packaging amount
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              value={form.packagingAmount}
+              onChange={(event) => setField("packagingAmount", event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Packaging unit
+            <input
+              maxLength={40}
+              value={form.packagingUnit}
+              onChange={(event) => setField("packagingUnit", event.currentTarget.value)}
+            />
+          </label>
         </div>
       </fieldset>
       <fieldset className="admin-editor-section">
         <legend>Shipping &amp; Packaging</legend>
         <p className="admin-muted">
-          Measure the complete packed unit for this SKU, including its shipping packaging—not just
-          the empty bottle. Enter dimensions in centimetres and packed weight in grams. Measurements
-          can be saved before they are verified.
+          Measure one sale unit as it will sit inside the outer courier bag, including its retail
+          container or packaging but excluding the courier bag. Enter dimensions in centimetres and
+          weight in grams. Measurements can be saved before they are verified.
         </p>
         <div className="admin-editor-grid">
           <label>
@@ -1112,7 +1354,7 @@ function ProductEditor({
             />
           </label>
           <label>
-            Packed weight (grams)
+            Product weight (grams)
             <input
               type="number"
               min="1"
@@ -1144,7 +1386,7 @@ function ProductEditor({
               }));
             }}
           />
-          Parcel measurements verified
+          Product measurements verified
         </label>
         {product?.shippingParcel ? (
           <p className="admin-muted">
@@ -1195,7 +1437,9 @@ function ProductEditor({
           <Button
             type="button"
             variant="secondary"
-            disabled={uploading || saving || form.imageReferences.length + pendingImages.length >= 10}
+            disabled={
+              uploading || saving || form.imageReferences.length + pendingImages.length >= 10
+            }
             onClick={() => fileInputRef.current?.click()}
           >
             Choose Images
@@ -1210,20 +1454,33 @@ function ProductEditor({
                   <div className="admin-upload-preview" key={image.id}>
                     <img src={image.previewUrl} alt={`Preview of ${image.file.name}`} />
                     <span>{image.file.name}</span>
-                    <Button type="button" variant="outline" disabled={uploading} onClick={() => removePendingImage(image.id)}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={uploading}
+                      onClick={() => removePendingImage(image.id)}
+                    >
                       Remove before upload
                     </Button>
                   </div>
                 ))}
               </div>
-              <Button type="button" disabled={uploading || saving} onClick={() => void uploadSelectedImages()}>
-                {uploading ? "Uploading images…" : `Upload ${pendingImages.length} selected image${pendingImages.length === 1 ? "" : "s"}`}
+              <Button
+                type="button"
+                disabled={uploading || saving}
+                onClick={() => void uploadSelectedImages()}
+              >
+                {uploading
+                  ? "Uploading images…"
+                  : `Upload ${pendingImages.length} selected image${pendingImages.length === 1 ? "" : "s"}`}
               </Button>
             </>
           ) : null}
           {uploadFeedback ? (
             <p
-              className={uploadFeedback.kind === "error" ? "admin-field-error" : "admin-upload-feedback"}
+              className={
+                uploadFeedback.kind === "error" ? "admin-field-error" : "admin-upload-feedback"
+              }
               role={uploadFeedback.kind === "error" ? "alert" : "status"}
             >
               {uploadFeedback.message}
@@ -1239,7 +1496,10 @@ function ProductEditor({
                 ) : (
                   <span className="admin-image-placeholder">Image preview unavailable</span>
                 )}
-                <span>Image {index + 1}{form.primaryImageReference === reference ? " · Primary" : ""}</span>
+                <span>
+                  Image {index + 1}
+                  {form.primaryImageReference === reference ? " · Primary" : ""}
+                </span>
                 <div className="admin-row-actions">
                   <Button
                     type="button"
@@ -1267,13 +1527,33 @@ function ProductEditor({
       </fieldset>
       <fieldset className="admin-editor-section">
         <legend>Inventory settings</legend>
-        <p className="admin-muted">Stock quantity is managed separately through auditable inventory adjustments. Product details and price edits never change on-hand stock.</p>
-        <label>Low-stock threshold (optional)<input type="number" min="0" step="1" value={form.lowStockThreshold} onChange={(event) => setField("lowStockThreshold", event.currentTarget.value)} /></label>
+        <p className="admin-muted">
+          Stock quantity is managed separately through auditable inventory adjustments. Product
+          details and price edits never change on-hand stock.
+        </p>
+        <label>
+          Low-stock threshold (optional)
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={form.lowStockThreshold}
+            onChange={(event) => setField("lowStockThreshold", event.currentTarget.value)}
+          />
+        </label>
       </fieldset>
-      {error ? <p className="admin-field-error" role="alert">{error}</p> : null}
+      {error ? (
+        <p className="admin-field-error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <div className="admin-row-actions">
-        <Button type="submit" disabled={saving || categories.length === 0}>{saving ? "Saving…" : product ? "Save changes" : "Save product"}</Button>
-        <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>Cancel</Button>
+        <Button type="submit" disabled={saving || categories.length === 0}>
+          {saving ? "Saving…" : product ? "Save changes" : "Save product"}
+        </Button>
+        <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>
+          Cancel
+        </Button>
       </div>
     </form>
   );
@@ -1333,25 +1613,35 @@ function CategoryManagement() {
           saving={createMutation.isPending}
           onSave={(payload) => createMutation.mutate(payload)}
         />
-        {createMutation.error ? <QueryError error={createMutation.error} action="Category creation" /> : null}
+        {createMutation.error ? (
+          <QueryError error={createMutation.error} action="Category creation" />
+        ) : null}
       </section>
       <section className="admin-card">
         <h3>Categories</h3>
         {message ? <Feedback>{message}</Feedback> : null}
         {categoriesQuery.isPending ? <p role="status">Loading categories…</p> : null}
-        {categoriesQuery.isError ? <QueryError error={categoriesQuery.error} action="Category list loading" /> : null}
-        {!categoriesQuery.isPending && !categoriesQuery.data?.length ? <p>No categories returned.</p> : null}
+        {categoriesQuery.isError ? (
+          <QueryError error={categoriesQuery.error} action="Category list loading" />
+        ) : null}
+        {!categoriesQuery.isPending && !categoriesQuery.data?.length ? (
+          <p>No categories returned.</p>
+        ) : null}
         <div className="admin-category-list">
           {(categoriesQuery.data ?? []).map((category) => (
             <details className="admin-category-item" key={category.id}>
-              <summary>{category.name} · {category.isActive ? "Active" : "Inactive"}</summary>
+              <summary>
+                {category.name} · {category.isActive ? "Active" : "Inactive"}
+              </summary>
               {category.imageReference ? (
                 <ImagePreview
                   className="admin-category-image"
                   source={category.imageReference}
                   alt={`${category.name} category`}
                 />
-              ) : <span className="admin-image-placeholder">No category image</span>}
+              ) : (
+                <span className="admin-image-placeholder">No category image</span>
+              )}
               <CategoryEditor
                 key={category.id}
                 category={category}
@@ -1361,8 +1651,12 @@ function CategoryManagement() {
             </details>
           ))}
         </div>
-        {updateMutation.error ? <QueryError error={updateMutation.error} action="Category update" /> : null}
-        <p className="admin-muted">Categories cannot be deleted because the backend has no delete endpoint.</p>
+        {updateMutation.error ? (
+          <QueryError error={updateMutation.error} action="Category update" />
+        ) : null}
+        <p className="admin-muted">
+          Categories cannot be deleted because the backend has no delete endpoint.
+        </p>
       </section>
     </div>
   );
@@ -1414,21 +1708,74 @@ function CategoryEditor({
   }
   return (
     <form className="admin-form" onSubmit={submit}>
-      <label>Name<input required maxLength={100} value={form.name} onChange={(event) => setForm({ ...form, name: event.currentTarget.value })} /></label>
-      <label>Slug<input required maxLength={120} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.currentTarget.value })} /></label>
-      <label>Description<textarea maxLength={1000} rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.currentTarget.value })} /></label>
-      <label>Display order<input type="number" step="1" value={form.displayOrder} onChange={(event) => setForm({ ...form, displayOrder: event.currentTarget.value })} /></label>
-      <label>Category image reference<input value={form.imageReference} onChange={(event) => setForm({ ...form, imageReference: event.currentTarget.value })} /></label>
+      <label>
+        Name
+        <input
+          required
+          maxLength={100}
+          value={form.name}
+          onChange={(event) => setForm({ ...form, name: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Slug
+        <input
+          required
+          maxLength={120}
+          value={form.slug}
+          onChange={(event) => setForm({ ...form, slug: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Description
+        <textarea
+          maxLength={1000}
+          rows={3}
+          value={form.description}
+          onChange={(event) => setForm({ ...form, description: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Display order
+        <input
+          type="number"
+          step="1"
+          value={form.displayOrder}
+          onChange={(event) => setForm({ ...form, displayOrder: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Category image reference
+        <input
+          value={form.imageReference}
+          onChange={(event) => setForm({ ...form, imageReference: event.currentTarget.value })}
+        />
+      </label>
       {form.imageReference && isAllowedProductImageUrl(form.imageReference) ? (
         <ImagePreview
           className="admin-category-image"
           source={form.imageReference}
           alt="Category image preview"
         />
-      ) : form.imageReference ? <span className="admin-image-placeholder">Image preview unavailable</span> : null}
-      <label className="admin-checkbox-label"><input type="checkbox" checked={form.isActive} onChange={(event) => setForm({ ...form, isActive: event.currentTarget.checked })} />Active</label>
-      {error ? <p className="admin-field-error" role="alert">{error}</p> : null}
-      <Button type="submit" disabled={saving}>{saving ? "Saving…" : category ? "Save category changes" : "Create category"}</Button>
+      ) : form.imageReference ? (
+        <span className="admin-image-placeholder">Image preview unavailable</span>
+      ) : null}
+      <label className="admin-checkbox-label">
+        <input
+          type="checkbox"
+          checked={form.isActive}
+          onChange={(event) => setForm({ ...form, isActive: event.currentTarget.checked })}
+        />
+        Active
+      </label>
+      {error ? (
+        <p className="admin-field-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <Button type="submit" disabled={saving}>
+        {saving ? "Saving…" : category ? "Save category changes" : "Create category"}
+      </Button>
     </form>
   );
 }
@@ -1447,7 +1794,15 @@ function InventoryManagement() {
   const [message, setMessage] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<unknown>(null);
   const queryClient = useQueryClient();
-  const inventoryQueryKey = ["admin", "inventory", page, search, categoryId, status, lowStockBelow] as const;
+  const inventoryQueryKey = [
+    "admin",
+    "inventory",
+    page,
+    search,
+    categoryId,
+    status,
+    lowStockBelow,
+  ] as const;
   const adjustmentLockRef = useRef(false);
   const categoriesQuery = useQuery({
     queryKey: ["admin", "categories"],
@@ -1456,23 +1811,25 @@ function InventoryManagement() {
   });
   const inventoryQuery = useQuery({
     queryKey: inventoryQueryKey,
-    queryFn: () => adminApi.getInventory({
-      page,
-      limit: 20,
-      ...(search ? { q: search } : {}),
-      ...(categoryId ? { categoryId } : {}),
-      ...(isProductStatus(status) ? { status } : {}),
-      ...(lowStockBelow.trim() ? { lowStockBelow: Number(lowStockBelow) } : {}),
-      sortBy: "stockQuantity",
-      sortOrder: "asc",
-    }),
+    queryFn: () =>
+      adminApi.getInventory({
+        page,
+        limit: 20,
+        ...(search ? { q: search } : {}),
+        ...(categoryId ? { categoryId } : {}),
+        ...(isProductStatus(status) ? { status } : {}),
+        ...(lowStockBelow.trim() ? { lowStockBelow: Number(lowStockBelow) } : {}),
+        sortBy: "stockQuantity",
+        sortOrder: "asc",
+      }),
     retry: false,
   });
   const historyQuery = useQuery({
     queryKey: ["admin", "adjustments", historyProductId],
-    queryFn: () => historyProductId
-      ? adminApi.getProductInventoryAdjustments(historyProductId, { limit: 20 })
-      : adminApi.getInventoryAdjustments({ limit: 20 }),
+    queryFn: () =>
+      historyProductId
+        ? adminApi.getProductInventoryAdjustments(historyProductId, { limit: 20 })
+        : adminApi.getInventoryAdjustments({ limit: 20 }),
     retry: false,
   });
   const inventoryOverviewQuery = useQuery({
@@ -1487,11 +1844,12 @@ function InventoryManagement() {
       quantityDelta: number;
       reason: string;
       key: string;
-    }) => adminApi.adjustInventory(
-      input.productId,
-      { quantityDelta: input.quantityDelta, reason: input.reason },
-      input.key,
-    ),
+    }) =>
+      adminApi.adjustInventory(
+        input.productId,
+        { quantityDelta: input.quantityDelta, reason: input.reason },
+        input.key,
+      ),
     onSuccess: async (result) => {
       queryClient.setQueryData<InventoryList>(inventoryQueryKey, (current) =>
         current
@@ -1546,10 +1904,16 @@ function InventoryManagement() {
         correlationId: null,
         errorCategory: "client_validation",
       });
-      setAdjustmentError(new Error("Select a product, enter a non-zero whole quantity and give a reason of at least 3 characters."));
+      setAdjustmentError(
+        new Error(
+          "Select a product, enter a non-zero whole quantity and give a reason of at least 3 characters.",
+        ),
+      );
       return;
     }
-    const selectedItem = inventoryQuery.data?.inventory.find((item) => item.productId === productId);
+    const selectedItem = inventoryQuery.data?.inventory.find(
+      (item) => item.productId === productId,
+    );
     if (delta < 0 && selectedItem && selectedItem.stockQuantity + delta < 0) {
       console.info("[admin-inventory-request]", {
         method: "POST",
@@ -1560,7 +1924,9 @@ function InventoryManagement() {
         errorCategory: "client_stock_validation",
       });
       setAdjustmentError(
-        new Error(`Only ${selectedItem.stockQuantity} units are currently recorded; the adjustment cannot reduce stock below zero.`),
+        new Error(
+          `Only ${selectedItem.stockQuantity} units are currently recorded; the adjustment cannot reduce stock below zero.`,
+        ),
       );
       return;
     }
@@ -1582,73 +1948,217 @@ function InventoryManagement() {
     <div className="admin-management-grid">
       <section className="admin-card admin-wide">
         <h3>Inventory</h3>
-        <p>Stock changes are recorded as auditable adjustments. Product forms never change stock.</p>
+        <p>
+          Stock changes are recorded as auditable adjustments. Product forms never change stock.
+        </p>
         <form className="admin-filter-form" onSubmit={submitFilter}>
-          <label>Search name or SKU<input value={searchText} onChange={(event) => setSearchText(event.currentTarget.value)} /></label>
-          <label>Category<select value={categoryId} onChange={(event) => { setCategoryId(event.currentTarget.value); setPage(1); }}>
-            <option value="">All categories</option>
-            {(categoriesQuery.data ?? []).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select></label>
-          <label>Status<select value={status} onChange={(event) => { setStatus(event.currentTarget.value); setPage(1); }}>
-            <option value="">All statuses</option><option value="draft">Draft</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option>
-          </select></label>
-          <label>Flag stock below<input type="number" min="0" step="1" value={lowStockBelow} onChange={(event) => { setLowStockBelow(event.currentTarget.value); setPage(1); }} /></label>
+          <label>
+            Search name or SKU
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Category
+            <select
+              value={categoryId}
+              onChange={(event) => {
+                setCategoryId(event.currentTarget.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All categories</option>
+              {(categoriesQuery.data ?? []).map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Status
+            <select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.currentTarget.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All statuses</option>
+              <option value="draft">Draft</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+          <label>
+            Flag stock below
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={lowStockBelow}
+              onChange={(event) => {
+                setLowStockBelow(event.currentTarget.value);
+                setPage(1);
+              }}
+            />
+          </label>
           <Button type="submit">Apply filters</Button>
         </form>
         {inventoryQuery.isPending ? <p role="status">Loading stock…</p> : null}
-        {inventoryQuery.isError ? <QueryError error={inventoryQuery.error} action="Inventory loading" /> : null}
-        {inventoryQuery.data?.inventory.length === 0 ? <p>No inventory items match the selected filters.</p> : null}
+        {inventoryQuery.isError ? (
+          <QueryError error={inventoryQuery.error} action="Inventory loading" />
+        ) : null}
+        {inventoryQuery.data?.inventory.length === 0 ? (
+          <p>No inventory items match the selected filters.</p>
+        ) : null}
         {inventoryQuery.data?.inventory.length ? (
           <div className="admin-table-wrap">
             <table className="admin-table">
-              <thead><tr><th scope="col">Product</th><th scope="col">SKU</th><th scope="col">Stock</th><th scope="col">Status</th><th scope="col">Updated</th><th scope="col">History</th></tr></thead>
-              <tbody>{inventoryQuery.data.inventory.map((item) => (
-                <tr key={item.productId} className={item.stockQuantity === 0 ? "admin-out-of-stock" : ""}>
-                  <td>{item.name}</td><td>{item.sku}</td>
-                  <td>{item.stockQuantity === 0 ? "Out of stock" : item.stockQuantity}</td>
-                  <td>{item.status}</td><td>{new Date(item.updatedAt).toLocaleString()}</td>
-                  <td><Button type="button" variant="outline" onClick={() => setHistoryProductId(item.productId)}>View movements</Button></td>
+              <thead>
+                <tr>
+                  <th scope="col">Product</th>
+                  <th scope="col">SKU</th>
+                  <th scope="col">Stock</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Updated</th>
+                  <th scope="col">History</th>
                 </tr>
-              ))}</tbody>
+              </thead>
+              <tbody>
+                {inventoryQuery.data.inventory.map((item) => (
+                  <tr
+                    key={item.productId}
+                    className={item.stockQuantity === 0 ? "admin-out-of-stock" : ""}
+                  >
+                    <td>{item.name}</td>
+                    <td>{item.sku}</td>
+                    <td>{item.stockQuantity === 0 ? "Out of stock" : item.stockQuantity}</td>
+                    <td>{item.status}</td>
+                    <td>{new Date(item.updatedAt).toLocaleString()}</td>
+                    <td>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setHistoryProductId(item.productId)}
+                      >
+                        View movements
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </div>
         ) : null}
         {inventoryQuery.data && inventoryQuery.data.pagination.totalPages > 1 ? (
           <nav className="admin-pagination" aria-label="Inventory pages">
-            <Button type="button" variant="outline" disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>Previous</Button>
-            <span>Page {page} of {inventoryQuery.data.pagination.totalPages} · {inventoryQuery.data.pagination.total} products</span>
-            <Button type="button" variant="outline" disabled={page >= inventoryQuery.data.pagination.totalPages} onClick={() => setPage((n) => n + 1)}>Next</Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={page <= 1}
+              onClick={() => setPage((n) => n - 1)}
+            >
+              Previous
+            </Button>
+            <span>
+              Page {page} of {inventoryQuery.data.pagination.totalPages} ·{" "}
+              {inventoryQuery.data.pagination.total} products
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={page >= inventoryQuery.data.pagination.totalPages}
+              onClick={() => setPage((n) => n + 1)}
+            >
+              Next
+            </Button>
           </nav>
         ) : null}
         <form className="admin-form admin-inventory-adjustment" onSubmit={submitAdjustment}>
           <h4>Adjust stock</h4>
-          <label>Product<select required value={productId} onChange={(event) => setProductId(event.currentTarget.value)}>
-            <option value="">Choose from the current filtered stock page</option>
-            {(inventoryQuery.data?.inventory ?? []).map((item) => <option key={item.productId} value={item.productId}>{item.name} · {item.stockQuantity} units · {item.sku}</option>)}
-          </select></label>
-          <label>Quantity change (positive adds, negative removes)<input type="number" step="1" required value={quantityDelta} onChange={(event) => setQuantityDelta(event.currentTarget.value)} /></label>
-          <label>Reason (3–200 characters)<textarea required minLength={3} maxLength={200} rows={2} value={reason} onChange={(event) => setReason(event.currentTarget.value)} /></label>
-          <Button type="submit" disabled={adjustmentMutation.isPending || !productId || !quantityDelta || reason.trim().length < 3}>
+          <label>
+            Product
+            <select
+              required
+              value={productId}
+              onChange={(event) => setProductId(event.currentTarget.value)}
+            >
+              <option value="">Choose from the current filtered stock page</option>
+              {(inventoryQuery.data?.inventory ?? []).map((item) => (
+                <option key={item.productId} value={item.productId}>
+                  {item.name} · {item.stockQuantity} units · {item.sku}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Quantity change (positive adds, negative removes)
+            <input
+              type="number"
+              step="1"
+              required
+              value={quantityDelta}
+              onChange={(event) => setQuantityDelta(event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Reason (3–200 characters)
+            <textarea
+              required
+              minLength={3}
+              maxLength={200}
+              rows={2}
+              value={reason}
+              onChange={(event) => setReason(event.currentTarget.value)}
+            />
+          </label>
+          <Button
+            type="submit"
+            disabled={
+              adjustmentMutation.isPending ||
+              !productId ||
+              !quantityDelta ||
+              reason.trim().length < 3
+            }
+          >
             {adjustmentMutation.isPending ? "Recording…" : "Record stock adjustment"}
           </Button>
         </form>
         {message ? <Feedback>{message}</Feedback> : null}
-        {adjustmentError ? <QueryError error={adjustmentError} action="Inventory adjustment" /> : null}
+        {adjustmentError ? (
+          <QueryError error={adjustmentError} action="Inventory adjustment" />
+        ) : null}
       </section>
       <section className="admin-card admin-wide">
         <div className="admin-section-heading">
-          <div><h3>Inventory movement history</h3><p>Recent movement data returned by the backend.</p></div>
-          {historyProductId ? <Button type="button" variant="outline" onClick={() => setHistoryProductId("")}>Show all products</Button> : null}
+          <div>
+            <h3>Inventory movement history</h3>
+            <p>Recent movement data returned by the backend.</p>
+          </div>
+          {historyProductId ? (
+            <Button type="button" variant="outline" onClick={() => setHistoryProductId("")}>
+              Show all products
+            </Button>
+          ) : null}
         </div>
         {historyQuery.isPending ? <p role="status">Loading movement history…</p> : null}
-        {historyQuery.isError ? <QueryError error={historyQuery.error} action="Movement history loading" /> : null}
+        {historyQuery.isError ? (
+          <QueryError error={historyQuery.error} action="Movement history loading" />
+        ) : null}
         {historyQuery.data !== undefined ? <DataValue value={historyQuery.data} /> : null}
       </section>
       <section className="admin-card admin-wide">
         <h3>Configured low-stock and out-of-stock lists</h3>
         {inventoryOverviewQuery.isPending ? <p role="status">Loading stock warnings…</p> : null}
-        {inventoryOverviewQuery.isError ? <QueryError error={inventoryOverviewQuery.error} action="Stock warnings loading" /> : null}
-        {inventoryOverviewQuery.data !== undefined ? <DataValue value={inventoryOverviewQuery.data} /> : null}
+        {inventoryOverviewQuery.isError ? (
+          <QueryError error={inventoryOverviewQuery.error} action="Stock warnings loading" />
+        ) : null}
+        {inventoryOverviewQuery.data !== undefined ? (
+          <DataValue value={inventoryOverviewQuery.data} />
+        ) : null}
       </section>
     </div>
   );
@@ -1672,11 +2182,14 @@ function AnalyticsReports() {
   const [groupBy, setGroupBy] = useState<AnalyticsRange["groupBy"]>("day");
   const [range, setRange] = useState<AnalyticsRange>({ groupBy: "day" });
   const [rangeError, setRangeError] = useState<string | null>(null);
-  const options = useMemo(() => ({
-    ...(range.start && range.end ? { start: range.start, end: range.end } : {}),
-    groupBy: range.groupBy,
-    limit: 20,
-  }), [range]);
+  const options = useMemo(
+    () => ({
+      ...(range.start && range.end ? { start: range.start, end: range.end } : {}),
+      groupBy: range.groupBy,
+      limit: 20,
+    }),
+    [range],
+  );
   const reports = [
     { id: "overview", title: "Overview" },
     { id: "sales", title: "Sales availability" },
@@ -1692,42 +2205,80 @@ function AnalyticsReports() {
           A date range is optional; without one the backend returns its documented default range.
           Dates are sent as UTC ISO timestamps with an explicit timezone.
         </p>
-        <form className="admin-filter-form" onSubmit={(event) => {
-          event.preventDefault();
-          setRangeError(null);
-          if (Boolean(startDate) !== Boolean(endDate)) {
-            setRangeError("Choose both a start and end date, or leave both empty.");
-            return;
-          }
-          if (startDate && endDate) {
-            if (startDate > endDate) {
-              setRangeError("The start date must not be after the end date.");
+        <form
+          className="admin-filter-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setRangeError(null);
+            if (Boolean(startDate) !== Boolean(endDate)) {
+              setRangeError("Choose both a start and end date, or leave both empty.");
               return;
             }
-            const days = (Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000;
-            if (days > 365) {
-              setRangeError("The selected range cannot exceed 366 calendar days.");
-              return;
+            if (startDate && endDate) {
+              if (startDate > endDate) {
+                setRangeError("The start date must not be after the end date.");
+                return;
+              }
+              const days =
+                (Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) /
+                86_400_000;
+              if (days > 365) {
+                setRangeError("The selected range cannot exceed 366 calendar days.");
+                return;
+              }
             }
-          }
-          setRange({
-            ...(startDate ? { start: dateToUtcBoundary(startDate, false) } : {}),
-            ...(endDate ? { end: dateToUtcBoundary(endDate, true) } : {}),
-            groupBy,
-          });
-        }}>
-          <label>Start date<input type="date" value={startDate} onChange={(event) => setStartDate(event.currentTarget.value)} /></label>
-          <label>End date (inclusive)<input type="date" value={endDate} onChange={(event) => setEndDate(event.currentTarget.value)} /></label>
-          <label>Group by<select value={groupBy} onChange={(event) => {
-            const value = event.currentTarget.value;
-            if (value === "day" || value === "week" || value === "month") setGroupBy(value);
-          }}><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label>
+            setRange({
+              ...(startDate ? { start: dateToUtcBoundary(startDate, false) } : {}),
+              ...(endDate ? { end: dateToUtcBoundary(endDate, true) } : {}),
+              groupBy,
+            });
+          }}
+        >
+          <label>
+            Start date
+            <input
+              type="date"
+              value={startDate}
+              onChange={(event) => setStartDate(event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            End date (inclusive)
+            <input
+              type="date"
+              value={endDate}
+              onChange={(event) => setEndDate(event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            Group by
+            <select
+              value={groupBy}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                if (value === "day" || value === "week" || value === "month") setGroupBy(value);
+              }}
+            >
+              <option value="day">Day</option>
+              <option value="week">Week</option>
+              <option value="month">Month</option>
+            </select>
+          </label>
           <Button type="submit">Load reports</Button>
         </form>
-        {rangeError ? <p className="admin-field-error" role="alert">{rangeError}</p> : null}
+        {rangeError ? (
+          <p className="admin-field-error" role="alert">
+            {rangeError}
+          </p>
+        ) : null}
       </section>
       {reports.map((report) => (
-        <AnalyticsReportCard key={report.id} report={report.id} title={report.title} options={options} />
+        <AnalyticsReportCard
+          key={report.id}
+          report={report.id}
+          title={report.title}
+          options={options}
+        />
       ))}
       <section className="admin-card admin-wide">
         <h3>Metrics not yet tracked</h3>

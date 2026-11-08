@@ -9,23 +9,35 @@ environment has not contacted ShipLogic or booked a shipment.
 
 Set these values in the backend environment only:
 
-| Variable | Purpose |
-| --- | --- |
-| `SHIPLOGIC_API_URL` | Explicit HTTPS API origin. Sandbox: `https://api.shiplogic.com`; production: `https://api.portal.thecourierguy.co.za`, as documented by ShipLogic. |
-| `SHIPLOGIC_BEARER_TOKEN` | Ship Logic API key sent only in the backend `Authorization: Bearer ...` request header. |
-| `SHIPLOGIC_COLLECTION_COMPANY` | Collection business name; defaults to `Healthy Ways SA`. |
-| `SHIPLOGIC_COLLECTION_STREET_ADDRESS` | Collection street address. |
-| `SHIPLOGIC_COLLECTION_LOCAL_AREA` | Collection suburb/local area. |
-| `SHIPLOGIC_COLLECTION_CITY` | Collection city. |
-| `SHIPLOGIC_COLLECTION_ZONE` | Collection province/zone. |
-| `SHIPLOGIC_COLLECTION_POSTAL_CODE` | Collection postal code. |
-| `SHIPLOGIC_COLLECTION_COUNTRY_CODE` | Two-letter country code; currently `ZA`. |
-| `SHIPLOGIC_COLLECTION_CONTACT_NAME` | Collection contact name, required to book a paid order. |
-| `SHIPLOGIC_COLLECTION_CONTACT_EMAIL` | Collection contact email, or configure a mobile number. |
-| `SHIPLOGIC_COLLECTION_CONTACT_MOBILE` | Collection contact mobile number, or configure an email. |
+| Variable                              | Purpose                                                                                                                                            |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SHIPLOGIC_API_URL`                   | Explicit HTTPS API origin. Sandbox: `https://api.shiplogic.com`; production: `https://api.portal.thecourierguy.co.za`, as documented by ShipLogic. |
+| `SHIPLOGIC_BEARER_TOKEN`              | Ship Logic API key sent only in the backend `Authorization: Bearer ...` request header.                                                            |
+| `SHIPLOGIC_COLLECTION_COMPANY`        | Collection business name; defaults to `Healthy Ways SA`.                                                                                           |
+| `SHIPLOGIC_COLLECTION_STREET_ADDRESS` | Actual collection street address; required when ShipLogic is enabled.                                                                              |
+| `SHIPLOGIC_COLLECTION_LOCAL_AREA`     | Actual collection suburb/local area; required when ShipLogic is enabled.                                                                           |
+| `SHIPLOGIC_COLLECTION_CITY`           | Actual collection city; required when ShipLogic is enabled.                                                                                        |
+| `SHIPLOGIC_COLLECTION_ZONE`           | Actual collection province/zone; required when ShipLogic is enabled.                                                                               |
+| `SHIPLOGIC_COLLECTION_POSTAL_CODE`    | Collection postal code.                                                                                                                            |
+| `SHIPLOGIC_COLLECTION_COUNTRY_CODE`   | Two-letter country code; currently `ZA`.                                                                                                           |
+| `SHIPLOGIC_COLLECTION_CONTACT_NAME`   | Collection contact name; required when ShipLogic is enabled.                                                                                       |
+| `SHIPLOGIC_COLLECTION_CONTACT_EMAIL`  | Collection contact email; required unless a mobile number is configured.                                                                           |
+| `SHIPLOGIC_COLLECTION_CONTACT_MOBILE` | Collection contact mobile number; required unless an email is configured.                                                                          |
+| `SHIPLOGIC_PACKAGING_LENGTH_CM`       | Optional known courier-bag outer length; set with width and height.                                                                                |
+| `SHIPLOGIC_PACKAGING_WIDTH_CM`        | Optional known courier-bag outer width; set with length and height.                                                                                |
+| `SHIPLOGIC_PACKAGING_HEIGHT_CM`       | Optional known courier-bag outer height; set with length and width.                                                                                |
+| `SHIPLOGIC_PACKAGING_WEIGHT_GRAMS`    | Optional measured empty-bag weight, added to product weight.                                                                                       |
 
 If the URL or token is missing, other backend APIs still start but rate requests and booking are
-unavailable. The API URL is an origin. Credentials must remain server-side.
+unavailable. When enabled, the actual collection street/locality/city/zone, postal code, country,
+and booking contact must also be configured; built-in address defaults are not accepted as
+ShipLogic configuration. The API URL is an origin. Credentials must remain server-side.
+
+For Vercel, set `VITE_BACKEND_BASE_URL` to the Render backend's HTTPS origin (or its `/api/v1`
+base). This is a public URL, not a credential. The storefront uses a same-origin `/api/v1/**`
+proxy, so browser session and CSRF cookies stay on the Vercel domain. Do not put ShipLogic tokens
+or any other backend secrets in Vercel variables. The Nitro production preset is explicitly
+configured for Vercel.
 
 ## Trusted data prerequisites
 
@@ -47,13 +59,25 @@ Each product must have an administrator-configured `shippingParcel`:
 }
 ```
 
-The values must be measurements of the actual packed shipping unit, not approximate bottle/product
-metadata. The administrator update endpoint is `PATCH /api/v1/admin/products/:productId`; its
-request schema accepts `shippingParcel` as above, or `null` to remove it. Approximate packaging
-estimates do not satisfy this requirement. The backend currently represents each ordered unit as
-one parcel using that product's verified packed-unit measurements. For quantity 3, it submits
-three parcels. Ensure that parcel measurement is appropriate for each separately packed unit; a
-combined-cart packing rule is not implemented.
+Measure one sale unit as it will sit inside the courier bag, including its retail container or
+packaging but excluding the outer courier bag. The administrator update endpoint is
+`PATCH /api/v1/admin/products/:productId`; its request schema accepts `shippingParcel` as above, or
+`null` to remove it. The admin dashboard exposes these measurements in cm and whole grams on the
+product create/edit form.
+
+Every customer order creates exactly one Ship Logic shipment containing one parcel. Product units
+are rotated into common rectangular slots, then arranged in a deterministic grid selected to
+minimize parcel volume (surface area breaks ties). The backend sums product weight times quantity
+and converts grams to kilograms. This conservative rectangular envelope may overestimate the real
+bag contents; it does not assume nesting or compression and is not a carrier-certified packing
+plan. Separate orders remain separate shipments, even for the same customer or delivery address.
+
+No courier-bag size or weight is invented. The optional `SHIPLOGIC_PACKAGING_LENGTH_CM`,
+`SHIPLOGIC_PACKAGING_WIDTH_CM`, and `SHIPLOGIC_PACKAGING_HEIGHT_CM` settings configure known outer
+bag dimensions together; if the estimated contents do not fit, quoting fails. The optional
+`SHIPLOGIC_PACKAGING_WEIGHT_GRAMS` adds a measured empty-bag weight. Until the owner confirms the
+estimate against the actual Courier Guy bag, do not rely on these estimated dimensions for live
+rates.
 
 For example, after an administrator has measured the actual package, the admin API request uses:
 

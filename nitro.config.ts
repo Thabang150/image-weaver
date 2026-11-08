@@ -21,11 +21,10 @@ if (
 }
 
 const backendPath = backendUrl.pathname.replace(/\/+$/, "");
-const backendApiPath = backendPath.endsWith("/api/v1")
-  ? backendPath
-  : `${backendPath}/api/v1`;
+const backendApiPath = backendPath.endsWith("/api/v1") ? backendPath : `${backendPath}/api/v1`;
 
 export default defineConfig({
+  preset: "vercel",
   routeRules: {
     "/api/v1/**": {
       proxy: `${backendUrl.origin}${backendApiPath}/**`,

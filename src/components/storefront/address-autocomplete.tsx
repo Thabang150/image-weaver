@@ -1,170 +1,214 @@
-import { useEffect, useState, type ChangeEvent } from "react";
-import { mapboxFeatureToAddress, type SelectedDeliveryAddress } from "@/lib/mapbox-address";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { googlePlaceToAddress, type SelectedDeliveryAddress } from "@/lib/google-address";
 import {
   isSouthAfricanPostalCode,
   normalizeSouthAfricanProvince,
 } from "@/lib/south-african-address";
 
-type MapboxSuggestion = {
-  feature: unknown;
-  label: string;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+interface GooglePlacePrediction {
+  toPlace(): {
+    addressComponents?: Array<{
+      longText?: string;
+      shortText?: string;
+      types?: string[];
+    }>;
+    formattedAddress?: string;
+    location?: { lat?: () => number; lng?: () => number };
+    fetchFields(options: { fields: string[] }): Promise<void>;
+  };
 }
 
-function parseSuggestions(value: unknown): MapboxSuggestion[] {
-  if (!isRecord(value) || !Array.isArray(value["features"])) return [];
-  return value["features"].flatMap((rawFeature): MapboxSuggestion[] => {
-    if (!isRecord(rawFeature) || !isRecord(rawFeature["properties"])) return [];
-    const properties = rawFeature["properties"];
-    const label =
-      typeof properties["full_address"] === "string"
-        ? properties["full_address"]
-        : typeof properties["name"] === "string"
-          ? properties["name"]
-          : "";
-    if (!label || mapboxFeatureToAddress(rawFeature) === undefined) return [];
-    return [{ feature: rawFeature, label }];
-  });
+interface GooglePlacesLibrary {
+  PlaceAutocompleteElement: new () => GoogleAutocompleteElement;
 }
 
-export function MapboxAddressAutocomplete({
+interface GoogleAutocompleteElement extends HTMLElement {
+  disabled: boolean;
+  includedRegionCodes: string[];
+  placeholder: string;
+}
+
+interface GoogleMapsWindow extends Window {
+  google?: {
+    maps?: {
+      importLibrary?: (library: "places") => Promise<GooglePlacesLibrary>;
+    };
+  };
+}
+
+let placesLibraryPromise: Promise<GooglePlacesLibrary> | undefined;
+
+function importPlacesLibrary(): Promise<GooglePlacesLibrary> {
+  const maps = (window as GoogleMapsWindow).google?.maps;
+  if (!maps?.importLibrary) {
+    return Promise.reject(new Error("Google Maps JavaScript API is unavailable."));
+  }
+  return maps.importLibrary("places");
+}
+
+function loadGooglePlaces(apiKey: string): Promise<GooglePlacesLibrary> {
+  if ((window as GoogleMapsWindow).google?.maps?.importLibrary) {
+    return importPlacesLibrary();
+  }
+  if (placesLibraryPromise) return placesLibraryPromise;
+
+  placesLibraryPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[data-google-maps-places="true"]',
+    );
+    if (existing?.dataset["loaded"] === "true") {
+      reject(new Error("Google Maps JavaScript API did not initialize."));
+      return;
+    }
+
+    const script = existing ?? document.createElement("script");
+    const created = existing === null;
+    const onLoad = () => {
+      script.dataset["loaded"] = "true";
+      resolve();
+    };
+    const onError = () => reject(new Error("Google Maps JavaScript API could not be loaded."));
+    script.addEventListener("load", onLoad, { once: true });
+    script.addEventListener("error", onError, { once: true });
+
+    if (created) {
+      script.dataset["googleMapsPlaces"] = "true";
+      script.async = true;
+      script.src = `https://maps.googleapis.com/maps/api/js?${new URLSearchParams({
+        key: apiKey,
+        v: "weekly",
+        loading: "async",
+      })}`;
+      document.head.appendChild(script);
+    }
+  })
+    .then(() => importPlacesLibrary())
+    .catch((error: unknown) => {
+      placesLibraryPromise = undefined;
+      document.querySelector('script[data-google-maps-places="true"]')?.remove();
+      throw error;
+    });
+
+  return placesLibraryPromise;
+}
+
+export function GooglePlacesAutocomplete({
   onSelect,
   disabled = false,
 }: {
   onSelect: (address: SelectedDeliveryAddress) => void;
   disabled?: boolean;
 }) {
-  const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<MapboxSuggestion[]>([]);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const onSelectRef = useRef(onSelect);
+  const disabledRef = useRef(disabled);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [searchedFor, setSearchedFor] = useState<string>();
-  const accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN?.trim() ?? "";
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? "";
 
   useEffect(() => {
-    const searchQuery = query.trim();
-    if (!accessToken || searchQuery.length < 4 || disabled) {
-      setSuggestions([]);
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    if (!apiKey) {
+      setError(null);
       setLoading(false);
       return;
     }
 
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
+    let active = true;
+    let selectionId = 0;
+    let autocomplete: GoogleAutocompleteElement | undefined;
+    const onPlaceSelected = async (event: Event) => {
+      const prediction = (event as Event & { placePrediction?: GooglePlacePrediction })
+        .placePrediction;
+      if (!prediction) {
+        setError("That suggestion could not be loaded. Please enter the address manually.");
+        return;
+      }
+      const currentSelection = ++selectionId;
       setLoading(true);
       setError(null);
-      setSearchedFor(undefined);
-      const url = new URL("https://api.mapbox.com/search/geocode/v6/forward");
-      url.search = new URLSearchParams({
-        q: searchQuery,
-        country: "za",
-        types: "address",
-        autocomplete: "true",
-        permanent: "true",
-        language: "en",
-        limit: "5",
-        access_token: accessToken,
-      }).toString();
-
-      void fetch(url, { signal: controller.signal })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Address search is unavailable.");
-          return (await response.json()) as unknown;
-        })
-        .then((response) => {
-          setSuggestions(parseSuggestions(response));
-          setSearchedFor(searchQuery);
-        })
-        .catch(() => {
-          if (controller.signal.aborted) return;
-          setSuggestions([]);
-          setSearchedFor(searchQuery);
-          setError(
-            "Address search is temporarily unavailable. You can enter the address manually.",
-          );
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setLoading(false);
+      try {
+        const place = prediction.toPlace();
+        await place.fetchFields({
+          fields: ["addressComponents", "formattedAddress", "location"],
         });
-    }, 350);
+        if (!active || currentSelection !== selectionId) return;
+        const address = googlePlaceToAddress(place);
+        if (!address) {
+          setError("That result could not be used. Please review or enter the address manually.");
+          return;
+        }
+        onSelectRef.current(address);
+      } catch {
+        if (active && currentSelection === selectionId) {
+          setError("Google address details are unavailable. Please enter the address manually.");
+        }
+      } finally {
+        if (active && currentSelection === selectionId) setLoading(false);
+      }
+    };
+
+    setError(null);
+    setLoading(true);
+    void loadGooglePlaces(apiKey)
+      .then(({ PlaceAutocompleteElement }) => {
+        if (!active) return;
+        autocomplete = new PlaceAutocompleteElement();
+        autocomplete.includedRegionCodes = ["za"];
+        autocomplete.placeholder = "Search street, suburb, complex or area";
+        autocomplete.disabled = disabledRef.current;
+        autocomplete.setAttribute("aria-label", "Find your address (optional)");
+        autocomplete.className = "w-full";
+        autocomplete.addEventListener("gmp-select", onPlaceSelected);
+        setLoading(false);
+        host.replaceChildren(autocomplete);
+      })
+      .catch(() => {
+        if (active) {
+          setError("Google address search is unavailable. You can enter the address manually.");
+          setLoading(false);
+        }
+      });
 
     return () => {
-      window.clearTimeout(timer);
-      controller.abort();
+      active = false;
+      selectionId += 1;
+      autocomplete?.removeEventListener("gmp-select", onPlaceSelected);
+      host.replaceChildren();
     };
-  }, [accessToken, disabled, query]);
+  }, [apiKey]);
+
+  useEffect(() => {
+    disabledRef.current = disabled;
+    const autocomplete = hostRef.current?.firstElementChild as
+      GoogleAutocompleteElement | null | undefined;
+    if (autocomplete) autocomplete.disabled = disabledRef.current;
+  }, [disabled]);
 
   return (
     <div className="space-y-2 sm:col-span-2">
-      <label className="block space-y-1 text-sm">
-        <span>Find your address (optional)</span>
-        <input
-          autoComplete="off"
-          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
-          value={query}
-          disabled={disabled}
-          onChange={(event) => {
-            setQuery(event.currentTarget.value);
-            setSuggestions([]);
-            setSearchedFor(undefined);
-            setError(null);
-          }}
-          placeholder={
-            accessToken
-              ? "Start typing a street address"
-              : "Address search is not configured; enter your address below"
-          }
-          aria-describedby="mapbox-address-help"
-          aria-expanded={suggestions.length > 0}
-          aria-controls="mapbox-address-suggestions"
-        />
+      <label className="mb-1 block text-sm" htmlFor="google-address-search">
+        Find your address (optional)
       </label>
-      <p id="mapbox-address-help" className="text-xs text-muted-foreground">
-        {loading
-          ? "Searching addresses…"
-          : accessToken
-            ? "Choose a suggestion to fill any available address fields, then review and edit them below. Search is powered by Mapbox."
-            : "Address search is unavailable. You can still enter every address field manually."}
+      <div
+        id="google-address-search"
+        ref={hostRef}
+        className="min-h-10"
+        aria-label="Google address search"
+      />
+      <p className="text-xs text-muted-foreground" role={error ? "status" : undefined}>
+        {error ??
+          (loading
+            ? "Loading Google address search…"
+            : apiKey
+              ? "Search by street, suburb, complex or area. Review and edit any fields below."
+              : "Address search is not configured. You can enter every address field manually.")}
       </p>
-      {error ? (
-        <p className="text-sm text-muted-foreground" role="status">
-          {error}
-        </p>
-      ) : null}
-      {accessToken && searchedFor === query.trim() && suggestions.length === 0 && !error ? (
-        <p className="text-sm text-muted-foreground" role="status">
-          No matching address was found. You can enter the address manually.
-        </p>
-      ) : null}
-      {suggestions.length > 0 ? (
-        <ul
-          id="mapbox-address-suggestions"
-          className="divide-y rounded-md border border-border"
-          role="listbox"
-          aria-label="Address suggestions"
-        >
-          {suggestions.map((suggestion) => (
-            <li key={suggestion.label} role="option" aria-selected="false">
-              <button
-                type="button"
-                className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
-                disabled={disabled}
-                onClick={() => {
-                  const address = mapboxFeatureToAddress(suggestion.feature);
-                  if (address) onSelect(address);
-                  setQuery(suggestion.label);
-                  setSuggestions([]);
-                }}
-              >
-                {suggestion.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
     </div>
   );
 }

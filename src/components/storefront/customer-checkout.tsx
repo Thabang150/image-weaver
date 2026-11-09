@@ -24,7 +24,8 @@ import {
   normalizeSouthAfricanProvince,
   SOUTH_AFRICAN_PROVINCES,
 } from "@/lib/south-african-address";
-import { MapboxAddressAutocomplete } from "@/components/storefront/address-autocomplete";
+import { GooglePlacesAutocomplete } from "@/components/storefront/address-autocomplete";
+import { mergeGoogleAddress } from "@/lib/google-address";
 
 const inputClass = "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
 const ORDER_KEY = "healthyways.checkout.orderId";
@@ -727,27 +728,10 @@ export function CheckoutPage({
           ) : null}
           {showAddressForm ? (
             <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={saveAddress}>
-              <MapboxAddressAutocomplete
+              <GooglePlacesAutocomplete
                 disabled={busy}
                 onSelect={(selected) => {
-                  setAddress((current) => {
-                    const nextAddress = {
-                      ...current,
-                      addressLine1: selected.addressLine1 ?? "",
-                      localArea: selected.localArea ?? "",
-                      city: selected.city ?? "",
-                      province: selected.province ?? "",
-                      postalCode: selected.postalCode ?? "",
-                      country: selected.country ?? "South Africa",
-                    };
-                    delete nextAddress.lat;
-                    delete nextAddress.lng;
-                    if (selected.lat !== undefined && selected.lng !== undefined) {
-                      nextAddress.lat = selected.lat;
-                      nextAddress.lng = selected.lng;
-                    }
-                    return nextAddress;
-                  });
+                  setAddress((current) => mergeGoogleAddress(current, selected));
                   setMessage(null);
                 }}
               />

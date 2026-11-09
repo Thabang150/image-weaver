@@ -24,7 +24,12 @@ import {
   buildApiUrl,
   getBackendBaseUrl,
 } from "@/lib/api/client";
-import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
+import {
+  authApi,
+  type NewAddressInput,
+  type PublicAddress,
+  type PublicUser,
+} from "@/lib/api/auth";
 import { isAdminUser } from "@/lib/auth/authorization";
 import { ordersApi } from "@/lib/api/orders";
 import { catalogueApi, getSellingPriceCents, type PublicProduct } from "@/lib/api/catalogue";
@@ -2272,18 +2277,20 @@ function AccountPage({ user }: { user: PublicUser }) {
     setFeedback(null);
     const initiatingUserId = user.id;
     try {
-      const payload: Omit<PublicAddress, "id"> = {
+      const payload: NewAddressInput = {
         label: address.label.trim(),
         recipientName: address.recipientName.trim(),
         phoneNumber: address.phoneNumber.trim(),
         addressLine1: address.addressLine1.trim(),
+        localArea: address.localArea?.trim() ?? "",
         city: address.city.trim(),
         province: address.province.trim(),
         postalCode: address.postalCode.trim(),
         country: address.country.trim(),
         addressLine2: address.addressLine2?.trim() ?? "",
-        ...(address.localArea?.trim() ? { localArea: address.localArea.trim() } : {}),
         deliveryInstructions: address.deliveryInstructions?.trim() ?? "",
+        ...(address.lat === undefined ? {} : { lat: address.lat }),
+        ...(address.lng === undefined ? {} : { lng: address.lng }),
       };
       const updated = editingId
         ? await authApi.updateAddress(editingId, payload)
@@ -2354,6 +2361,8 @@ function AccountPage({ user }: { user: PublicUser }) {
       postalCode: entry.postalCode,
       country: entry.country,
       deliveryInstructions: entry.deliveryInstructions ?? "",
+      ...(entry.lat === undefined ? {} : { lat: entry.lat }),
+      ...(entry.lng === undefined ? {} : { lng: entry.lng }),
     });
   }
 
@@ -2483,7 +2492,7 @@ function AccountPage({ user }: { user: PublicUser }) {
               ["phoneNumber", "Phone number", true],
               ["addressLine1", "Address line 1", true],
               ["addressLine2", "Address line 2", false],
-              ["localArea", "Local area (optional)", false],
+              ["localArea", "Suburb or local area", true],
               ["city", "City", true],
               ["province", "Province", true],
               ["postalCode", "Postal code", true],
@@ -2505,7 +2514,22 @@ function AccountPage({ user }: { user: PublicUser }) {
                         : 100
                 }
                 value={address[key] ?? ""}
-                onChange={(event) => setAddress({ ...address, [key]: event.currentTarget.value })}
+                onChange={(event) => {
+                  const nextAddress = { ...address, [key]: event.currentTarget.value };
+                  if (
+                    key === "addressLine1" ||
+                    key === "addressLine2" ||
+                    key === "localArea" ||
+                    key === "city" ||
+                    key === "province" ||
+                    key === "postalCode" ||
+                    key === "country"
+                  ) {
+                    delete nextAddress.lat;
+                    delete nextAddress.lng;
+                  }
+                  setAddress(nextAddress);
+                }}
               />
             </label>
           ))}

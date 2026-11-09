@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
+import { authApi, type NewAddressInput, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { cartApi } from "@/lib/api/cart";
 import {
   canArchiveCustomerOrder,
@@ -722,10 +722,10 @@ export function AddressesPage({
     setBusy(true);
     setError(null);
     try {
-      const { localArea, ...addressWithoutLocalArea } = address;
-      const payload = localArea?.trim()
-        ? { ...addressWithoutLocalArea, localArea: localArea.trim() }
-        : addressWithoutLocalArea;
+      const payload: NewAddressInput = {
+        ...address,
+        localArea: address.localArea?.trim() ?? "",
+      };
       const updated = editing
         ? await authApi.updateAddress(editing, payload)
         : await authApi.addAddress(payload);
@@ -779,6 +779,8 @@ export function AddressesPage({
       postalCode: entry.postalCode,
       country: entry.country,
       deliveryInstructions: entry.deliveryInstructions ?? "",
+      ...(entry.lat === undefined ? {} : { lat: entry.lat }),
+      ...(entry.lng === undefined ? {} : { lng: entry.lng }),
     });
   }
   return (
@@ -830,15 +832,30 @@ export function AddressesPage({
           {editing ? "Edit address" : "Add address"}
         </h2>
         {Object.entries(address).map(([key, value]) =>
-          key === "deliveryInstructions" ? null : (
+          key === "deliveryInstructions" || key === "lat" || key === "lng" ? null : (
             <label key={key} className="space-y-1 text-sm">
               <span>{label(key)}</span>
               <input
-                required={!(["addressLine2", "localArea"] as string[]).includes(key)}
+                required={key !== "addressLine2"}
                 className={inputClass}
                 maxLength={key === "phoneNumber" ? 30 : 120}
                 value={value}
-                onChange={(e) => setAddress({ ...address, [key]: e.currentTarget.value })}
+                onChange={(e) => {
+                  const nextAddress = { ...address, [key]: e.currentTarget.value };
+                  if (
+                    key === "addressLine1" ||
+                    key === "addressLine2" ||
+                    key === "localArea" ||
+                    key === "city" ||
+                    key === "province" ||
+                    key === "postalCode" ||
+                    key === "country"
+                  ) {
+                    delete nextAddress.lat;
+                    delete nextAddress.lng;
+                  }
+                  setAddress(nextAddress);
+                }}
               />
             </label>
           ),

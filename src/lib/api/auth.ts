@@ -14,12 +14,19 @@ export interface PublicAddress {
   addressLine1: string;
   addressLine2?: string;
   localArea?: string;
+  addressType?: "residential" | "business";
   city: string;
   province: string;
   postalCode: string;
   country: string;
+  lat?: number;
+  lng?: number;
   deliveryInstructions?: string;
 }
+
+export type NewAddressInput = Omit<PublicAddress, "id" | "isDefault" | "localArea"> & {
+  localArea: string;
+};
 
 export type UserRole = "customer" | "admin";
 
@@ -51,7 +58,10 @@ export interface RegistrationResult {
 export type SessionState =
   { status: "unauthenticated" } | { status: "authenticated"; user: PublicUser };
 
-export type AuthApiClient = Pick<ReturnType<typeof createApiClient>, "request" | "requestWithStatus">;
+export type AuthApiClient = Pick<
+  ReturnType<typeof createApiClient>,
+  "request" | "requestWithStatus"
+>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -68,10 +78,27 @@ function isPublicAddress(value: unknown): value is PublicAddress {
     typeof value["addressLine1"] === "string" &&
     (value["addressLine2"] === undefined || typeof value["addressLine2"] === "string") &&
     (value["localArea"] === undefined || typeof value["localArea"] === "string") &&
+    (value["addressType"] === undefined ||
+      value["addressType"] === "residential" ||
+      value["addressType"] === "business") &&
     typeof value["city"] === "string" &&
     typeof value["province"] === "string" &&
     typeof value["postalCode"] === "string" &&
     typeof value["country"] === "string" &&
+    (value["lat"] === undefined ||
+      (typeof value["lat"] === "number" &&
+        Number.isFinite(value["lat"]) &&
+        value["lat"] >= -90 &&
+        value["lat"] <= 90)) &&
+    (value["lng"] === undefined ||
+      (typeof value["lng"] === "number" &&
+        Number.isFinite(value["lng"]) &&
+        value["lng"] >= -180 &&
+        value["lng"] <= 180)) &&
+    ((value["lat"] === undefined && value["lng"] === undefined) ||
+      (value["lat"] !== undefined &&
+        value["lng"] !== undefined &&
+        !(value["lat"] === 0 && value["lng"] === 0))) &&
     (value["deliveryInstructions"] === undefined ||
       typeof value["deliveryInstructions"] === "string")
   );
@@ -272,7 +299,7 @@ export function createAuthApi(client: AuthApiClient) {
       return response["user"];
     },
 
-    async addAddress(input: Omit<PublicAddress, "id">) {
+    async addAddress(input: NewAddressInput) {
       const response = await client.request<unknown>("/users/me/addresses", {
         method: "POST",
         json: input,
@@ -451,7 +478,7 @@ export const authApi = {
     getConfiguredAuthApi().resetPassword(token, password),
   updateProfile: (input: { displayName?: string; phoneNumber?: string }) =>
     getConfiguredAuthApi().updateProfile(input),
-  addAddress: (input: Omit<PublicAddress, "id">) => getConfiguredAuthApi().addAddress(input),
+  addAddress: (input: NewAddressInput) => getConfiguredAuthApi().addAddress(input),
   updateAddress: (addressId: string, input: Partial<Omit<PublicAddress, "id">>) =>
     getConfiguredAuthApi().updateAddress(addressId, input),
   deleteAddress: (addressId: string) => getConfiguredAuthApi().deleteAddress(addressId),

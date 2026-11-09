@@ -1,265 +1,169 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
+import { mapboxFeatureToAddress, type SelectedDeliveryAddress } from "@/lib/mapbox-address";
+import {
+  isSouthAfricanPostalCode,
+  normalizeSouthAfricanProvince,
+} from "@/lib/south-african-address";
 
-export interface SelectedDeliveryAddress {
-  placeId?: string;
-  formattedAddress: string;
-  addressLine1: string;
-  localArea: string;
-  city: string;
-  province: string;
-  postalCode: string;
-  country: "South Africa";
+type MapboxSuggestion = {
+  feature: unknown;
+  label: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface AddressComponent {
-  long_name: string;
-  short_name: string;
-  types: string[];
+function parseSuggestions(value: unknown): MapboxSuggestion[] {
+  if (!isRecord(value) || !Array.isArray(value["features"])) return [];
+  return value["features"].flatMap((rawFeature): MapboxSuggestion[] => {
+    if (!isRecord(rawFeature) || !isRecord(rawFeature["properties"])) return [];
+    const properties = rawFeature["properties"];
+    const label =
+      typeof properties["full_address"] === "string"
+        ? properties["full_address"]
+        : typeof properties["name"] === "string"
+          ? properties["name"]
+          : "";
+    if (!label || mapboxFeatureToAddress(rawFeature) === undefined) return [];
+    return [{ feature: rawFeature, label }];
+  });
 }
 
-interface Place {
-  address_components?: AddressComponent[];
-  formatted_address?: string;
-  place_id?: string;
-}
+export function MapboxAddressAutocomplete({
+  onSelect,
+  disabled = false,
+}: {
+  onSelect: (address: SelectedDeliveryAddress) => void;
+  disabled?: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<MapboxSuggestion[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searchedFor, setSearchedFor] = useState<string>();
+  const accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN?.trim() ?? "";
 
-interface AutocompleteInstance {
-  addListener(event: "place_changed", callback: () => void): { remove(): void };
-  getPlace(): Place;
-}
-
-interface GoogleMapsApi {
-  maps: {
-    places: {
-      Autocomplete: new (
-        input: HTMLInputElement,
-        options: {
-          componentRestrictions: { country: "za" };
-          fields: string[];
-          types: string[];
-        },
-      ) => AutocompleteInstance;
-    };
-  };
-}
-
-declare global {
-  interface Window {
-    google?: GoogleMapsApi;
-    gm_authFailure?: () => void;
-  }
-}
-
-let placesScriptPromise: Promise<void> | null = null;
-
-function loadPlacesScript(apiKey: string): Promise<void> {
-  if (window.google?.maps.places) return Promise.resolve();
-  if (placesScriptPromise) return placesScriptPromise;
-
-  placesScriptPromise = new Promise((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[data-google-places="true"]');
-    if (existing) {
-      existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener(
-        "error",
-        () => {
-          placesScriptPromise = null;
-          reject(new Error("Address search could not be loaded."));
-        },
-        { once: true },
-      );
+  useEffect(() => {
+    const searchQuery = query.trim();
+    if (!accessToken || searchQuery.length < 4 || disabled) {
+      setSuggestions([]);
+      setLoading(false);
       return;
     }
 
-    const script = document.createElement("script");
-    script.dataset.googlePlaces = "true";
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=en&region=ZA`;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      placesScriptPromise = null;
-      script.remove();
-      reject(new Error("Address search could not be loaded."));
-    };
-    document.head.append(script);
-  });
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      setSearchedFor(undefined);
+      const url = new URL("https://api.mapbox.com/search/geocode/v6/forward");
+      url.search = new URLSearchParams({
+        q: searchQuery,
+        country: "za",
+        types: "address",
+        autocomplete: "true",
+        permanent: "true",
+        language: "en",
+        limit: "5",
+        access_token: accessToken,
+      }).toString();
 
-  return placesScriptPromise;
-}
-
-function componentValue(components: AddressComponent[], type: string): string {
-  return components.find((component) => component.types.includes(type))?.long_name.trim() ?? "";
-}
-
-function localAreaValue(components: AddressComponent[]): string {
-  for (const type of ["sublocality_level_1", "sublocality", "neighborhood"]) {
-    const value = componentValue(components, type);
-    if (value) return value;
-  }
-  return "";
-}
-
-function resolveAddress(place: Place): SelectedDeliveryAddress | null {
-  if (!place.place_id || !place.formatted_address || !place.address_components) return null;
-  const components = place.address_components;
-  const streetNumber = componentValue(components, "street_number");
-  const route = componentValue(components, "route");
-  const city = componentValue(components, "locality") || componentValue(components, "postal_town");
-  const province = componentValue(components, "administrative_area_level_1");
-  const postalCode = componentValue(components, "postal_code");
-  const countryComponent = components.find((component) => component.types.includes("country"));
-  const localArea = localAreaValue(components);
-
-  if (
-    countryComponent?.short_name.toUpperCase() !== "ZA" ||
-    !route ||
-    !localArea ||
-    !city ||
-    !province ||
-    !postalCode
-  ) {
-    return null;
-  }
-
-  return {
-    placeId: place.place_id,
-    formattedAddress: place.formatted_address,
-    addressLine1: [streetNumber, route].filter(Boolean).join(" "),
-    localArea,
-    city,
-    province,
-    postalCode,
-    country: "South Africa",
-  };
-}
-
-export function GooglePlacesAddressAutocomplete({
-  onSelect,
-}: {
-  onSelect: (address: SelectedDeliveryAddress | null) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listenerRef = useRef<{ remove(): void } | null>(null);
-  const [query, setQuery] = useState("");
-  const [selectedAddress, setSelectedAddress] = useState<SelectedDeliveryAddress | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const isEnabled = false; // Re-enable only as an intentional checkout integration change.
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? "";
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
-
-  useEffect(() => {
-    if (!isEnabled || !apiKey) return;
-    let active = true;
-    const previousAuthFailure = window.gm_authFailure;
-    window.gm_authFailure = () => {
-      if (active) {
-        setError(
-          "Address search could not authenticate. Check the browser key and its website restrictions.",
-        );
-      }
-    };
-    setLoading(true);
-    void loadPlacesScript(apiKey)
-      .then(() => {
-        const input = inputRef.current;
-        if (!active || !input || !window.google?.maps.places) return;
-        const autocomplete = new window.google.maps.places.Autocomplete(input, {
-          componentRestrictions: { country: "za" },
-          fields: ["address_components", "formatted_address", "place_id"],
-          types: ["address"],
-        });
-        listenerRef.current = autocomplete.addListener("place_changed", () => {
-          const address = resolveAddress(autocomplete.getPlace());
-          setSelectedAddress(address);
-          onSelectRef.current(address);
+      void fetch(url, { signal: controller.signal })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Address search is unavailable.");
+          return (await response.json()) as unknown;
+        })
+        .then((response) => {
+          setSuggestions(parseSuggestions(response));
+          setSearchedFor(searchQuery);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setSuggestions([]);
+          setSearchedFor(searchQuery);
           setError(
-            address
-              ? null
-              : "That result is incomplete for delivery. Choose a South African address with a street, suburb, city, province and postal code.",
+            "Address search is temporarily unavailable. You can enter the address manually.",
           );
-          if (address) setQuery(address.formattedAddress);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
         });
-        setError(null);
-      })
-      .catch(() => {
-        if (active) setError("Address search is temporarily unavailable. Please try again.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+    }, 350);
 
     return () => {
-      active = false;
-      listenerRef.current?.remove();
-      listenerRef.current = null;
-      window.gm_authFailure = previousAuthFailure;
+      window.clearTimeout(timer);
+      controller.abort();
     };
-  }, [apiKey, isEnabled]);
-
-  if (!isEnabled) return null;
+  }, [accessToken, disabled, query]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 sm:col-span-2">
       <label className="block space-y-1 text-sm">
-        <span>Search for your delivery address</span>
+        <span>Find your address (optional)</span>
         <input
-          ref={inputRef}
           autoComplete="off"
-          className="min-h-11 w-full rounded-md border border-input bg-background px-3 py-2"
+          className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
           value={query}
+          disabled={disabled}
           onChange={(event) => {
-            const nextQuery = event.currentTarget.value;
-            setQuery(nextQuery);
-            if (selectedAddress) {
-              setSelectedAddress(null);
-              onSelectRef.current(null);
-            }
-            if (error) setError(null);
+            setQuery(event.currentTarget.value);
+            setSuggestions([]);
+            setSearchedFor(undefined);
+            setError(null);
           }}
-          onBlur={() => {
-            if (query.trim() && !selectedAddress && !error) {
-              setError(
-                "Select an address from the provider suggestions. Typed text cannot be used for delivery.",
-              );
-            }
-          }}
-          placeholder="Start typing a street address"
-          disabled={!isEnabled || !apiKey || loading}
-          aria-describedby="checkout-address-help"
+          placeholder={
+            accessToken
+              ? "Start typing a street address"
+              : "Address search is not configured; enter your address below"
+          }
+          aria-describedby="mapbox-address-help"
+          aria-expanded={suggestions.length > 0}
+          aria-controls="mapbox-address-suggestions"
         />
       </label>
-      <p id="checkout-address-help" className="text-xs text-muted-foreground">
-        {selectedAddress
-          ? `Selected: ${selectedAddress.formattedAddress}`
-          : loading
-            ? "Loading address search…"
-            : !isEnabled
-              ? "Address lookup is temporarily paused. Verified address selection is unavailable right now."
-              : apiKey
-                ? "Choose an address from the suggestions. Typed text alone cannot be used for delivery."
-                : "Address search is not configured. The store administrator must add a restricted Places API key."}
+      <p id="mapbox-address-help" className="text-xs text-muted-foreground">
+        {loading
+          ? "Searching addresses…"
+          : accessToken
+            ? "Choose a suggestion to fill any available address fields, then review and edit them below. Search is powered by Mapbox."
+            : "Address search is unavailable. You can still enter every address field manually."}
       </p>
-      {selectedAddress ? (
-        <button
-          type="button"
-          className="text-sm underline"
-          onClick={() => {
-            setQuery("");
-            setSelectedAddress(null);
-            onSelectRef.current(null);
-            inputRef.current?.focus();
-          }}
-        >
-          Change selected address
-        </button>
-      ) : null}
       {error ? (
-        <p className="text-sm text-destructive" role="alert">
+        <p className="text-sm text-muted-foreground" role="status">
           {error}
         </p>
+      ) : null}
+      {accessToken && searchedFor === query.trim() && suggestions.length === 0 && !error ? (
+        <p className="text-sm text-muted-foreground" role="status">
+          No matching address was found. You can enter the address manually.
+        </p>
+      ) : null}
+      {suggestions.length > 0 ? (
+        <ul
+          id="mapbox-address-suggestions"
+          className="divide-y rounded-md border border-border"
+          role="listbox"
+          aria-label="Address suggestions"
+        >
+          {suggestions.map((suggestion) => (
+            <li key={suggestion.label} role="option" aria-selected="false">
+              <button
+                type="button"
+                className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                disabled={disabled}
+                onClick={() => {
+                  const address = mapboxFeatureToAddress(suggestion.feature);
+                  if (address) onSelect(address);
+                  setQuery(suggestion.label);
+                  setSuggestions([]);
+                }}
+              >
+                {suggestion.label}
+              </button>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );
@@ -287,7 +191,7 @@ const addressFieldLimits: Partial<Record<keyof DeliveryAddressFields, number>> =
   addressLine1: 120,
   city: 80,
   province: 80,
-  postalCode: 12,
+  postalCode: 4,
   country: 80,
 };
 
@@ -303,7 +207,6 @@ function getDeliveryAddressErrors(
     postalCode: "Postal code",
     country: "Country",
   };
-
   const requiredFields: (keyof DeliveryAddressFields)[] = [
     "addressLine1",
     "localArea",
@@ -323,8 +226,15 @@ function getDeliveryAddressErrors(
       }
     }
   }
-  if (fields.country.trim().toLowerCase() !== "south africa") {
+  const country = fields.country.trim().toLowerCase();
+  if (country !== "south africa" && country !== "za") {
     errors.country = "Delivery is currently available in South Africa only.";
+  }
+  if (fields.province.trim() && !normalizeSouthAfricanProvince(fields.province)) {
+    errors.province = "Enter a South African province name or abbreviation.";
+  }
+  if (fields.postalCode.trim() && !isSouthAfricanPostalCode(fields.postalCode)) {
+    errors.postalCode = "Enter a four-digit South African postal code.";
   }
   return errors;
 }
@@ -362,7 +272,7 @@ export function ManualDeliveryAddressForm({
         addressLine1: updated.addressLine1.trim(),
         localArea: updated.localArea.trim(),
         city: updated.city.trim(),
-        province: updated.province.trim(),
+        province: normalizeSouthAfricanProvince(updated.province) ?? updated.province.trim(),
         postalCode: updated.postalCode.trim(),
         country: "South Africa",
       });
@@ -385,6 +295,7 @@ export function ManualDeliveryAddressForm({
       value: fields[key],
       disabled,
       maxLength: addressFieldLimits[key],
+      ...(key === "postalCode" ? { inputMode: "numeric" as const, pattern: "[0-9]{4}" } : {}),
       onChange: (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
         updateField(key, event.currentTarget.value),
       onBlur: () => setTouched((current) => ({ ...current, [key]: true })),
@@ -395,8 +306,8 @@ export function ManualDeliveryAddressForm({
   return (
     <div className="grid gap-4 sm:grid-cols-2" aria-label="Manual delivery address">
       <p className="text-sm text-muted-foreground sm:col-span-2">
-        Copy your address from Google Maps if needed, then enter your street address, suburb, city
-        and postal code below. Please check your details carefully before continuing.
+        Use address search above if helpful, or enter your street address, suburb, city and postal
+        code below. Please review all details before continuing.
       </p>
       <label className="space-y-1 text-sm sm:col-span-2">
         <span>Street address and number</span>
@@ -446,12 +357,11 @@ export function ManualDeliveryAddressForm({
       </label>
       <label className="space-y-1 text-sm">
         <span>Country</span>
-        <select
+        <input
           {...fieldProps("country")}
+          autoComplete="country-name"
           className="min-h-10 w-full rounded-md border border-input bg-background px-3 py-2"
-        >
-          <option value="South Africa">South Africa</option>
-        </select>
+        />
         {renderFieldError("country")}
       </label>
     </div>

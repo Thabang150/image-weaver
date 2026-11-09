@@ -63,10 +63,13 @@ export interface CustomerOrder {
     addressLine1: string;
     addressLine2?: string;
     localArea?: string;
+    addressType?: "residential" | "business";
     city: string;
     province: string;
     postalCode: string;
     country: string;
+    lat?: number;
+    lng?: number;
     deliveryInstructions?: string;
   };
   shipmentTracking?: {
@@ -420,10 +423,25 @@ function parseOrder(value: unknown): CustomerOrder {
     typeof address["recipientName"] !== "string" ||
     typeof address["phoneNumber"] !== "string" ||
     typeof address["addressLine1"] !== "string" ||
+    (address["addressType"] !== undefined &&
+      address["addressType"] !== "residential" &&
+      address["addressType"] !== "business") ||
     typeof address["city"] !== "string" ||
     typeof address["province"] !== "string" ||
     typeof address["postalCode"] !== "string" ||
-    typeof address["country"] !== "string"
+    typeof address["country"] !== "string" ||
+    (address["lat"] !== undefined &&
+      (typeof address["lat"] !== "number" ||
+        !Number.isFinite(address["lat"]) ||
+        address["lat"] < -90 ||
+        address["lat"] > 90)) ||
+    (address["lng"] !== undefined &&
+      (typeof address["lng"] !== "number" ||
+        !Number.isFinite(address["lng"]) ||
+        address["lng"] < -180 ||
+        address["lng"] > 180)) ||
+    (address["lat"] === undefined) !== (address["lng"] === undefined) ||
+    (address["lat"] === 0 && address["lng"] === 0)
   )
     invalid();
   let itemSubtotalCents = 0;

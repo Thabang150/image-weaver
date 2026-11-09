@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { authApi, type PublicAddress, type PublicUser } from "@/lib/api/auth";
+import { authApi, type NewAddressInput, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import {
   CUSTOMER_ORDER_LIFETIME_MS,
   SHIPPING_RATE_LIFETIME_MS,
@@ -9,8 +9,6 @@ import {
   type CartShippingRate,
   type CustomerOrder,
   type PayFastCheckout,
-  type ShippingOptInRate,
-  type ShippingOptInRates,
 } from "@/lib/api/orders";
 import { cartApi } from "@/lib/api/cart";
 import { formatZarCents } from "@/lib/money";
@@ -21,6 +19,12 @@ import {
   estimateForConfirmedDelivery,
   estimatedDeliveryText,
 } from "@/lib/delivery-presentation";
+import {
+  isSouthAfricanPostalCode,
+  normalizeSouthAfricanProvince,
+  SOUTH_AFRICAN_PROVINCES,
+} from "@/lib/south-african-address";
+import { MapboxAddressAutocomplete } from "@/components/storefront/address-autocomplete";
 
 const inputClass = "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
 const ORDER_KEY = "healthyways.checkout.orderId";
@@ -71,10 +75,13 @@ function matchesSelectedAddress(order: CustomerOrder, address: PublicAddress) {
     addressLine1: address.addressLine1,
     addressLine2: address.addressLine2 ?? "",
     localArea: address.localArea ?? "",
+    addressType: address.addressType ?? "residential",
     city: address.city,
     province: address.province,
     postalCode: address.postalCode,
     country: address.country,
+    lat: address.lat,
+    lng: address.lng,
   };
   const delivery = order.deliveryAddress;
   return (
@@ -84,10 +91,13 @@ function matchesSelectedAddress(order: CustomerOrder, address: PublicAddress) {
       selected.addressLine1,
       selected.addressLine2,
       selected.localArea,
+      selected.addressType,
       selected.city,
       selected.province,
       selected.postalCode,
       selected.country,
+      selected.lat === undefined ? "" : String(selected.lat),
+      selected.lng === undefined ? "" : String(selected.lng),
     ]
       .map((value) => value.trim().toLowerCase())
       .join("|") ===
@@ -97,10 +107,13 @@ function matchesSelectedAddress(order: CustomerOrder, address: PublicAddress) {
       delivery.addressLine1,
       delivery.addressLine2 ?? "",
       delivery.localArea ?? "",
+      delivery.addressType ?? "residential",
       delivery.city,
       delivery.province,
       delivery.postalCode,
       delivery.country,
+      delivery.lat === undefined ? "" : String(delivery.lat),
+      delivery.lng === undefined ? "" : String(delivery.lng),
     ]
       .map((value) => value.trim().toLowerCase())
       .join("|")
@@ -183,60 +196,6 @@ function submitPayFast(checkout: PayFastCheckout) {
   form.submit();
 }
 
-function OptionalShippingRates({
-  rates,
-  timeBasedRates,
-  selectedRateIds,
-  selectedTimeBasedRateIds,
-  disabled,
-  onChange,
-}: {
-  rates: ShippingOptInRate[];
-  timeBasedRates: ShippingOptInRate[];
-  selectedRateIds: number[];
-  selectedTimeBasedRateIds: number[];
-  disabled: boolean;
-  onChange: (id: number, timeBased: boolean, selected: boolean) => void;
-}) {
-  const options = [
-    ...rates.map((rate) => ({ rate, timeBased: false })),
-    ...timeBasedRates.map((rate) => ({ rate, timeBased: true })),
-  ];
-  if (options.length === 0) return null;
-  return (
-    <section className="mt-6 rounded-lg border border-border p-5">
-      <h2 className="text-xl font-medium">Optional delivery add-ons</h2>
-      <p className="mt-2 text-sm text-muted-foreground">
-        These choices are optional and are not selected automatically. Request updated delivery
-        rates after changing a selection; the carrier's returned rate is the full amount used at
-        checkout.
-      </p>
-      <div className="mt-4 space-y-3">
-        {options.map(({ rate, timeBased }) => {
-          const selected = timeBased ? selectedTimeBasedRateIds : selectedRateIds;
-          return (
-            <label
-              key={`${timeBased ? "time" : "standard"}-${rate.id}`}
-              className="flex items-start gap-3 rounded-md border border-border p-3 text-sm"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(rate.id)}
-                disabled={disabled}
-                onChange={(event) => onChange(rate.id, timeBased, event.currentTarget.checked)}
-              />
-              <span className="flex-1">
-                <strong>{rate.name}</strong>
-              </span>
-              <span className="whitespace-nowrap">{formatZarCents(rate.chargeCents)}</span>
-            </label>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function DeliveryOptionList({
   rates,
   name,
@@ -271,20 +230,10 @@ function DeliveryOptionList({
                 onChange={() => onSelect(rate.quoteId)}
                 aria-label={label}
               />
-              <img
-                className="mt-0.5 h-8 w-8 shrink-0 object-contain"
-                src="/images/courier-guy-logo.png"
-                alt="The Courier Guy logo"
-                width="32"
-                height="32"
-              />
               <span className="min-w-0">
                 <strong className="block">{label}</strong>
                 <span className="mt-1 block text-muted-foreground">
                   {estimatedDeliveryText(rate)}
-                </span>
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  Delivered by The Courier Guy
                 </span>
               </span>
             </span>
@@ -310,18 +259,27 @@ export function CheckoutPage({
   );
   const [order, setOrder] = useState<CustomerOrder | null>(null);
   const [rates, setRates] = useState<CartShippingRate[]>([]);
-  const [optInRates, setOptInRates] = useState<ShippingOptInRate[]>([]);
-  const [optInTimeBasedRates, setOptInTimeBasedRates] = useState<ShippingOptInRate[]>([]);
-  const [selectedOptInRateIds, setSelectedOptInRateIds] = useState<number[]>([]);
-  const [selectedOptInTimeBasedRateIds, setSelectedOptInTimeBasedRateIds] = useState<number[]>([]);
-  const [optInSelectionChanged, setOptInSelectionChanged] = useState(false);
   const [selectedQuote, setSelectedQuote] = useState<string>("");
   const [cartQuoteId, setCartQuoteId] = useState<string>("");
   const [ratesExpireAt, setRatesExpireAt] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [showAddressForm, setShowAddressForm] = useState(false);
-  const [address, setAddress] = useState({
+  const [addressType, setAddressType] = useState<"residential" | "business">("residential");
+  const [address, setAddress] = useState<{
+    label: string;
+    recipientName: string;
+    phoneNumber: string;
+    addressLine1: string;
+    addressLine2: string;
+    localArea: string;
+    city: string;
+    province: string;
+    postalCode: string;
+    country: string;
+    lat?: number;
+    lng?: number;
+  }>({
     label: "Delivery",
     recipientName: "",
     phoneNumber: "",
@@ -332,7 +290,6 @@ export function CheckoutPage({
     province: "",
     postalCode: "",
     country: "South Africa",
-    deliveryInstructions: "",
   });
   const [recoveryState, setRecoveryState] = useState<"loading" | "eligible" | "stale" | "none">(
     "none",
@@ -414,35 +371,29 @@ export function CheckoutPage({
     ) ?? [];
   const canCreate = Boolean(addressId && cart?.items.length && !hasUnavailable);
 
-  function changeOptionalRate(id: number, timeBased: boolean, selected: boolean) {
-    const update = (current: number[]) =>
-      selected
-        ? current.includes(id)
-          ? current
-          : [...current, id]
-        : current.filter((value) => value !== id);
-    if (timeBased) setSelectedOptInTimeBasedRateIds(update);
-    else setSelectedOptInRateIds(update);
-    setOptInSelectionChanged(true);
-    setCartQuoteId("");
-    setRatesExpireAt(undefined);
-    setSelectedQuote("");
-    setRates([]);
-    if (order) setOrder(withoutShippingQuote);
-  }
-
   async function saveAddress(event: FormEvent) {
     event.preventDefault();
+    const province = normalizeSouthAfricanProvince(address.province);
+    if (!address.localArea.trim()) {
+      setMessage("Enter the suburb or local area for this delivery address.");
+      return;
+    }
+    if (!province || !isSouthAfricanPostalCode(address.postalCode)) {
+      setMessage("Enter a supported South African province and a four-digit postal code.");
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {
-      const addressInput = address.localArea.trim()
-        ? { ...address, localArea: address.localArea.trim() }
-        : Object.fromEntries(Object.entries(address).filter(([key]) => key !== "localArea"));
+      const addressInput: NewAddressInput = {
+        ...address,
+        addressType,
+        province,
+        postalCode: address.postalCode.trim(),
+        localArea: address.localArea.trim(),
+      };
       const initiatingUserId = user.id;
-      const updated = await authApi.addAddress(
-        addressInput as Omit<PublicAddress, "id" | "isDefault">,
-      );
+      const updated = await authApi.addAddress(addressInput);
       const session = queryClient.getQueryData<{ status: string; user?: { id: string } }>([
         "session",
       ]);
@@ -459,11 +410,6 @@ export function CheckoutPage({
         );
       if (created) {
         setAddressId(created.id);
-        setOptInRates([]);
-        setOptInTimeBasedRates([]);
-        setSelectedOptInRateIds([]);
-        setSelectedOptInTimeBasedRateIds([]);
-        setOptInSelectionChanged(false);
         setRates([]);
         setSelectedQuote("");
         setCartQuoteId("");
@@ -482,68 +428,7 @@ export function CheckoutPage({
 
   async function loadQuotes(existingOrder: CustomerOrder) {
     try {
-      let available: ShippingOptInRates | undefined;
-      let optionalRatesUnavailable = false;
-      try {
-        available = await ordersApi.getOrderShippingOptInRates(existingOrder.id);
-        setOptInRates(available.optInRates);
-        setOptInTimeBasedRates(available.optInTimeBasedRates);
-      } catch {
-        optionalRatesUnavailable = true;
-        setOptInRates([]);
-        setOptInTimeBasedRates([]);
-      }
-      const previousRateIds = optInSelectionChanged
-        ? selectedOptInRateIds
-        : (existingOrder.shippingQuote?.optInRateIds ?? selectedOptInRateIds);
-      const previousTimeBasedIds = optInSelectionChanged
-        ? selectedOptInTimeBasedRateIds
-        : (existingOrder.shippingQuote?.optInTimeBasedRateIds ?? selectedOptInTimeBasedRateIds);
-      if (
-        optionalRatesUnavailable &&
-        (previousRateIds.length > 0 || previousTimeBasedIds.length > 0)
-      ) {
-        setSelectedOptInRateIds([]);
-        setSelectedOptInTimeBasedRateIds([]);
-        setOptInSelectionChanged(true);
-        setRates([]);
-        setSelectedQuote("");
-        setOrder(withoutShippingQuote);
-        setMessage(
-          "The saved optional add-ons could not be revalidated. Review your selections and request rates again; no saved rate will be used.",
-        );
-        return;
-      }
-      const rateIds = available
-        ? previousRateIds.filter((id) => available.optInRates.some((rate) => rate.id === id))
-        : [];
-      const timeBasedIds = available
-        ? previousTimeBasedIds.filter((id) =>
-            available.optInTimeBasedRates.some((rate) => rate.id === id),
-          )
-        : [];
-      if (
-        available &&
-        (rateIds.length !== previousRateIds.length ||
-          timeBasedIds.length !== previousTimeBasedIds.length)
-      ) {
-        setSelectedOptInRateIds(rateIds);
-        setSelectedOptInTimeBasedRateIds(timeBasedIds);
-        setOptInSelectionChanged(true);
-        setRates([]);
-        setSelectedQuote("");
-        setOrder(withoutShippingQuote);
-        setMessage(
-          "A previously selected optional add-on is no longer available. Review the current options and request rates again.",
-        );
-        return;
-      }
-      setSelectedOptInRateIds(rateIds);
-      setSelectedOptInTimeBasedRateIds(timeBasedIds);
-      const quoteResponse = await ordersApi.getShippingQuotes(existingOrder.id, {
-        ...(rateIds.length ? { optInRateIds: rateIds } : {}),
-        ...(timeBasedIds.length ? { optInTimeBasedRateIds: timeBasedIds } : {}),
-      });
+      const quoteResponse = await ordersApi.getShippingQuotes(existingOrder.id);
       setRates(quoteResponse.rates ?? []);
       const expiryTimes = (quoteResponse.rates ?? [])
         .map((rate) => Date.parse(rate.retrievedAt ?? ""))
@@ -552,11 +437,6 @@ export function CheckoutPage({
       setRatesExpireAt(expiryTimes.length ? Math.min(...expiryTimes) : undefined);
       setSelectedQuote("");
       setOrder(await ordersApi.getCustomerOrder(existingOrder.id));
-      setOptInSelectionChanged(false);
-      if (optionalRatesUnavailable)
-        setMessage(
-          "Standard delivery rates are shown. Optional add-ons could not be loaded, so none were selected.",
-        );
     } catch (error) {
       setSelectedQuote("");
       setRates([]);
@@ -571,6 +451,12 @@ export function CheckoutPage({
 
   async function requestCartQuotes() {
     if (!canCreate || order) return;
+    if (!selectedAddress?.localArea?.trim()) {
+      setMessage(
+        "Add the suburb or local area to this saved address before requesting delivery rates. Update it in My account or choose another address.",
+      );
+      return;
+    }
     setBusy(true);
     setMessage(null);
     setRates([]);
@@ -586,59 +472,21 @@ export function CheckoutPage({
         );
         return;
       }
-      let available: ShippingOptInRates | undefined;
-      let optionalRatesUnavailable = false;
-      try {
-        available = await ordersApi.getCartShippingOptInRates(addressId);
-        setOptInRates(available.optInRates);
-        setOptInTimeBasedRates(available.optInTimeBasedRates);
-      } catch {
-        optionalRatesUnavailable = true;
-        setOptInRates([]);
-        setOptInTimeBasedRates([]);
-        setSelectedOptInRateIds([]);
-        setSelectedOptInTimeBasedRateIds([]);
-      }
-      if (available) {
-        const validOptInIds = new Set(available.optInRates.map((rate) => rate.id));
-        const validTimeBasedIds = new Set(available.optInTimeBasedRates.map((rate) => rate.id));
-        const nextOptInIds = selectedOptInRateIds.filter((id) => validOptInIds.has(id));
-        const nextTimeBasedIds = selectedOptInTimeBasedRateIds.filter((id) =>
-          validTimeBasedIds.has(id),
-        );
-        if (
-          nextOptInIds.length !== selectedOptInRateIds.length ||
-          nextTimeBasedIds.length !== selectedOptInTimeBasedRateIds.length
-        ) {
-          setSelectedOptInRateIds(nextOptInIds);
-          setSelectedOptInTimeBasedRateIds(nextTimeBasedIds);
-          setOptInSelectionChanged(false);
-          setMessage(
-            "A selected optional delivery add-on is no longer available. Review your choices and request rates again.",
-          );
-          return;
-        }
-      }
-      const rateIdsToRequest = available ? selectedOptInRateIds : [];
-      const timeBasedIdsToRequest = available ? selectedOptInTimeBasedRateIds : [];
-      const response = await ordersApi.createCartShippingQuote(addressId, {
-        ...(rateIdsToRequest.length ? { optInRateIds: rateIdsToRequest } : {}),
-        ...(timeBasedIdsToRequest.length ? { optInTimeBasedRateIds: timeBasedIdsToRequest } : {}),
-      });
+      const response = await ordersApi.createCartShippingQuote(addressId);
       setCartQuoteId(response.quoteId);
       setRatesExpireAt(Date.parse(response.expiresAt));
       setRates(response.rates);
       if (response.rates.length === 0)
         setMessage("No delivery options are available for this address.");
-      else if (optionalRatesUnavailable)
-        setMessage(
-          "Standard delivery rates are shown. Optional add-ons could not be loaded, so none were selected.",
-        );
     } catch (error) {
       setMessage(
-        error instanceof ApiHttpError && error.status === 422
-          ? "No delivery quote is available for this address. Review it or choose another saved address."
-          : "Delivery quotes are temporarily unavailable. No order has been created and your cart remains unchanged.",
+        error instanceof ApiHttpError && error.status === 400
+          ? "Check that your delivery address has a street, suburb, city, supported province and four-digit postal code."
+          : error instanceof ApiHttpError && error.status === 422
+            ? "No delivery options were returned for this address. Review it or contact us for help."
+            : error instanceof ApiHttpError && error.status === 409
+              ? "Delivery or parcel details need review. Refresh checkout or contact us for help; no order has been created."
+              : "Delivery quotes are temporarily unavailable. No order has been created and your cart remains unchanged.",
       );
     } finally {
       setBusy(false);
@@ -665,7 +513,6 @@ export function CheckoutPage({
       );
       sessionStorage.setItem(ORDER_KEY, next.id);
       setOrder(next);
-      setOptInSelectionChanged(false);
     } catch (error) {
       if (error instanceof ApiHttpError && error.status === 409) {
         setMessage(
@@ -840,11 +687,6 @@ export function CheckoutPage({
                       setAddressId(entry.id);
                       setRates([]);
                       setRatesExpireAt(undefined);
-                      setOptInRates([]);
-                      setOptInTimeBasedRates([]);
-                      setSelectedOptInRateIds([]);
-                      setSelectedOptInTimeBasedRateIds([]);
-                      setOptInSelectionChanged(false);
                       setSelectedQuote("");
                       setCartQuoteId("");
                     }}
@@ -868,6 +710,12 @@ export function CheckoutPage({
           ) : (
             <p className="mt-3 text-sm">Add a delivery address to continue.</p>
           )}
+          {selectedAddress && !selectedAddress.localArea?.trim() ? (
+            <p className="mt-3 text-sm text-muted-foreground" role="status">
+              This saved address needs a suburb or local area before delivery rates can be
+              requested. Update it in My account or choose another address.
+            </p>
+          ) : null}
           {!order ? (
             <Button
               className="mt-4"
@@ -879,22 +727,122 @@ export function CheckoutPage({
           ) : null}
           {showAddressForm ? (
             <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={saveAddress}>
+              <MapboxAddressAutocomplete
+                disabled={busy}
+                onSelect={(selected) => {
+                  setAddress((current) => {
+                    const nextAddress = {
+                      ...current,
+                      addressLine1: selected.addressLine1 ?? "",
+                      localArea: selected.localArea ?? "",
+                      city: selected.city ?? "",
+                      province: selected.province ?? "",
+                      postalCode: selected.postalCode ?? "",
+                      country: selected.country ?? "South Africa",
+                    };
+                    delete nextAddress.lat;
+                    delete nextAddress.lng;
+                    if (selected.lat !== undefined && selected.lng !== undefined) {
+                      nextAddress.lat = selected.lat;
+                      nextAddress.lng = selected.lng;
+                    }
+                    return nextAddress;
+                  });
+                  setMessage(null);
+                }}
+              />
               {Object.entries(address)
                 .filter(
                   ([key]) =>
-                    key !== "country" && key !== "addressLine2" && key !== "deliveryInstructions",
+                    key !== "country" &&
+                    key !== "addressLine2" &&
+                    key !== "province" &&
+                    key !== "lat" &&
+                    key !== "lng",
                 )
                 .map(([key, value]) => (
                   <label className="space-y-1 text-sm" key={key}>
                     <span>{key.replace(/([A-Z])/g, " $1")}</span>
                     <input
-                      required={key !== "addressLine2" && key !== "localArea"}
+                      required
+                      type="text"
+                      inputMode={key === "postalCode" ? "numeric" : undefined}
+                      pattern={key === "postalCode" ? "[0-9]{4}" : undefined}
+                      maxLength={key === "postalCode" ? 4 : undefined}
                       className={inputClass}
                       value={value}
-                      onChange={(e) => setAddress({ ...address, [key]: e.currentTarget.value })}
+                      onChange={(e) => {
+                        const nextAddress = { ...address, [key]: e.currentTarget.value };
+                        if (
+                          key === "addressLine1" ||
+                          key === "localArea" ||
+                          key === "city" ||
+                          key === "province" ||
+                          key === "postalCode"
+                        ) {
+                          delete nextAddress.lat;
+                          delete nextAddress.lng;
+                        }
+                        setAddress(nextAddress);
+                      }}
                     />
                   </label>
                 ))}
+              <label className="space-y-1 text-sm">
+                <span>Apartment, unit or complex (optional)</span>
+                <input
+                  type="text"
+                  maxLength={120}
+                  className={inputClass}
+                  value={address.addressLine2}
+                  onChange={(event) => {
+                    const nextAddress = {
+                      ...address,
+                      addressLine2: event.currentTarget.value,
+                    };
+                    delete nextAddress.lat;
+                    delete nextAddress.lng;
+                    setAddress(nextAddress);
+                  }}
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span>Province</span>
+                <select
+                  className={inputClass}
+                  required
+                  value={address.province}
+                  onChange={(event) => {
+                    const nextAddress = { ...address, province: event.currentTarget.value };
+                    delete nextAddress.lat;
+                    delete nextAddress.lng;
+                    setAddress(nextAddress);
+                  }}
+                >
+                  <option value="">Select a province</option>
+                  {SOUTH_AFRICAN_PROVINCES.map((province) => (
+                    <option key={province} value={province}>
+                      {province}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span>Address type</span>
+                <select
+                  className={inputClass}
+                  value={addressType}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    if (value === "residential" || value === "business") {
+                      setAddressType(value);
+                    }
+                  }}
+                >
+                  <option value="residential">Residential</option>
+                  <option value="business">Business</option>
+                </select>
+              </label>
               <div className="sm:col-span-2">
                 <Button disabled={busy}>{busy ? "Saving…" : "Save address"}</Button>
               </div>
@@ -939,20 +887,10 @@ export function CheckoutPage({
           </dl>
         </aside>
       </div>
-      {!order || !currentShippingQuote(order) ? (
-        <OptionalShippingRates
-          rates={optInRates}
-          timeBasedRates={optInTimeBasedRates}
-          selectedRateIds={selectedOptInRateIds}
-          selectedTimeBasedRateIds={selectedOptInTimeBasedRateIds}
-          disabled={busy || Boolean(order && recoveryBlocked)}
-          onChange={changeOptionalRate}
-        />
-      ) : null}
       {!order && !cartQuoteId ? (
         <Button
           className="mt-6"
-          disabled={!canCreate || busy || recoveryBlocked}
+          disabled={!canCreate || !selectedAddress?.localArea?.trim() || busy || recoveryBlocked}
           onClick={() => void requestCartQuotes()}
         >
           {busy ? "Requesting delivery rates…" : "Request delivery rates"}

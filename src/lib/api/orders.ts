@@ -35,6 +35,8 @@ export interface CustomerOrder {
     quoteId?: string;
     chargeCents: number;
     serviceName: string;
+    deliveryDateFrom?: string;
+    deliveryDateTo?: string;
     confirmedAt: string;
     status: "confirmed";
     expiresAt?: string;
@@ -103,10 +105,17 @@ export interface PayFastCheckout {
 
 export interface CartShippingRate {
   quoteId: string;
-  serviceLevel: { id?: string; code?: string; name: string };
+  serviceLevel: {
+    id?: string;
+    code?: string;
+    name: string;
+    deliveryDateFrom?: string;
+    deliveryDateTo?: string;
+  };
   serviceName?: string;
   rateCents: number;
   currency: "ZAR";
+  retrievedAt?: string;
   optInRateIds?: number[];
   optInTimeBasedRateIds?: number[];
 }
@@ -472,6 +481,46 @@ function parseOrder(value: unknown): CustomerOrder {
   return value as unknown as CustomerOrder;
 }
 
+function parseCartShippingRate(value: unknown): CartShippingRate {
+  if (!record(value) || typeof value["quoteId"] !== "string" || !record(value["serviceLevel"])) {
+    invalid();
+  }
+  const serviceLevel = value["serviceLevel"];
+  const serviceLevelId = serviceLevel["id"];
+  const serviceLevelCode = serviceLevel["code"];
+  const serviceLevelName = serviceLevel["name"];
+  const deliveryDateFrom = serviceLevel["deliveryDateFrom"];
+  const deliveryDateTo = serviceLevel["deliveryDateTo"];
+  const rateCents = value["rateCents"];
+  const retrievedAt = value["retrievedAt"];
+  if (
+    typeof serviceLevelId !== "string" ||
+    typeof serviceLevelCode !== "string" ||
+    typeof serviceLevelName !== "string" ||
+    !integer(rateCents) ||
+    rateCents < 0 ||
+    value["currency"] !== "ZAR" ||
+    (deliveryDateFrom !== undefined && typeof deliveryDateFrom !== "string") ||
+    (deliveryDateTo !== undefined && typeof deliveryDateTo !== "string") ||
+    (retrievedAt !== undefined && typeof retrievedAt !== "string")
+  ) {
+    invalid();
+  }
+  return {
+    quoteId: value["quoteId"],
+    serviceLevel: {
+      id: serviceLevelId,
+      code: serviceLevelCode,
+      name: serviceLevelName,
+      ...(deliveryDateFrom === undefined ? {} : { deliveryDateFrom }),
+      ...(deliveryDateTo === undefined ? {} : { deliveryDateTo }),
+    },
+    rateCents,
+    currency: "ZAR",
+    ...(retrievedAt === undefined ? {} : { retrievedAt }),
+  };
+}
+
 export function createOrdersApi(client: OrdersApiClient) {
   return {
     async listCustomerOrders(page = 1, limit = 20): Promise<CustomerOrderList> {
@@ -528,29 +577,7 @@ export function createOrdersApi(client: OrdersApiClient) {
         !Array.isArray(response["rates"])
       )
         invalid();
-      const rates = response["rates"].map((rate): CartShippingRate => {
-        if (!record(rate) || typeof rate["quoteId"] !== "string" || !record(rate["serviceLevel"]))
-          invalid();
-        const serviceLevel = rate["serviceLevel"];
-        const serviceLevelId = serviceLevel["id"];
-        const serviceLevelCode = serviceLevel["code"];
-        const serviceLevelName = serviceLevel["name"];
-        const rateCents = rate["rateCents"];
-        if (
-          typeof serviceLevelId !== "string" ||
-          typeof serviceLevelCode !== "string" ||
-          typeof serviceLevelName !== "string" ||
-          !integer(rateCents) ||
-          rate["currency"] !== "ZAR"
-        )
-          invalid();
-        return {
-          quoteId: rate["quoteId"],
-          serviceLevel: { id: serviceLevelId, code: serviceLevelCode, name: serviceLevelName },
-          rateCents,
-          currency: "ZAR",
-        };
-      });
+      const rates = response["rates"].map(parseCartShippingRate);
       return {
         quoteId: response["quoteId"],
         expiresAt: response["expiresAt"],
@@ -626,8 +653,21 @@ export function createOrdersApi(client: OrdersApiClient) {
         `/orders/${encodeURIComponent(orderId)}/shipping/quote`,
         { method: "POST", json: selections },
       );
-      if (!record(response)) invalid();
-      return response as unknown as { orderId: string; currency: "ZAR"; rates: CartShippingRate[] };
+      if (!record(response) || !Array.isArray(response["rates"])) invalid();
+      const responseOrderId = response["orderId"];
+      const currency = response["currency"];
+      if (
+        typeof responseOrderId !== "string" ||
+        currency !== "ZAR" ||
+        responseOrderId !== orderId
+      ) {
+        invalid();
+      }
+      return {
+        orderId: responseOrderId,
+        currency: "ZAR" as const,
+        rates: response["rates"].map(parseCartShippingRate),
+      };
     },
     async selectShippingQuote(orderId: string, quoteId: string) {
       const response = await client.request<unknown>(

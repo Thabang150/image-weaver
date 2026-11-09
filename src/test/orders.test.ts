@@ -106,9 +106,16 @@ describe("customer order history API", () => {
           rates: [
             {
               quoteId: "rate-1",
-              serviceLevel: { id: "service-1", code: "standard", name: "Standard" },
+              serviceLevel: {
+                id: "service-1",
+                code: "standard",
+                name: "Standard",
+                deliveryDateFrom: "2026-10-19",
+                deliveryDateTo: "2026-10-21",
+              },
               rateCents: 1800,
               currency: "ZAR",
+              retrievedAt: "2026-10-17T00:00:00.000Z",
             },
           ],
         });
@@ -127,6 +134,9 @@ describe("customer order history API", () => {
     });
 
     expect(quote.rates[0]?.rateCents).toBe(1800);
+    expect(quote.rates[0]?.serviceLevel.deliveryDateFrom).toBe("2026-10-19");
+    expect(quote.rates[0]?.serviceLevel.deliveryDateTo).toBe("2026-10-21");
+    expect(quote.rates[0]?.retrievedAt).toBe("2026-10-17T00:00:00.000Z");
     const quoteRequest = fetcher.mock.calls.find(([input]) =>
       new URL(String(input)).pathname.endsWith("/shipping/quote"),
     );

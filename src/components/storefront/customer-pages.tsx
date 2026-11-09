@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/orders";
 import { ApiHttpError } from "@/lib/api/client";
 import { formatZarCents } from "@/lib/money";
+import { customerDeliveryName, estimateForConfirmedDelivery } from "@/lib/delivery-presentation";
 
 const inputClass = "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
 type Navigate = (view: string, returnTo?: "account", orderId?: string) => void;
@@ -135,7 +136,20 @@ export function OrdersPage({ userId, onNavigate }: { userId: string; onNavigate:
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Delivery method</dt>
-                  <dd>{order.shippingQuote?.serviceName ?? "Not selected"}</dd>
+                  <dd>
+                    {order.shippingQuote
+                      ? customerDeliveryName(order.shippingQuote.serviceName)
+                      : "Not selected"}
+                  </dd>
+                  {order.shippingQuote ? (
+                    <dd className="text-muted-foreground">
+                      {estimateForConfirmedDelivery(
+                        order.shippingQuote.serviceName,
+                        order.shippingQuote.deliveryDateFrom,
+                        order.shippingQuote.deliveryDateTo,
+                      )}
+                    </dd>
+                  ) : null}
                 </div>
               </dl>
               <div className="mt-4 flex flex-wrap gap-2">
@@ -423,7 +437,9 @@ export function OrderDetailPage({
           <div className="flex justify-between">
             <dt>
               Shipping
-              {order.shippingQuote?.serviceName ? ` · ${order.shippingQuote.serviceName}` : ""}
+              {order.shippingQuote?.serviceName
+                ? ` · ${customerDeliveryName(order.shippingQuote.serviceName)}`
+                : ""}
             </dt>
             <dd>
               {deliveryCharge === undefined ? "Not selected" : formatZarCents(deliveryCharge)}

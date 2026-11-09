@@ -104,7 +104,9 @@ describe("App routing", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("button", { name: "Continue with Google" })).toBeVisible();
+    const googleButton = within(dialog).getByRole("button", { name: "Sign in with Google" });
+    expect(googleButton).toBeVisible();
+    expect(googleButton.querySelector("img")).toHaveAttribute("src", "/images/google-g-logo.png");
     fireEvent.click(within(dialog).getByRole("button", { name: "Register" }));
     expect(within(dialog).getByRole("heading", { name: "Create an account" })).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Log in" }));

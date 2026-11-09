@@ -16,6 +16,11 @@ import { cartApi } from "@/lib/api/cart";
 import { formatZarCents } from "@/lib/money";
 import { useCart } from "@/components/storefront/cart";
 import { ApiHttpError } from "@/lib/api/client";
+import {
+  customerDeliveryName,
+  estimateForConfirmedDelivery,
+  estimatedDeliveryText,
+} from "@/lib/delivery-presentation";
 
 const inputClass = "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
 const ORDER_KEY = "healthyways.checkout.orderId";
@@ -141,7 +146,9 @@ function recoverableOrder(order: CustomerOrder) {
   };
 }
 
-function currentShippingQuote(order: CustomerOrder): boolean {
+function currentShippingQuote(order: CustomerOrder): order is CustomerOrder & {
+  shippingQuote: NonNullable<CustomerOrder["shippingQuote"]>;
+} {
   const quote = order.shippingQuote;
   const confirmedAt = quote ? Date.parse(quote.confirmedAt) : Number.NaN;
   const orderCreatedAt = Date.parse(order.createdAt);
@@ -220,12 +227,6 @@ function OptionalShippingRates({
               />
               <span className="flex-1">
                 <strong>{rate.name}</strong>
-                {rate.type ? (
-                  <span className="ml-2 text-muted-foreground">({rate.type})</span>
-                ) : null}
-                {rate.description ? (
-                  <span className="mt-1 block text-muted-foreground">{rate.description}</span>
-                ) : null}
               </span>
               <span className="whitespace-nowrap">{formatZarCents(rate.chargeCents)}</span>
             </label>
@@ -233,6 +234,65 @@ function OptionalShippingRates({
         })}
       </div>
     </section>
+  );
+}
+
+function DeliveryOptionList({
+  rates,
+  name,
+  selectedQuote,
+  disabled,
+  onSelect,
+}: {
+  rates: CartShippingRate[];
+  name: string;
+  selectedQuote: string;
+  disabled: boolean;
+  onSelect: (quoteId: string) => void;
+}) {
+  return (
+    <div className="mt-4 space-y-2">
+      {rates.map((rate, index) => {
+        const selected = selectedQuote === rate.quoteId;
+        const label = customerDeliveryName(rate.serviceLevel.name, index);
+        return (
+          <label
+            key={rate.quoteId}
+            className={`flex cursor-pointer items-center justify-between gap-3 rounded-md border p-3 text-sm transition-colors ${
+              selected ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border"
+            }`}
+          >
+            <span className="flex min-w-0 items-start gap-3">
+              <input
+                type="radio"
+                name={name}
+                checked={selected}
+                disabled={disabled}
+                onChange={() => onSelect(rate.quoteId)}
+                aria-label={label}
+              />
+              <img
+                className="mt-0.5 h-8 w-8 shrink-0 object-contain"
+                src="/images/courier-guy-logo.png"
+                alt="The Courier Guy logo"
+                width="32"
+                height="32"
+              />
+              <span className="min-w-0">
+                <strong className="block">{label}</strong>
+                <span className="mt-1 block text-muted-foreground">
+                  {estimatedDeliveryText(rate)}
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Delivered by The Courier Guy
+                </span>
+              </span>
+            </span>
+            <strong className="whitespace-nowrap">{formatZarCents(rate.rateCents)}</strong>
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
@@ -257,6 +317,7 @@ export function CheckoutPage({
   const [optInSelectionChanged, setOptInSelectionChanged] = useState(false);
   const [selectedQuote, setSelectedQuote] = useState<string>("");
   const [cartQuoteId, setCartQuoteId] = useState<string>("");
+  const [ratesExpireAt, setRatesExpireAt] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [showAddressForm, setShowAddressForm] = useState(false);
@@ -286,6 +347,10 @@ export function CheckoutPage({
       .then((recovered) => {
         setRecoveryState("eligible");
         setOrder(recovered);
+        const quoteExpiresAt = recovered.shippingQuote?.expiresAt
+          ? Date.parse(recovered.shippingQuote.expiresAt)
+          : Date.parse(recovered.shippingQuote?.confirmedAt ?? "") + SHIPPING_RATE_LIFETIME_MS;
+        if (Number.isFinite(quoteExpiresAt)) setRatesExpireAt(quoteExpiresAt);
         if (recovered.shippingQuote) setSelectedQuote(recovered.shippingQuote.quoteId ?? "");
       })
       .catch(() => {
@@ -297,6 +362,22 @@ export function CheckoutPage({
         );
       });
   }, []);
+
+  useEffect(() => {
+    if (ratesExpireAt === undefined) return;
+    const timer = window.setTimeout(
+      () => {
+        setRates([]);
+        setSelectedQuote("");
+        setCartQuoteId("");
+        setRatesExpireAt(undefined);
+        setOrder((current) => (current?.shippingQuote ? withoutShippingQuote(current) : current));
+        setMessage("Delivery rates expired. Request current delivery options before continuing.");
+      },
+      Math.max(0, ratesExpireAt - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [ratesExpireAt]);
 
   const selectedAddress = user.addresses.find((entry) => entry.id === addressId);
   const recovery = order ? recoverableOrder(order) : { eligible: false, reason: "" };
@@ -344,6 +425,7 @@ export function CheckoutPage({
     else setSelectedOptInRateIds(update);
     setOptInSelectionChanged(true);
     setCartQuoteId("");
+    setRatesExpireAt(undefined);
     setSelectedQuote("");
     setRates([]);
     if (order) setOrder(withoutShippingQuote);
@@ -463,6 +545,11 @@ export function CheckoutPage({
         ...(timeBasedIds.length ? { optInTimeBasedRateIds: timeBasedIds } : {}),
       });
       setRates(quoteResponse.rates ?? []);
+      const expiryTimes = (quoteResponse.rates ?? [])
+        .map((rate) => Date.parse(rate.retrievedAt ?? ""))
+        .filter(Number.isFinite)
+        .map((retrievedAt) => retrievedAt + SHIPPING_RATE_LIFETIME_MS);
+      setRatesExpireAt(expiryTimes.length ? Math.min(...expiryTimes) : undefined);
       setSelectedQuote("");
       setOrder(await ordersApi.getCustomerOrder(existingOrder.id));
       setOptInSelectionChanged(false);
@@ -489,6 +576,7 @@ export function CheckoutPage({
     setRates([]);
     setSelectedQuote("");
     setCartQuoteId("");
+    setRatesExpireAt(undefined);
     try {
       const latestCart = await cartApi.getCart();
       queryClient.setQueryData(["cart", user.id], latestCart);
@@ -538,6 +626,7 @@ export function CheckoutPage({
         ...(timeBasedIdsToRequest.length ? { optInTimeBasedRateIds: timeBasedIdsToRequest } : {}),
       });
       setCartQuoteId(response.quoteId);
+      setRatesExpireAt(Date.parse(response.expiresAt));
       setRates(response.rates);
       if (response.rates.length === 0)
         setMessage("No delivery options are available for this address.");
@@ -602,17 +691,20 @@ export function CheckoutPage({
         setSelectedQuote(quoteId);
         return;
       }
-      const result = await ordersApi.selectShippingQuote(order.id, quoteId);
+      await ordersApi.selectShippingQuote(order.id, quoteId);
       setSelectedQuote(quoteId);
       const authoritative = await ordersApi.getCustomerOrder(order.id);
       setOrder(authoritative);
       setMessage(
         authoritative.shippingQuote
-          ? `Delivery selected: ${authoritative.shippingQuote.serviceName}.`
-          : `${result.shippingQuote?.serviceName ?? "Selected service"} delivery was accepted, but the order must be refreshed before payment.`,
+          ? "Delivery option saved."
+          : "The delivery option was accepted. Refresh the order before continuing to payment.",
       );
     } catch {
+      setRates([]);
       setSelectedQuote("");
+      setRatesExpireAt(undefined);
+      setCartQuoteId("");
       if (order?.shippingQuote) {
         try {
           setOrder(await ordersApi.getCustomerOrder(order.id));
@@ -747,6 +839,7 @@ export function CheckoutPage({
                     onChange={() => {
                       setAddressId(entry.id);
                       setRates([]);
+                      setRatesExpireAt(undefined);
                       setOptInRates([]);
                       setOptInTimeBasedRates([]);
                       setSelectedOptInRateIds([]);
@@ -866,6 +959,23 @@ export function CheckoutPage({
         </Button>
       ) : null}
       {!order && cartQuoteId ? (
+        rates.length === 0 ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3" role="status">
+            <p className="text-sm text-muted-foreground">
+              No delivery options are available for this address.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void requestCartQuotes()}
+            >
+              Refresh delivery options
+            </Button>
+          </div>
+        ) : null
+      ) : null}
+      {!order && cartQuoteId && rates.length > 0 ? (
         <Button
           className="mt-6"
           disabled={!canCreate || busy || recoveryBlocked || !selectedQuote}
@@ -880,26 +990,13 @@ export function CheckoutPage({
           <p className="mt-2 text-sm text-muted-foreground">
             Rates are valid for five minutes. Confirm delivery before they expire.
           </p>
-          <div className="mt-4 space-y-3">
-            {rates.map((rate) => (
-              <label
-                key={rate.quoteId}
-                className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"
-              >
-                <span>
-                  <input
-                    type="radio"
-                    name="cart-quote"
-                    checked={selectedQuote === rate.quoteId}
-                    disabled={busy}
-                    onChange={() => void selectRate(rate.quoteId)}
-                  />{" "}
-                  <strong>{rate.serviceLevel?.name ?? rate.serviceName}</strong>
-                </span>
-                <strong>{formatZarCents(rate.rateCents)}</strong>
-              </label>
-            ))}
-          </div>
+          <DeliveryOptionList
+            rates={rates}
+            name="cart-quote"
+            selectedQuote={selectedQuote}
+            disabled={busy}
+            onSelect={(quoteId) => void selectRate(quoteId)}
+          />
         </section>
       ) : null}
       {order && !currentShippingQuote(order) ? (
@@ -909,26 +1006,13 @@ export function CheckoutPage({
             Delivery rates expire after five minutes. Request a current rate before payment.
           </p>
           {rates.length ? (
-            <div className="mt-4 space-y-3">
-              {rates.map((rate) => (
-                <label
-                  key={rate.quoteId}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"
-                >
-                  <span>
-                    <input
-                      type="radio"
-                      name="quote"
-                      checked={selectedQuote === rate.quoteId}
-                      disabled={busy || recoveryBlocked}
-                      onChange={() => void selectRate(rate.quoteId)}
-                    />{" "}
-                    <strong>{rate.serviceLevel?.name ?? rate.serviceName}</strong>
-                  </span>
-                  <strong>{formatZarCents(rate.rateCents)}</strong>
-                </label>
-              ))}
-            </div>
+            <DeliveryOptionList
+              rates={rates}
+              name="quote"
+              selectedQuote={selectedQuote}
+              disabled={busy || recoveryBlocked}
+              onSelect={(quoteId) => void selectRate(quoteId)}
+            />
           ) : (
             <p className="mt-3 text-sm">
               Delivery quotes are not available yet. Request rates after reviewing your address.
@@ -947,6 +1031,18 @@ export function CheckoutPage({
       {order && currentShippingQuote(order) ? (
         <section className="mt-6 rounded-lg border border-border bg-card p-5">
           <p className="text-sm">
+            <strong>
+              {customerDeliveryName(order.shippingQuote.serviceName)} ·{" "}
+              {formatZarCents(order.shippingQuote.chargeCents)}
+            </strong>
+            <br />
+            {estimateForConfirmedDelivery(
+              order.shippingQuote.serviceName,
+              order.shippingQuote.deliveryDateFrom,
+              order.shippingQuote.deliveryDateTo,
+            )}
+          </p>
+          <p className="mt-3 text-sm">
             <strong>Selected delivery address:</strong>
             <br />
             {order.deliveryAddress.recipientName}

@@ -1525,11 +1525,12 @@ function LoginPage({
             <Button
               type="button"
               variant="outline"
-              className="w-full"
+              className="w-full justify-center gap-3 border-[#747775] bg-white text-[#1f1f1f] hover:bg-[#f8f9fa] dark:bg-white dark:text-[#1f1f1f]"
               disabled={busy || googleSignInBusy}
               onClick={onGoogleSignIn}
             >
-              {googleSignInBusy ? "Connecting to Google…" : "Continue with Google"}
+              <img src="/images/google-g-logo.png" alt="" width="20" height="20" />
+              {googleSignInBusy ? "Connecting to Google…" : "Sign in with Google"}
             </Button>
           ) : null}
           <label className="block space-y-1 text-sm">

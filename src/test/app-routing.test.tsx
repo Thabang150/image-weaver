@@ -29,6 +29,22 @@ function createPreviewFetcher(registerResponse: unknown, registerStatus = 201) {
     if (url.pathname.endsWith("/auth/register")) {
       return jsonResponse(registerResponse, registerStatus);
     }
+    if (url.pathname.endsWith("/auth/register/verify-email-otp")) {
+      return jsonResponse({
+        user: {
+          id: "registered-user",
+          email: "customer@example.test",
+          emailVerified: true,
+          roles: ["customer"],
+          addresses: [],
+          createdAt: "2026-10-17T00:00:00.000Z",
+          updatedAt: "2026-10-17T00:00:00.000Z",
+        },
+      });
+    }
+    if (url.pathname.endsWith("/auth/register/resend-email-otp")) {
+      return jsonResponse({ emailOtpSent: true }, 202);
+    }
     if (url.pathname.endsWith("/auth/verify-email")) {
       return jsonResponse({ message: "Email address verified." });
     }
@@ -419,7 +435,7 @@ describe("App routing", () => {
     expect(await screen.findByRole("button", { name: "Back to catalogue" })).toBeVisible();
   }, 15000);
 
-  it("registers through the backend and reports its real email-delivery result", async () => {
+  it("registers through the backend and offers email verification code entry", async () => {
     const registeredUser = {
       id: "user-1",
       email: "customer@example.test",
@@ -431,11 +447,15 @@ describe("App routing", () => {
     };
     const fetcher = createPreviewFetcher({
       user: registeredUser,
+      emailOtpRequired: true,
       emailVerificationEmailSent: false,
     });
     const router = await renderPreviewAt("/preview?view=register", fetcher);
 
     expect(await screen.findByRole("heading", { name: "Create an account" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Healthy Customer" },
+    });
     fireEvent.change(screen.getByLabelText("Email"), {
       target: { value: "customer@example.test" },
     });
@@ -447,9 +467,8 @@ describe("App routing", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
 
-    expect(
-      await screen.findByText(/no verification message was accepted by the email provider/i),
-    ).toBeVisible();
+    expect(await screen.findByText(/verification code could not be sent/i)).toBeVisible();
+    expect(screen.getByLabelText("Six-digit verification code")).toBeVisible();
     expect(router.state.location.pathname).toBe("/preview");
     const registrationCall = fetcher.mock.calls.find(([input]) =>
       String(input).endsWith("/auth/register"),
@@ -459,10 +478,11 @@ describe("App routing", () => {
     expect(JSON.parse(String(registrationCall?.[1]?.body))).toEqual({
       email: "customer@example.test",
       password: "a-strong-test-password",
+      displayName: "Healthy Customer",
     });
   }, 15000);
 
-  it("does not claim delivery when the email provider accepts registration mail", async () => {
+  it("explains when a registration verification code was accepted for delivery", async () => {
     const fetcher = createPreviewFetcher({
       user: {
         id: "user-2",
@@ -473,12 +493,16 @@ describe("App routing", () => {
         createdAt: "2026-10-17T00:00:00.000Z",
         updatedAt: "2026-10-17T00:00:00.000Z",
       },
+      emailOtpRequired: true,
       emailVerificationEmailSent: true,
     });
     await renderPreviewAt("/preview?view=register", fetcher);
 
     fireEvent.change(await screen.findByLabelText("Email"), {
       target: { value: "customer@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Healthy Customer" },
     });
     fireEvent.change(screen.getByLabelText("Password (12–128 characters)"), {
       target: { value: "a-strong-test-password" },
@@ -488,17 +512,17 @@ describe("App routing", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
 
-    expect(
-      await screen.findByText(
-        /email provider accepted the verification message; this does not confirm delivery/i,
-      ),
-    ).toBeVisible();
+    expect(await screen.findByLabelText("Six-digit verification code")).toBeVisible();
+    expect(await screen.findByText(/we sent a six-digit verification code/i)).toBeVisible();
   }, 15000);
 
   it("does not show account creation success when the backend rejects registration", async () => {
     const fetcher = createPreviewFetcher({ error: "Account already exists." }, 409);
     await renderPreviewAt("/preview?view=register", fetcher);
 
+    fireEvent.change(await screen.findByLabelText("Name"), {
+      target: { value: "Healthy Customer" },
+    });
     fireEvent.change(await screen.findByLabelText("Email"), {
       target: { value: "customer@example.test" },
     });
@@ -717,7 +741,7 @@ describe("App routing", () => {
     fireEvent.change(screen.getByLabelText("Password"), {
       target: { value: "a-strong-test-password" },
     });
-    fireEvent.click(screen.getAllByRole("button", { name: "Log in" })[1]!);
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
     expect(await screen.findByRole("heading", { name: "Verify administrator sign-in" })).toBeVisible();
     expect(router.state.location.search).toEqual({ view: "login", returnTo: "admin" });
     expect(
@@ -728,9 +752,88 @@ describe("App routing", () => {
       target: { value: "123456" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
-    expect(await screen.findByRole("heading", { name: "Create product" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Admin" })).toBeVisible();
     expect(router.state.location.search).toEqual({ view: "admin" });
-    expect(screen.getByRole("button", { name: "Admin" })).toBeVisible();
+  }, 15000);
+
+  it("completes customer email OTP and optional authenticator challenges before returning to checkout", async () => {
+    const customer = {
+      id: "customer-1",
+      email: "customer@example.test",
+      emailVerified: true,
+      roles: ["customer"],
+      addresses: [],
+      createdAt: "2026-10-17T00:00:00.000Z",
+      updatedAt: "2026-10-17T00:00:00.000Z",
+    };
+    let authenticated = false;
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/me")) {
+        return authenticated
+          ? jsonResponse({ user: customer })
+          : jsonResponse({ error: "Authentication required." }, 401);
+      }
+      if (url.pathname.endsWith("/auth/csrf-token")) {
+        return jsonResponse({ csrfToken: "csrf-test" });
+      }
+      if (url.pathname.endsWith("/auth/login")) {
+        return jsonResponse({ emailOtpRequired: true }, 202);
+      }
+      if (url.pathname.endsWith("/auth/login/verify-email-otp")) {
+        return jsonResponse({ twoFactorRequired: true }, 202);
+      }
+      if (url.pathname.endsWith("/auth/2fa/verify")) {
+        authenticated = true;
+        return jsonResponse({ user: customer });
+      }
+      if (url.pathname.endsWith("/cart")) {
+        return jsonResponse({
+          cart: {
+            items: [],
+            itemCount: 0,
+            currency: "ZAR",
+            totalCents: 0,
+            hasUnavailableItems: false,
+          },
+        });
+      }
+      if (url.pathname.endsWith("/categories")) return jsonResponse({ categories: [] });
+      if (url.pathname.endsWith("/products")) {
+        return jsonResponse({
+          products: [],
+          pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+        });
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    const router = await renderPreviewAt("/preview?view=login&returnTo=cart", fetcher);
+
+    fireEvent.change(await screen.findByLabelText("Email"), {
+      target: { value: customer.email },
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "a-strong-test-password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("heading", { name: "Check your email" })).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Six-digit code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+    expect(await screen.findByRole("heading", { name: "Verify authenticator" })).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Authenticator or recovery code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ view: "cart" });
+    });
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith("/auth/2fa/verify"))).toBe(
+      true,
+    );
   }, 15000);
 
   it("keeps customer and administrator views within the existing /preview route", async () => {

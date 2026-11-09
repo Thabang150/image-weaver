@@ -146,6 +146,21 @@ function describeAuthError(error: unknown, action: string): string {
   return `${action} could not be completed. Check your connection and try again.`;
 }
 
+function describeCodeError(error: unknown, action: string): string {
+  if (error instanceof ApiHttpError && error.status === 401) {
+    const message = error.message.toLowerCase();
+    if (message.includes("expired")) return error.message;
+    if (action.toLowerCase().startsWith("resending")) {
+      if (action.toLowerCase().includes("sign-in")) {
+        return "This sign-in challenge has expired. Sign in again to request a new code.";
+      }
+      return "This verification session has expired. Start verification again to request a new code.";
+    }
+    return `The ${action.toLowerCase()} is invalid. Check the code and try again.`;
+  }
+  return describeAuthError(error, action);
+}
+
 function FeedbackMessage({ feedback }: { feedback: Feedback | null }) {
   if (!feedback) return null;
   const role = feedback.kind === "error" ? "alert" : "status";
@@ -1201,6 +1216,7 @@ function RegisterPage({
   experience: "customer" | "admin";
   onNavigate: (view: PreviewView) => void;
 }) {
+  const queryClient = useQueryClient();
   const [fields, setFields] = useState({
     displayName: "",
     email: "",
@@ -1210,9 +1226,13 @@ function RegisterPage({
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [step, setStep] = useState<"details" | "email-otp">("details");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (step !== "details") return;
     console.info("[admin-registration] Registration submit handler entered.");
     setFeedback(null);
     setFieldError(null);
@@ -1246,7 +1266,21 @@ function RegisterPage({
         result = await authApi.registerAdmin(registration);
         console.info("[admin-registration] registerAdmin resolved.", result.status);
       } else {
-        result = await authApi.register(registration);
+        result = await authApi.register({
+          ...registration,
+          displayName: fields.displayName.trim(),
+        });
+        setVerificationEmail(result.user.email);
+        setVerificationCode("");
+        setFields((current) => ({ ...current, password: "", confirmPassword: "" }));
+        setStep("email-otp");
+        setFeedback({
+          kind: result.emailVerificationEmailSent ? "success" : "info",
+          message: result.emailVerificationEmailSent
+            ? `We sent a six-digit verification code to ${result.user.email}. Enter it below to verify your email and finish creating your account.`
+            : `Your account was created, but the verification code could not be sent. You can try resending it below when email delivery is available.`,
+        });
+        return;
       }
       setFields({ displayName: "", email: "", password: "", confirmPassword: "" });
       setFeedback({
@@ -1262,88 +1296,180 @@ function RegisterPage({
     }
   }
 
+  async function submitRegistrationCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await authApi.verifyRegistrationEmailOtp(verificationCode.trim());
+      await refreshSession(queryClient, "customer");
+      onNavigate("account");
+    } catch (error) {
+      setFeedback({ kind: "error", message: describeCodeError(error, "Email verification") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendRegistrationCode() {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await authApi.resendRegistrationEmailOtp();
+      setFeedback({
+        kind: "success",
+        message: `A new verification code was sent to ${verificationEmail}.`,
+      });
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: describeCodeError(error, "Resending the verification code"),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <FormPage
-      title={experience === "admin" ? "Create an administrator account" : "Create an account"}
-      description={experience === "admin"
-        ? "Administrator registration requires an @healtywayssa.co.za email. Email verification and two-factor setup are required before login."
-        : "Customer registration. Email verification is required before login."}
+      title={
+        step === "email-otp"
+          ? "Verify your email"
+          : experience === "admin"
+            ? "Create an administrator account"
+            : "Create an account"
+      }
+      description={
+        step === "email-otp"
+          ? `Enter the six-digit code sent to ${verificationEmail}. The code expires in five minutes.`
+          : experience === "admin"
+            ? "Administrator registration requires an @healtywayssa.co.za email. Email verification and two-factor setup are required before login."
+            : "Create a customer account. We will email you a code to verify your email address."
+      }
     >
-      <form className="space-y-4" onSubmit={(event) => void submit(event)}>
-        <label className="block space-y-1 text-sm">
-          <span>Name (optional)</span>
-          <input
-            className={inputClass}
-            autoComplete="name"
-            maxLength={100}
-            value={fields.displayName}
-            onChange={(event) => setFields({ ...fields, displayName: event.currentTarget.value })}
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span>Email</span>
-          <input
-            className={inputClass}
-            type="email"
-            autoComplete="email"
-            required
-            maxLength={254}
-            value={fields.email}
-            onChange={(event) => setFields({ ...fields, email: event.currentTarget.value })}
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span>Password (12–128 characters)</span>
-          <input
-            className={inputClass}
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={12}
-            maxLength={128}
-            value={fields.password}
-            onChange={(event) => setFields({ ...fields, password: event.currentTarget.value })}
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span>Confirm password</span>
-          <input
-            className={inputClass}
-            type="password"
-            autoComplete="new-password"
-            required
-            value={fields.confirmPassword}
-            onChange={(event) =>
-              setFields({ ...fields, confirmPassword: event.currentTarget.value })
-            }
-          />
-        </label>
-        {fieldError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {fieldError}
+      {step === "details" ? (
+        <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+          <label className="block space-y-1 text-sm">
+            <span>{experience === "customer" ? "Name" : "Name (optional)"}</span>
+            <input
+              className={inputClass}
+              autoComplete="name"
+              maxLength={100}
+              required={experience === "customer"}
+              value={fields.displayName}
+              onChange={(event) => setFields({ ...fields, displayName: event.currentTarget.value })}
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span>Email</span>
+            <input
+              className={inputClass}
+              type="email"
+              autoComplete="email"
+              required
+              maxLength={254}
+              value={fields.email}
+              onChange={(event) => setFields({ ...fields, email: event.currentTarget.value })}
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span>Password (12–128 characters)</span>
+            <input
+              className={inputClass}
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={12}
+              maxLength={128}
+              value={fields.password}
+              onChange={(event) => setFields({ ...fields, password: event.currentTarget.value })}
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span>Confirm password</span>
+            <input
+              className={inputClass}
+              type="password"
+              autoComplete="new-password"
+              required
+              value={fields.confirmPassword}
+              onChange={(event) =>
+                setFields({ ...fields, confirmPassword: event.currentTarget.value })
+              }
+            />
+          </label>
+          {fieldError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {fieldError}
+            </p>
+          ) : null}
+          <FeedbackMessage feedback={feedback} />
+          <Button type="submit" disabled={busy}>
+            {busy ? "Creating account…" : "Register"}
+          </Button>
+        </form>
+      ) : (
+        <form className="space-y-4" onSubmit={(event) => void submitRegistrationCode(event)}>
+          <FeedbackMessage feedback={feedback} />
+          <label className="block space-y-1 text-sm">
+            <span>Six-digit verification code</span>
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              minLength={6}
+              maxLength={6}
+              required
+              value={verificationCode}
+              onChange={(event) => setVerificationCode(event.currentTarget.value)}
+            />
+          </label>
+          <Button type="submit" disabled={busy || verificationCode.trim().length !== 6}>
+            {busy ? "Verifying…" : "Verify email"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void resendRegistrationCode()}
+          >
+            {busy ? "Sending…" : "Resend code"}
+          </Button>
+          <button
+            className="text-sm underline"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setStep("details");
+              setFeedback(null);
+              setVerificationCode("");
+            }}
+          >
+            Use a different account
+          </button>
+        </form>
+      )}
+      {step === "details" ? (
+        <>
+          <p className="mt-5 text-sm">
+            Already registered?{" "}
+            <button
+              className="underline"
+              type="button"
+              onClick={() => onNavigate(experience === "admin" ? "admin-login" : "customer-login")}
+            >
+              Log in
+            </button>
           </p>
-        ) : null}
-        <FeedbackMessage feedback={feedback} />
-        <Button type="submit" disabled={busy}>
-          {busy ? "Creating account…" : "Register"}
-        </Button>
-      </form>
-      <p className="mt-5 text-sm">
-        Already registered?{" "}
-        <button
-          className="underline"
-          type="button"
-          onClick={() => onNavigate(experience === "admin" ? "admin-login" : "customer-login")}
-        >
-          Log in
-        </button>
-      </p>
-      <p className="mt-2 text-sm">
-        Need to verify?{" "}
-        <button className="underline" type="button" onClick={() => onNavigate("verify-email")}>
-          Email verification
-        </button>
-      </p>
+          <p className="mt-2 text-sm">
+            Need to verify?{" "}
+            <button className="underline" type="button" onClick={() => onNavigate("verify-email")}>
+              Email verification
+            </button>
+          </p>
+        </>
+      ) : null}
     </FormPage>
   );
 }
@@ -1451,18 +1577,20 @@ function LoginPage({
           throw new ApiResponseError(200, "Unexpected customer verification challenge in administrator login.");
         }
         const result = await authApi.verifyLoginEmailOtp(code.trim());
+        if ("twoFactorRequired" in result) {
+          setCode("");
+          setStep("two-factor");
+          return;
+        }
         if (!("user" in result)) {
           throw new ApiResponseError(200, "Customer verification returned an unexpected authentication challenge.");
         }
         await refreshSession(queryClient, "customer");
         onNavigate(returnTo ?? "account");
       } else if (step === "two-factor") {
-        if (experience !== "admin") {
-          throw new ApiResponseError(200, "Unexpected administrator verification challenge in customer login.");
-        }
         await authApi.verifyTwoFactor(code.trim());
-        await refreshSession(queryClient, "admin");
-        onNavigate("admin");
+        await refreshSession(queryClient, experience);
+        onNavigate(experience === "admin" ? "admin" : (returnTo ?? "account"));
       } else if (step === "enrollment") {
         if (experience !== "admin") {
           throw new ApiResponseError(200, "Unexpected administrator enrollment in customer login.");
@@ -1476,7 +1604,8 @@ function LoginPage({
         throw new ApiResponseError(200, "Unexpected login verification step.");
       }
     } catch (error) {
-      setFeedback({ kind: "error", message: describeAuthError(error, "Two-factor verification") });
+      const action = step === "email-otp" ? "Email sign-in code" : "Authenticator code";
+      setFeedback({ kind: "error", message: describeCodeError(error, action) });
     } finally {
       factorSubmissionRef.current = false;
       setBusy(false);
@@ -1516,7 +1645,9 @@ function LoginPage({
                 : "Set up two-factor authentication"
               : experience === "admin"
                 ? "Verify administrator sign-in"
-                : "Verify sign-in"
+                : step === "two-factor"
+                  ? "Verify authenticator"
+                  : "Verify sign-in"
       }
     >
       {step === "credentials" ? (
@@ -1589,12 +1720,14 @@ function LoginPage({
               <code className="block break-all rounded bg-muted p-3">{provisioningUri}</code>
             </div>
           ) : step === "email-otp" ? (
-            <p className="text-sm">Enter the six-digit code sent to your email to finish signing in.</p>
+            <p className="text-sm">
+              Enter the six-digit code sent to your email to finish signing in.
+            </p>
           ) : (
             <p className="text-sm">
               {experience === "admin"
                 ? "Enter the six-digit code from your authenticator app, or an administrator recovery code, to finish signing in."
-                : "Enter the six-digit email sign-in code to finish signing in."}
+                : "Enter the six-digit code from your authenticator app to finish signing in."}
             </p>
           )}
           <label className="block space-y-1 text-sm">
@@ -1623,14 +1756,19 @@ function LoginPage({
               type="button"
               variant="outline"
               disabled={busy}
-              onClick={() => void (async () => {
-                try {
-                  await authApi.resendLoginEmailOtp();
-                  setFeedback({ kind: "success", message: "A new sign-in code has been sent." });
-                } catch (error) {
-                  setFeedback({ kind: "error", message: describeAuthError(error, "Resending the sign-in code") });
-                }
-              })()}
+              onClick={() =>
+                void (async () => {
+                  try {
+                    await authApi.resendLoginEmailOtp();
+                    setFeedback({ kind: "success", message: "A new sign-in code has been sent." });
+                  } catch (error) {
+                    setFeedback({
+                      kind: "error",
+                      message: describeCodeError(error, "Resending the sign-in code"),
+                    });
+                  }
+                })()
+              }
             >
               Resend code
             </Button>
@@ -1640,7 +1778,9 @@ function LoginPage({
       {step === "credentials" && experience === "customer" ? (
         <p className="mt-5 text-sm">
           No account yet?{" "}
-          <button className="underline" type="button" onClick={() => onNavigate("register")}>Register</button>
+          <button className="underline" type="button" onClick={() => onNavigate("register")}>
+            Register
+          </button>
         </p>
       ) : null}
       {step === "credentials" && experience === "admin" ? (
@@ -1686,8 +1826,11 @@ function VerifyEmailPage({
   isEmailLink: boolean;
   onClearEmailLink: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationCodeRequested, setVerificationCodeRequested] = useState(false);
   const [busy, setBusy] = useState(Boolean(isEmailLink && verificationToken));
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [linkStatus, setLinkStatus] = useState<EmailLinkStatus | null>(
@@ -1763,12 +1906,29 @@ function VerifyEmailPage({
     setFeedback(null);
     try {
       const result = await authApi.requestVerification(email.trim());
+      setVerificationCodeRequested(true);
       setFeedback({
         kind: "info",
-        message: `The backend accepted the verification request: ${result.message} This response does not confirm that an email was delivered.`,
+        message: `The backend accepted the verification request: ${result.message} If this is a customer account, enter the six-digit code below. This response does not confirm that an email was delivered.`,
       });
     } catch (error) {
       setFeedback({ kind: "error", message: describeAuthError(error, "Verification request") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitVerificationCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await authApi.verifyRegistrationEmailOtp(verificationCode.trim());
+      await refreshSession(queryClient, "customer");
+      setFeedback({ kind: "success", message: "Your email is verified and you are signed in." });
+      onNavigate("account");
+    } catch (error) {
+      setFeedback({ kind: "error", message: describeCodeError(error, "Email verification") });
     } finally {
       setBusy(false);
     }
@@ -1848,7 +2008,7 @@ function VerifyEmailPage({
           </form>
         ) : null}
         <div className="border-t border-border pt-5">
-          <h2 className="font-medium">Request another verification email</h2>
+          <h2 className="font-medium">Request another verification code</h2>
           <form className="mt-3 space-y-3" onSubmit={(event) => void submitRequest(event)}>
             <label className="block space-y-1 text-sm">
               <span>Email</span>
@@ -1862,9 +2022,33 @@ function VerifyEmailPage({
               />
             </label>
             <Button type="submit" variant="outline" disabled={busy}>
-              {busy ? "Sending request…" : "Request verification"}
+              {busy ? "Sending request…" : "Request verification code"}
             </Button>
           </form>
+          {verificationCodeRequested ? (
+            <form
+              className="mt-4 space-y-3"
+              onSubmit={(event) => void submitVerificationCode(event)}
+            >
+              <label className="block space-y-1 text-sm">
+                <span>Customer email verification code</span>
+                <input
+                  className={inputClass}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  minLength={6}
+                  maxLength={6}
+                  required
+                  value={verificationCode}
+                  onChange={(event) => setVerificationCode(event.currentTarget.value)}
+                />
+              </label>
+              <Button type="submit" disabled={busy || verificationCode.trim().length !== 6}>
+                {busy ? "Verifying…" : "Verify email"}
+              </Button>
+            </form>
+          ) : null}
         </div>
         {linkStatus === "success" ? (
           <Button type="button" onClick={() => onNavigate("login")}>
@@ -2229,6 +2413,7 @@ function AccountPage({ user }: { user: PublicUser }) {
           </div>
         </form>
       </section>
+      <CustomerSecuritySection user={user} />
       <section className="rounded-lg border border-border bg-card p-5">
         <h2 className="text-xl font-medium">Saved addresses</h2>
         {user.addresses.length === 0 ? (
@@ -2248,8 +2433,8 @@ function AccountPage({ user }: { user: PublicUser }) {
                   <p>
                     {entry.addressLine1}
                     {entry.addressLine2 ? `, ${entry.addressLine2}` : ""}
-                    {entry.localArea ? `, ${entry.localArea}` : ""}, {entry.city},{" "}
-                    {entry.province}, {entry.postalCode}, {entry.country}
+                    {entry.localArea ? `, ${entry.localArea}` : ""}, {entry.city}, {entry.province},{" "}
+                    {entry.postalCode}, {entry.country}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -2261,7 +2446,16 @@ function AccountPage({ user }: { user: PublicUser }) {
                   >
                     Edit
                   </Button>
-                  {!entry.isDefault ? <Button type="button" variant="outline" disabled={busy} onClick={() => void setDefaultAddress(entry.id)}>Set default</Button> : null}
+                  {!entry.isDefault ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void setDefaultAddress(entry.id)}
+                    >
+                      Set default
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant="outline"
@@ -2366,9 +2560,7 @@ function AccountPage({ user }: { user: PublicUser }) {
             <li className="rounded-md border border-border p-3 text-sm" key={order.id}>
               <div className="flex flex-wrap justify-between gap-2">
                 <strong>{order.orderNumber}</strong>
-                <span>
-                  {order.status.replaceAll("_", " ")}
-                </span>
+                <span>{order.status.replaceAll("_", " ")}</span>
               </div>
               <p className="mt-1">
                 {new Date(order.createdAt).toLocaleDateString()} ·{" "}
@@ -2387,4 +2579,229 @@ function AccountPage({ user }: { user: PublicUser }) {
       </section>
     </main>
   );
+}
+
+function CustomerSecuritySection({ user }: { user: PublicUser }) {
+  const queryClient = useQueryClient();
+  const statusQuery = useQuery({
+    queryKey: ["two-factor-status", user.id],
+    queryFn: () => authApi.getTwoFactorStatus(),
+    enabled: !isAdminUser(user),
+    retry: false,
+  });
+  const [provisioningUri, setProvisioningUri] = useState("");
+  const [code, setCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+
+  if (isAdminUser(user)) return null;
+
+  async function beginEnrollment() {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const enrollment = await authApi.enrollTwoFactor();
+      setProvisioningUri(enrollment.provisioningUri);
+    } catch (error) {
+      setFeedback({ kind: "error", message: describeAuthError(error, "Two-factor setup") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmEnrollment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const result = await authApi.confirmTwoFactor(code.trim());
+      setRecoveryCodes(result.recoveryCodes);
+      setCode("");
+      setProvisioningUri("");
+      await refreshSession(queryClient, "customer");
+      await statusQuery.refetch();
+    } catch (error) {
+      setFeedback({ kind: "error", message: describeAuthError(error, "Two-factor setup") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rotateRecoveryCodes() {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const result = await authApi.rotateTwoFactorRecoveryCodes(code.trim());
+      setRecoveryCodes(result.recoveryCodes);
+      setCode("");
+      await refreshSession(queryClient, "customer");
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: securityActionError(error, "Recovery codes"),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disableTwoFactor() {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await authApi.disableTwoFactor(code.trim());
+      setCode("");
+      setRecoveryCodes(null);
+      await refreshSession(queryClient, "customer");
+      await statusQuery.refetch();
+      setFeedback({ kind: "success", message: "Two-factor authentication has been disabled." });
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: securityActionError(error, "Two-factor settings"),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-5">
+      <h2 className="text-xl font-medium">Account security</h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Add an authenticator app as an optional extra sign-in step. Your email code will still be
+        required.
+      </p>
+      {statusQuery.isPending ? (
+        <p className="mt-3 text-sm" role="status">
+          Loading security settings…
+        </p>
+      ) : null}
+      {statusQuery.isError ? (
+        <p className="mt-3 text-sm text-destructive" role="alert">
+          {describeAuthError(statusQuery.error, "Security settings")}
+        </p>
+      ) : null}
+      {statusQuery.data ? (
+        <p className="mt-3 text-sm" role="status">
+          Authenticator verification is{" "}
+          {statusQuery.data.twoFactorEnabled ? "enabled" : "not enabled"}.
+        </p>
+      ) : null}
+      {provisioningUri ? (
+        <form className="mt-4 space-y-3" onSubmit={(event) => void confirmEnrollment(event)}>
+          <p className="text-sm">
+            Add this setup URI to your authenticator app, then enter its six-digit code.
+          </p>
+          <code className="block break-all rounded bg-muted p-3 text-xs">{provisioningUri}</code>
+          <label className="block space-y-1 text-sm">
+            <span>Authenticator code</span>
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              minLength={6}
+              maxLength={6}
+              required
+              value={code}
+              onChange={(event) => setCode(event.currentTarget.value)}
+            />
+          </label>
+          <Button type="submit" disabled={busy || code.trim().length !== 6}>
+            {busy ? "Verifying…" : "Enable authenticator"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              setProvisioningUri("");
+              setCode("");
+            }}
+          >
+            Cancel setup
+          </Button>
+        </form>
+      ) : null}
+      {statusQuery.data?.twoFactorEnabled && recoveryCodes === null ? (
+        <div className="mt-4 space-y-3">
+          <label className="block space-y-1 text-sm">
+            <span>Authenticator or recovery code</span>
+            <input
+              className={inputClass}
+              autoComplete="one-time-code"
+              maxLength={32}
+              value={code}
+              onChange={(event) => setCode(event.currentTarget.value)}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy || !code.trim()}
+              onClick={() => void rotateRecoveryCodes()}
+            >
+              Replace recovery codes
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy || !code.trim()}
+              onClick={() => void disableTwoFactor()}
+            >
+              Disable authenticator
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            These changes require a recent sign-in (within 10 minutes) and a valid code.
+          </p>
+        </div>
+      ) : null}
+      {statusQuery.data?.twoFactorEnabled === false && !provisioningUri ? (
+        <Button
+          className="mt-4"
+          type="button"
+          disabled={busy || statusQuery.isError}
+          onClick={() => void beginEnrollment()}
+        >
+          {busy ? "Starting setup…" : "Set up authenticator"}
+        </Button>
+      ) : null}
+      {recoveryCodes ? (
+        <div className="mt-4 rounded-md border border-border p-3">
+          <p className="text-sm font-medium">
+            Save these recovery codes now. They are shown only once.
+          </p>
+          <ul className="mt-2 grid gap-1 font-mono text-sm sm:grid-cols-2">
+            {recoveryCodes.map((recoveryCode) => (
+              <li key={recoveryCode}>{recoveryCode}</li>
+            ))}
+          </ul>
+          <Button
+            className="mt-3"
+            type="button"
+            variant="outline"
+            onClick={() => setRecoveryCodes(null)}
+          >
+            I have saved them
+          </Button>
+        </div>
+      ) : null}
+      <div className="mt-3">
+        <FeedbackMessage feedback={feedback} />
+      </div>
+    </section>
+  );
+}
+
+function securityActionError(error: unknown, action: string): string {
+  if (error instanceof ApiHttpError && error.status === 401) {
+    return error.message === "Recent authentication is required."
+      ? "Sign in again before changing two-factor settings."
+      : `The ${action.toLowerCase()} action needs a valid authenticator or recovery code.`;
+  }
+  return describeAuthError(error, action);
 }

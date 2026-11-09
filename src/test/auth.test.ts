@@ -164,7 +164,11 @@ describe("session foundation", () => {
       message: "Invalid email or password.",
     });
     await expect(
-      auth.register({ email: "not-an-email", password: "too-short" }),
+      auth.register({
+        email: "not-an-email",
+        password: "too-short",
+        displayName: "Healthy Customer",
+      }),
     ).rejects.toMatchObject({
       name: "ApiHttpError",
       status: 400,
@@ -210,7 +214,20 @@ describe("session foundation", () => {
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/auth/register")) {
-        return jsonResponse({ user, emailVerificationEmailSent: false }, 201);
+        return jsonResponse(
+          {
+            user,
+            emailOtpRequired: true,
+            emailVerificationEmailSent: false,
+          },
+          201,
+        );
+      }
+      if (url.pathname.endsWith("/auth/register/verify-email-otp")) {
+        return jsonResponse({ user });
+      }
+      if (url.pathname.endsWith("/auth/register/resend-email-otp")) {
+        return jsonResponse({ emailOtpSent: true }, 202);
       }
       if (url.pathname.endsWith("/auth/request-verification")) {
         return jsonResponse(
@@ -238,9 +255,20 @@ describe("session foundation", () => {
     );
 
     await expect(
-      auth.register({ email: user.email, password: "a-strong-test-password" }),
-    ).resolves.toEqual({ user, emailVerificationEmailSent: false, status: 201 });
+      auth.register({
+        email: user.email,
+        password: "a-strong-test-password",
+        displayName: "Healthy Customer",
+      }),
+    ).resolves.toEqual({
+      user,
+      emailVerificationEmailSent: false,
+      emailOtpRequired: true,
+      status: 201,
+    });
     await expect(auth.requestVerification(user.email)).resolves.toHaveProperty("message");
+    await expect(auth.resendRegistrationEmailOtp()).resolves.toEqual({ emailOtpSent: true });
+    await expect(auth.verifyRegistrationEmailOtp("123456")).resolves.toEqual({ user });
     await expect(auth.verifyEmail("v".repeat(40))).resolves.toEqual({
       message: "Email address verified.",
     });
@@ -250,7 +278,7 @@ describe("session foundation", () => {
     ).resolves.toHaveProperty("message");
 
     const requests = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
-    expect(requests).toHaveLength(5);
+    expect(requests).toHaveLength(7);
     for (const [, init] of requests) {
       const headers = new Headers(init?.headers);
       expect(headers.get("X-CSRF-Token")).toBe("csrf-test-token");
@@ -259,6 +287,7 @@ describe("session foundation", () => {
     expect(JSON.parse(String(requests[0]?.[1]?.body))).toEqual({
       email: user.email,
       password: "a-strong-test-password",
+      displayName: "Healthy Customer",
     });
   });
 
@@ -272,7 +301,41 @@ describe("session foundation", () => {
     );
 
     await expect(
-      auth.register({ email: user.email, password: "a-strong-test-password" }),
+      auth.register({
+        email: user.email,
+        password: "a-strong-test-password",
+        displayName: "Healthy Customer",
+      }),
     ).rejects.toMatchObject({ name: "ApiResponseError" });
+  });
+
+  it("uses the optional customer two-factor security endpoints", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ twoFactorEnabled: false }))
+      .mockResolvedValueOnce(jsonResponse({ recoveryCodes: ["a".repeat(32)] }))
+      .mockResolvedValueOnce(jsonResponse({ twoFactorEnabled: false }));
+    const auth = createAuthApi(
+      createApiClient({
+        baseUrl: "https://api.example.test",
+        csrfTokenProvider: vi.fn().mockResolvedValue("csrf-two-factor"),
+        fetcher,
+      }),
+    );
+
+    await expect(auth.getTwoFactorStatus()).resolves.toEqual({ twoFactorEnabled: false });
+    await expect(auth.rotateTwoFactorRecoveryCodes("123456")).resolves.toEqual({
+      recoveryCodes: ["a".repeat(32)],
+    });
+    await expect(auth.disableTwoFactor("123456")).resolves.toEqual({ twoFactorEnabled: false });
+    expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://api.example.test/api/v1/auth/2fa/status",
+      "https://api.example.test/api/v1/auth/2fa/recovery-codes/rotate",
+      "https://api.example.test/api/v1/auth/2fa/disable",
+    ]);
+    expect(new Headers(fetcher.mock.calls[1]?.[1]?.headers).get("X-CSRF-Token")).toBe(
+      "csrf-two-factor",
+    );
+    expect(JSON.parse(String(fetcher.mock.calls[2]?.[1]?.body))).toEqual({ code: "123456" });
   });
 });

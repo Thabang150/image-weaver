@@ -1,10 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Leaf, Mail, MessageCircle, Phone } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { Brand, BotanicalImage, Countdown, Footer } from "@/components/wellness";
 
 export const Route = createFileRoute("/")({
+  beforeLoad: () => {
+    throw redirect({
+      to: "/preview",
+      search: { view: "home" },
+      replace: true,
+    });
+  },
   head: () => ({
     meta: [
       { title: "Healthy Ways SA — A Natural New Chapter" },

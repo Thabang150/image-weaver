@@ -103,7 +103,7 @@ afterEach(() => {
 
 // Match routes without loaders where possible; the history test uses mocked API responses.
 describe("App routing", () => {
-  it("keeps the launch and preview pages as the two content routes", () => {
+  it("keeps the root route and preview route registered", () => {
     const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
 
     const homeMatches = router.matchRoutes("/");
@@ -112,6 +112,15 @@ describe("App routing", () => {
     expect(homeMatches.at(-1)?.routeId).toBe("/");
     expect(previewMatches.at(-1)?.routeId).toBe("/preview");
     expect(homeMatches.at(-1)?.routeId).not.toBe(rootRouteId);
+  });
+
+  it("redirects the root index route to the storefront home", async () => {
+    const fetcher = createPreviewFetcher({});
+    const router = await renderPreviewAt("/", fetcher);
+
+    expect(router.state.location.pathname).toBe("/preview");
+    expect(router.state.location.search).toEqual({ view: "home" });
+    expect(await screen.findByRole("heading", { name: /find your natural rhythm/i })).toBeVisible();
   });
 
   it("opens the preview customer auth modal and switches between sign-in and registration", async () => {

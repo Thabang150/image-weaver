@@ -9,6 +9,7 @@ import {
   ProductPrice,
   ProductStockNotice,
 } from "@/components/storefront/catalogue";
+import { AddressLocationFields } from "@/components/storefront/address-autocomplete";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -2485,18 +2486,17 @@ function AccountPage({ user }: { user: PublicUser }) {
           <h3 className="font-medium sm:col-span-2">
             {editingId ? "Edit address" : "Add an address"}
           </h3>
+          <AddressLocationFields
+            value={address}
+            onChange={setAddress}
+            disabled={busy}
+            includeCountry
+          />
           {(
             [
               ["label", "Address label", true],
               ["recipientName", "Recipient name", true],
               ["phoneNumber", "Phone number", true],
-              ["addressLine1", "Address line 1", true],
-              ["addressLine2", "Address line 2", false],
-              ["localArea", "Suburb or local area", true],
-              ["city", "City", true],
-              ["province", "Province", true],
-              ["postalCode", "Postal code", true],
-              ["country", "Country", true],
             ] as const
           ).map(([key, label, required]) => (
             <label className="space-y-1 text-sm" key={key}>
@@ -2504,32 +2504,11 @@ function AccountPage({ user }: { user: PublicUser }) {
               <input
                 className={inputClass}
                 required={required}
-                maxLength={
-                  key === "addressLine1" || key === "addressLine2" || key === "localArea"
-                    ? 120
-                    : key === "postalCode"
-                      ? 12
-                      : key === "label"
-                        ? 40
-                        : 100
-                }
+                maxLength={key === "label" ? 40 : key === "phoneNumber" ? 30 : 100}
                 value={address[key] ?? ""}
-                onChange={(event) => {
-                  const nextAddress = { ...address, [key]: event.currentTarget.value };
-                  if (
-                    key === "addressLine1" ||
-                    key === "addressLine2" ||
-                    key === "localArea" ||
-                    key === "city" ||
-                    key === "province" ||
-                    key === "postalCode" ||
-                    key === "country"
-                  ) {
-                    delete nextAddress.lat;
-                    delete nextAddress.lng;
-                  }
-                  setAddress(nextAddress);
-                }}
+                onChange={(event) =>
+                  setAddress({ ...address, [key]: event.currentTarget.value })
+                }
               />
             </label>
           ))}

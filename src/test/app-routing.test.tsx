@@ -134,7 +134,9 @@ describe("App routing", () => {
     await renderPreviewAt("/preview?google=otp", createPreviewFetcher({}));
 
     expect(await screen.findByLabelText("Six-digit code")).toBeVisible();
-    expect(screen.getByText("Enter the six-digit code sent to your email to finish signing in.")).toBeVisible();
+    expect(
+      screen.getByText("Enter the six-digit code sent to your email to finish signing in."),
+    ).toBeVisible();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
   }, 15000);
 
@@ -666,12 +668,18 @@ describe("App routing", () => {
     fireEvent.change(screen.getAllByLabelText("Phone number")[1]!, {
       target: { value: "0790000000" },
     });
-    fireEvent.change(screen.getByLabelText("Address line 1"), {
+    fireEvent.change(screen.getByLabelText("Street address and number"), {
       target: { value: "1 Main Road" },
+    });
+    fireEvent.change(screen.getByLabelText("Suburb or local area"), {
+      target: { value: "Observatory" },
     });
     fireEvent.change(screen.getByLabelText("City"), { target: { value: "Johannesburg" } });
     fireEvent.change(screen.getByLabelText("Province"), { target: { value: "Gauteng" } });
     fireEvent.change(screen.getByLabelText("Postal code"), { target: { value: "2000" } });
+    fireEvent.change(screen.getByLabelText("Country"), {
+      target: { value: "South Africa" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save address" }));
 
     expect(await screen.findByText("Address saved.")).toBeVisible();
@@ -681,6 +689,74 @@ describe("App routing", () => {
     );
     expect(addressCall?.[1]?.credentials).toBe("include");
     expect(new Headers(addressCall?.[1]?.headers).get("X-CSRF-Token")).toBe("csrf-test");
+  }, 15000);
+
+  it("edits a saved address manually and removes its stale coordinates", async () => {
+    const savedAddress = {
+      id: "address-1",
+      isDefault: true,
+      label: "Home",
+      recipientName: "Customer",
+      phoneNumber: "0790000000",
+      addressLine1: "1 Main Road",
+      addressLine2: "Unit 2",
+      localArea: "Observatory",
+      city: "Cape Town",
+      province: "Western Cape",
+      postalCode: "7925",
+      country: "South Africa",
+      lat: -33.9,
+      lng: 18.5,
+    };
+    const savedUser = {
+      id: "customer-1",
+      email: "customer@example.test",
+      displayName: "Customer",
+      emailVerified: true,
+      roles: ["customer"],
+      addresses: [savedAddress],
+      createdAt: "2026-10-17T00:00:00.000Z",
+      updatedAt: "2026-10-17T00:00:00.000Z",
+    };
+    let updateBody: Record<string, unknown> | undefined;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/auth/me")) return jsonResponse({ user: savedUser });
+      if (url.pathname.endsWith("/auth/csrf-token"))
+        return jsonResponse({ csrfToken: "csrf-address-test" });
+      if (url.pathname.endsWith("/cart"))
+        return jsonResponse({ error: "Authentication required." }, 401);
+      if (url.pathname.endsWith("/users/me/addresses/address-1") && init?.method === "PATCH") {
+        updateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({
+          user: {
+            ...savedUser,
+            addresses: [{ ...savedAddress, ...updateBody, lat: undefined, lng: undefined }],
+          },
+        });
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    });
+    await renderPreviewAt("/preview?view=addresses", fetcher);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Street address and number")).toHaveValue("1 Main Road");
+    expect(screen.getByLabelText("Apartment, unit or complex (optional)")).toHaveValue("Unit 2");
+    fireEvent.change(screen.getByLabelText("City"), { target: { value: "Stellenbosch" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update address" }));
+
+    await waitFor(() => expect(updateBody).toBeDefined());
+    expect(updateBody).toMatchObject({
+      addressLine1: "1 Main Road",
+      addressLine2: "Unit 2",
+      localArea: "Observatory",
+      city: "Stellenbosch",
+      province: "Western Cape",
+      postalCode: "7925",
+      country: "South Africa",
+    });
+    expect(updateBody).not.toHaveProperty("lat");
+    expect(updateBody).not.toHaveProperty("lng");
   }, 15000);
 
   it("does not enter the admin view until the login two-factor challenge succeeds", async () => {
@@ -742,7 +818,9 @@ describe("App routing", () => {
       target: { value: "a-strong-test-password" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Log in" }));
-    expect(await screen.findByRole("heading", { name: "Verify administrator sign-in" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Verify administrator sign-in" }),
+    ).toBeVisible();
     expect(router.state.location.search).toEqual({ view: "login", returnTo: "admin" });
     expect(
       screen.queryByRole("heading", { name: "Administrator workspace" }),

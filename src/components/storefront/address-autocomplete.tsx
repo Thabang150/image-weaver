@@ -1,5 +1,16 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { googlePlaceToAddress, type SelectedDeliveryAddress } from "@/lib/google-address";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import {
+  googlePlaceToAddress,
+  mergeGoogleAddress,
+  type SelectedDeliveryAddress,
+} from "@/lib/google-address";
 import {
   isSouthAfricanPostalCode,
   normalizeSouthAfricanProvince,
@@ -210,6 +221,128 @@ export function GooglePlacesAutocomplete({
               : "Address search is not configured. You can enter every address field manually.")}
       </p>
     </div>
+  );
+}
+
+export interface AddressLocationFieldsValue {
+  addressLine1: string;
+  addressLine2?: string;
+  localArea?: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  country?: string;
+  lat?: number;
+  lng?: number;
+}
+
+type AddressLocationTextKey =
+  "addressLine1" | "addressLine2" | "localArea" | "city" | "province" | "postalCode" | "country";
+
+function updateAddressLocationField<T extends AddressLocationFieldsValue>(
+  current: T,
+  key: AddressLocationTextKey,
+  value: string,
+): T {
+  const next = { ...current, [key]: value };
+  delete next.lat;
+  delete next.lng;
+  return next;
+}
+
+export function AddressLocationFields<T extends AddressLocationFieldsValue>({
+  value,
+  onChange,
+  disabled = false,
+  provinceOptions,
+  includeCountry = false,
+  onAddressSelected,
+}: {
+  value: T;
+  onChange: Dispatch<SetStateAction<T>>;
+  disabled?: boolean;
+  provinceOptions?: readonly string[];
+  includeCountry?: boolean;
+  onAddressSelected?: () => void;
+}) {
+  const fieldClass =
+    "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
+  const updateField = (key: AddressLocationTextKey, nextValue: string) => {
+    onChange((current) => updateAddressLocationField(current, key, nextValue));
+  };
+  const field = (
+    key: AddressLocationTextKey,
+    title: string,
+    options: { required?: boolean; maxLength?: number; placeholder?: string } = {},
+  ) => (
+    <label className="space-y-1 text-sm" key={key}>
+      <span>{title}</span>
+      <input
+        className={fieldClass}
+        required={options.required}
+        maxLength={options.maxLength}
+        placeholder={options.placeholder}
+        inputMode={key === "postalCode" ? "numeric" : undefined}
+        pattern={key === "postalCode" ? "[0-9]{4}" : undefined}
+        value={value[key] ?? ""}
+        disabled={disabled}
+        onChange={(event) => updateField(key, event.currentTarget.value)}
+      />
+    </label>
+  );
+
+  return (
+    <>
+      <GooglePlacesAutocomplete
+        disabled={disabled}
+        onSelect={(selected) => {
+          onChange((current) => mergeGoogleAddress(current, selected));
+          onAddressSelected?.();
+        }}
+      />
+      {field("addressLine1", "Street address and number", {
+        required: true,
+        maxLength: 120,
+        placeholder: "Street number and street name",
+      })}
+      {field("addressLine2", "Apartment, unit or complex (optional)", { maxLength: 120 })}
+      {field("localArea", "Suburb or local area", {
+        required: true,
+        maxLength: 100,
+        placeholder: "Suburb or neighbourhood",
+      })}
+      {field("city", "City", { required: true, maxLength: 80 })}
+      <label className="space-y-1 text-sm">
+        <span>Province</span>
+        {provinceOptions ? (
+          <select
+            className={fieldClass}
+            required
+            value={value.province}
+            disabled={disabled}
+            onChange={(event) => updateField("province", event.currentTarget.value)}
+          >
+            <option value="">Select a province</option>
+            {provinceOptions.map((province) => (
+              <option key={province} value={province}>
+                {province}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            className={fieldClass}
+            required
+            maxLength={80}
+            value={value.province}
+            disabled={disabled}
+            onChange={(event) => updateField("province", event.currentTarget.value)}
+          />
+        )}
+      </label>
+      {field("postalCode", "Postal code", { required: true, maxLength: 4 })}
+      {includeCountry ? field("country", "Country", { required: true, maxLength: 80 }) : null}
+    </>
   );
 }
 

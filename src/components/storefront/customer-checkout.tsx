@@ -24,8 +24,7 @@ import {
   normalizeSouthAfricanProvince,
   SOUTH_AFRICAN_PROVINCES,
 } from "@/lib/south-african-address";
-import { GooglePlacesAutocomplete } from "@/components/storefront/address-autocomplete";
-import { mergeGoogleAddress } from "@/lib/google-address";
+import { AddressLocationFields } from "@/components/storefront/address-autocomplete";
 
 const inputClass = "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
 const ORDER_KEY = "healthyways.checkout.orderId";
@@ -728,89 +727,13 @@ export function CheckoutPage({
           ) : null}
           {showAddressForm ? (
             <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={saveAddress}>
-              <GooglePlacesAutocomplete
+              <AddressLocationFields
+                value={address}
+                onChange={setAddress}
                 disabled={busy}
-                onSelect={(selected) => {
-                  setAddress((current) => mergeGoogleAddress(current, selected));
-                  setMessage(null);
-                }}
+                provinceOptions={SOUTH_AFRICAN_PROVINCES}
+                onAddressSelected={() => setMessage(null)}
               />
-              {Object.entries(address)
-                .filter(
-                  ([key]) =>
-                    key !== "country" &&
-                    key !== "addressLine2" &&
-                    key !== "province" &&
-                    key !== "lat" &&
-                    key !== "lng",
-                )
-                .map(([key, value]) => (
-                  <label className="space-y-1 text-sm" key={key}>
-                    <span>{key.replace(/([A-Z])/g, " $1")}</span>
-                    <input
-                      required
-                      type="text"
-                      inputMode={key === "postalCode" ? "numeric" : undefined}
-                      pattern={key === "postalCode" ? "[0-9]{4}" : undefined}
-                      maxLength={key === "postalCode" ? 4 : undefined}
-                      className={inputClass}
-                      value={value}
-                      onChange={(e) => {
-                        const nextAddress = { ...address, [key]: e.currentTarget.value };
-                        if (
-                          key === "addressLine1" ||
-                          key === "localArea" ||
-                          key === "city" ||
-                          key === "province" ||
-                          key === "postalCode"
-                        ) {
-                          delete nextAddress.lat;
-                          delete nextAddress.lng;
-                        }
-                        setAddress(nextAddress);
-                      }}
-                    />
-                  </label>
-                ))}
-              <label className="space-y-1 text-sm">
-                <span>Apartment, unit or complex (optional)</span>
-                <input
-                  type="text"
-                  maxLength={120}
-                  className={inputClass}
-                  value={address.addressLine2}
-                  onChange={(event) => {
-                    const nextAddress = {
-                      ...address,
-                      addressLine2: event.currentTarget.value,
-                    };
-                    delete nextAddress.lat;
-                    delete nextAddress.lng;
-                    setAddress(nextAddress);
-                  }}
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span>Province</span>
-                <select
-                  className={inputClass}
-                  required
-                  value={address.province}
-                  onChange={(event) => {
-                    const nextAddress = { ...address, province: event.currentTarget.value };
-                    delete nextAddress.lat;
-                    delete nextAddress.lng;
-                    setAddress(nextAddress);
-                  }}
-                >
-                  <option value="">Select a province</option>
-                  {SOUTH_AFRICAN_PROVINCES.map((province) => (
-                    <option key={province} value={province}>
-                      {province}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <label className="space-y-1 text-sm">
                 <span>Address type</span>
                 <select

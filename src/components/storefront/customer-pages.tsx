@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { AddressLocationFields } from "@/components/storefront/address-autocomplete";
 import { authApi, type NewAddressInput, type PublicAddress, type PublicUser } from "@/lib/api/auth";
 import { cartApi } from "@/lib/api/cart";
 import {
@@ -831,34 +832,25 @@ export function AddressesPage({
         <h2 className="text-xl font-medium sm:col-span-2">
           {editing ? "Edit address" : "Add address"}
         </h2>
+        <AddressLocationFields
+          value={address}
+          onChange={setAddress}
+          disabled={busy}
+          includeCountry
+        />
         {Object.entries(address).map(([key, value]) =>
-          key === "deliveryInstructions" || key === "lat" || key === "lng" ? null : (
+          key === "label" || key === "recipientName" || key === "phoneNumber" ? (
             <label key={key} className="space-y-1 text-sm">
               <span>{label(key)}</span>
               <input
-                required={key !== "addressLine2"}
+                required
                 className={inputClass}
                 maxLength={key === "phoneNumber" ? 30 : 120}
                 value={value}
-                onChange={(e) => {
-                  const nextAddress = { ...address, [key]: e.currentTarget.value };
-                  if (
-                    key === "addressLine1" ||
-                    key === "addressLine2" ||
-                    key === "localArea" ||
-                    key === "city" ||
-                    key === "province" ||
-                    key === "postalCode" ||
-                    key === "country"
-                  ) {
-                    delete nextAddress.lat;
-                    delete nextAddress.lng;
-                  }
-                  setAddress(nextAddress);
-                }}
+                onChange={(event) => setAddress({ ...address, [key]: event.currentTarget.value })}
               />
             </label>
-          ),
+          ) : null,
         )}
         <div className="sm:col-span-2">
           <Button disabled={busy}>

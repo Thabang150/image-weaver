@@ -1088,8 +1088,8 @@ const publicPageCopy: Record<Exclude<PreviewView, "shop" | "home" | "login" | "c
     intro: "Reach our team for product guidance, order support or general questions.",
     sections: [
       { title: "WhatsApp", copy: "Send us a WhatsApp message for a convenient conversation with our team." },
-      { title: "Email", copy: "Email hello@healthywayssa.co.za for product, account or delivery questions." },
-      { title: "Call", copy: "Call +27 79 687 1118 during standard business hours for personal support." },
+      { title: "Email", copy: "Email info@healtywayssa.co.za for product, account or delivery questions." },
+      { title: "Queries, complaints & support", copy: "Call +27 79 687 1118 during standard business hours." },
     ],
   },
   consultation: {
@@ -1173,7 +1173,9 @@ function PublicPage({ view, onNavigate }: { view: keyof typeof publicPageCopy; o
         <p className="preview-section-kicker">{copy.eyebrow}</p>
         <h1>{copy.title}</h1>
         <p>{copy.intro}</p>
-        {view === "contact" || view === "consultation" ? <ContactActions /> : null}
+        {view === "contact" || view === "consultation" ? (
+          <ContactActions consultation={view === "consultation"} />
+        ) : null}
       </header>
       <section className="wellness-public-grid" aria-label={`${copy.title} information`}>
         {copy.sections.map((section) => (

@@ -579,9 +579,15 @@ export function OrderDetailPage({
         </Button>
         <a
           className="inline-flex min-h-10 items-center rounded-md border px-4 py-2 text-sm"
-          href="mailto:support@healthywayssa.co.za"
+          href="mailto:info@healtywayssa.co.za"
         >
           Contact support
+        </a>
+        <a
+          className="inline-flex min-h-10 items-center rounded-md border px-4 py-2 text-sm"
+          href="tel:+27796871118"
+        >
+          Call support · 079 687 1118
         </a>
       </div>
     </Page>

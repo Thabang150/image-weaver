@@ -30,7 +30,7 @@ export interface CustomerOrder {
   currency: "ZAR";
   status: "pending_payment" | "paid" | "cancelled" | "payment_reconciliation";
   fulfillmentStatus: "awaiting_payment" | "processing" | "shipped" | "delivered" | "cancelled";
-  stockReservationStatus: "reserved" | "committed" | "released";
+  stockReservationStatus: "unreserved" | "reserved" | "committed" | "released";
   shippingQuote?: {
     quoteId?: string;
     chargeCents: number;
@@ -191,7 +191,7 @@ export function classifyCustomerPayment(order: CustomerOrder): CustomerPaymentSt
   }
   if (latest?.status === "failed") return "failed";
   if (latest?.status === "cancelled") return "cancelled";
-  if (latest?.status === "complete") return "successful";
+  if (latest?.status === "complete") return "confirmation-pending";
   return "awaiting-payment";
 }
 
@@ -214,7 +214,8 @@ export function canRetryCustomerPayment(order: CustomerOrder): boolean {
     (!quote.expiresAt || Date.parse(quote.expiresAt) > Date.now());
   return (
     order.status === "pending_payment" &&
-    order.stockReservationStatus === "reserved" &&
+    (order.stockReservationStatus === "reserved" ||
+      order.stockReservationStatus === "unreserved") &&
     quoteIsCurrent &&
     !hasUnresolvedAttempt &&
     !hasCompletedAttempt &&
@@ -233,7 +234,8 @@ export function canCancelCustomerOrder(order: CustomerOrder): boolean {
   );
   return (
     order.status === "pending_payment" &&
-    order.stockReservationStatus === "reserved" &&
+    (order.stockReservationStatus === "reserved" ||
+      order.stockReservationStatus === "unreserved") &&
     !hasCompletedAttempt &&
     !hasReconciliation &&
     !freshPendingAttempt
@@ -406,7 +408,7 @@ function parseOrder(value: unknown): CustomerOrder {
     "delivered",
     "cancelled",
   ] as string[];
-  const stock = ["reserved", "committed", "released"] as string[];
+  const stock = ["unreserved", "reserved", "committed", "released"] as string[];
   if (
     !integer(subtotalCents) ||
     !integer(totalCents) ||
@@ -541,8 +543,14 @@ function parseCartShippingRate(value: unknown): CartShippingRate {
 
 export function createOrdersApi(client: OrdersApiClient) {
   return {
-    async listCustomerOrders(page = 1, limit = 20): Promise<CustomerOrderList> {
-      const response = await client.request<unknown>(`/orders?page=${page}&limit=${limit}`);
+    async listCustomerOrders(
+      page = 1,
+      limit = 20,
+      headers?: HeadersInit,
+    ): Promise<CustomerOrderList> {
+      const response = await client.request<unknown>(`/orders?page=${page}&limit=${limit}`, {
+        ...(headers === undefined ? {} : { headers }),
+      });
       if (
         !record(response) ||
         !Array.isArray(response["orders"]) ||
@@ -567,8 +575,10 @@ export function createOrdersApi(client: OrdersApiClient) {
         pagination: { page: currentPage, limit: currentLimit, total, totalPages },
       };
     },
-    async getCustomerOrder(orderId: string): Promise<CustomerOrder> {
-      const response = await client.request<unknown>(`/orders/${encodeURIComponent(orderId)}`);
+    async getCustomerOrder(orderId: string, headers?: HeadersInit): Promise<CustomerOrder> {
+      const response = await client.request<unknown>(`/orders/${encodeURIComponent(orderId)}`, {
+        ...(headers === undefined ? {} : { headers }),
+      });
       if (!record(response) || !record(response["order"])) invalid();
       return parseOrder(response["order"]);
     },
@@ -582,9 +592,11 @@ export function createOrdersApi(client: OrdersApiClient) {
     async createCartShippingQuote(
       addressId: string,
       selections: CartShippingQuoteSelections = {},
+      headers?: HeadersInit,
     ): Promise<CartShippingQuote> {
       const response = await client.request<unknown>("/shipping/quote", {
         method: "POST",
+        ...(headers === undefined ? {} : { headers }),
         json: { addressId, ...selections },
       });
       if (
@@ -603,9 +615,14 @@ export function createOrdersApi(client: OrdersApiClient) {
         rates,
       };
     },
-    async selectCartShippingRate(quoteId: string, rateId: string): Promise<void> {
+    async selectCartShippingRate(
+      quoteId: string,
+      rateId: string,
+      headers?: HeadersInit,
+    ): Promise<void> {
       await client.request<unknown>(`/shipping/quote/${encodeURIComponent(quoteId)}/select`, {
         method: "POST",
+        ...(headers === undefined ? {} : { headers }),
         json: { rateId },
       });
     },
@@ -613,10 +630,13 @@ export function createOrdersApi(client: OrdersApiClient) {
       addressId: string,
       shippingQuoteId: string,
       idempotencyKey: string,
+      headers?: HeadersInit,
     ): Promise<CustomerOrder> {
+      const requestHeaders = new Headers(headers);
+      requestHeaders.set("Idempotency-Key", idempotencyKey);
       const response = await client.request<{ order?: unknown }>("/orders", {
         method: "POST",
-        headers: { "Idempotency-Key": idempotencyKey },
+        headers: requestHeaders,
         json: { addressId, shippingQuoteId },
       });
       if (!record(response) || !record(response.order)) invalid();
@@ -634,10 +654,10 @@ export function createOrdersApi(client: OrdersApiClient) {
         invalid();
       return response as unknown as OrderTracking;
     },
-    async createPayFastCheckout(orderId: string): Promise<PayFastCheckout> {
+    async createPayFastCheckout(orderId: string, headers?: HeadersInit): Promise<PayFastCheckout> {
       const response = await client.request<unknown>(
         `/orders/${encodeURIComponent(orderId)}/payfast/checkout`,
-        { method: "POST", json: {} },
+        { method: "POST", ...(headers === undefined ? {} : { headers }), json: {} },
       );
       return parsePayFastCheckout(response);
     },
@@ -666,10 +686,14 @@ export function createOrdersApi(client: OrdersApiClient) {
       );
       return parseShippingOptInRates(response);
     },
-    async getShippingQuotes(orderId: string, selections: CartShippingQuoteSelections = {}) {
+    async getShippingQuotes(
+      orderId: string,
+      selections: CartShippingQuoteSelections = {},
+      headers?: HeadersInit,
+    ) {
       const response = await client.request<unknown>(
         `/orders/${encodeURIComponent(orderId)}/shipping/quote`,
-        { method: "POST", json: selections },
+        { method: "POST", ...(headers === undefined ? {} : { headers }), json: selections },
       );
       if (!record(response) || !Array.isArray(response["rates"])) invalid();
       const responseOrderId = response["orderId"];
@@ -687,10 +711,10 @@ export function createOrdersApi(client: OrdersApiClient) {
         rates: response["rates"].map(parseCartShippingRate),
       };
     },
-    async selectShippingQuote(orderId: string, quoteId: string) {
+    async selectShippingQuote(orderId: string, quoteId: string, headers?: HeadersInit) {
       const response = await client.request<unknown>(
         `/orders/${encodeURIComponent(orderId)}/shipping/quote/${encodeURIComponent(quoteId)}/select`,
-        { method: "POST", json: {} },
+        { method: "POST", ...(headers === undefined ? {} : { headers }), json: {} },
       );
       if (!record(response)) invalid();
       return response as {
@@ -705,40 +729,55 @@ export function createOrdersApi(client: OrdersApiClient) {
 
 let configuredOrdersApi: ReturnType<typeof createOrdersApi> | undefined;
 export const ordersApi = {
-  listCustomerOrders: (page?: number, limit?: number) =>
+  listCustomerOrders: (page?: number, limit?: number, headers?: HeadersInit) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).listCustomerOrders(
       page,
       limit,
+      headers,
     ),
-  getCustomerOrder: (orderId: string) =>
+  getCustomerOrder: (orderId: string, headers?: HeadersInit) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getCustomerOrder(
       orderId,
+      headers,
     ),
   getCartShippingOptInRates: (addressId: string) =>
     (configuredOrdersApi ??= createOrdersApi(
       createConfiguredApiClient(),
     )).getCartShippingOptInRates(addressId),
-  createCartShippingQuote: (addressId: string, selections?: CartShippingQuoteSelections) =>
+  createCartShippingQuote: (
+    addressId: string,
+    selections?: CartShippingQuoteSelections,
+    headers?: HeadersInit,
+  ) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createCartShippingQuote(
       addressId,
       selections,
+      headers,
     ),
-  selectCartShippingRate: (quoteId: string, rateId: string) =>
+  selectCartShippingRate: (quoteId: string, rateId: string, headers?: HeadersInit) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).selectCartShippingRate(
       quoteId,
       rateId,
+      headers,
     ),
-  createOrder: (addressId: string, shippingQuoteId: string, idempotencyKey: string) =>
+  createOrder: (
+    addressId: string,
+    shippingQuoteId: string,
+    idempotencyKey: string,
+    headers?: HeadersInit,
+  ) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createOrder(
       addressId,
       shippingQuoteId,
       idempotencyKey,
+      headers,
     ),
   getTracking: (orderId: string) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getTracking(orderId),
-  createPayFastCheckout: (orderId: string) =>
+  createPayFastCheckout: (orderId: string, headers?: HeadersInit) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createPayFastCheckout(
       orderId,
+      headers,
     ),
   cancelCustomerOrder: (orderId: string) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).cancelCustomerOrder(
@@ -752,18 +791,24 @@ export const ordersApi = {
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).archiveCustomerOrder(
       orderId,
     ),
-  getShippingQuotes: (orderId: string, selections?: CartShippingQuoteSelections) =>
+  getShippingQuotes: (
+    orderId: string,
+    selections?: CartShippingQuoteSelections,
+    headers?: HeadersInit,
+  ) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getShippingQuotes(
       orderId,
       selections,
+      headers,
     ),
   getOrderShippingOptInRates: (orderId: string) =>
     (configuredOrdersApi ??= createOrdersApi(
       createConfiguredApiClient(),
     )).getOrderShippingOptInRates(orderId),
-  selectShippingQuote: (orderId: string, quoteId: string) =>
+  selectShippingQuote: (orderId: string, quoteId: string, headers?: HeadersInit) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).selectShippingQuote(
       orderId,
       quoteId,
+      headers,
     ),
 };

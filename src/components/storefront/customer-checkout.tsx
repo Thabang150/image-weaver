@@ -25,10 +25,24 @@ import {
   SOUTH_AFRICAN_PROVINCES,
 } from "@/lib/south-african-address";
 import { AddressLocationFields } from "@/components/storefront/address-autocomplete";
+import {
+  checkoutTraceHeaders,
+  getCheckoutTraceId,
+  logCheckoutDiagnostic,
+} from "@/lib/checkout-diagnostics";
+import {
+  clearSavedCheckoutOrder,
+  getCheckoutIdempotencyKey,
+  getSavedCheckoutOrderId,
+  saveCheckoutOrderId,
+} from "@/lib/checkout-storage";
+import {
+  findActiveCheckoutOrder,
+  matchesOrderCart,
+  matchesSelectedAddress,
+} from "@/lib/checkout-recovery";
 
 const inputClass = "min-h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
-const ORDER_KEY = "healthyways.checkout.orderId";
-const IDEMPOTENCY_KEYS = "healthyways.checkout.idempotencyKeys";
 type CartFingerprintSource = {
   items: Array<{ productId: string; quantity: number }>;
 };
@@ -53,79 +67,7 @@ function idempotencyKey(
   addressId: string,
   cart: CartFingerprintSource | undefined,
 ) {
-  const fingerprint = checkoutFingerprint(userId, addressId, cart);
-  let keys: Record<string, string> = {};
-  try {
-    keys = JSON.parse(sessionStorage.getItem(IDEMPOTENCY_KEYS) ?? "{}");
-  } catch {
-    keys = {};
-  }
-  const existing = keys[fingerprint];
-  if (existing) return existing;
-  const created = `checkout-${Date.now()}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
-  keys[fingerprint] = created;
-  sessionStorage.setItem(IDEMPOTENCY_KEYS, JSON.stringify(keys));
-  return created;
-}
-
-function matchesSelectedAddress(order: CustomerOrder, address: PublicAddress) {
-  const selected = {
-    recipientName: address.recipientName,
-    phoneNumber: address.phoneNumber,
-    addressLine1: address.addressLine1,
-    addressLine2: address.addressLine2 ?? "",
-    localArea: address.localArea ?? "",
-    addressType: address.addressType ?? "residential",
-    city: address.city,
-    province: address.province,
-    postalCode: address.postalCode,
-    country: address.country,
-    lat: address.lat,
-    lng: address.lng,
-  };
-  const delivery = order.deliveryAddress;
-  return (
-    [
-      selected.recipientName,
-      selected.phoneNumber,
-      selected.addressLine1,
-      selected.addressLine2,
-      selected.localArea,
-      selected.addressType,
-      selected.city,
-      selected.province,
-      selected.postalCode,
-      selected.country,
-      selected.lat === undefined ? "" : String(selected.lat),
-      selected.lng === undefined ? "" : String(selected.lng),
-    ]
-      .map((value) => value.trim().toLowerCase())
-      .join("|") ===
-    [
-      delivery.recipientName,
-      delivery.phoneNumber,
-      delivery.addressLine1,
-      delivery.addressLine2 ?? "",
-      delivery.localArea ?? "",
-      delivery.addressType ?? "residential",
-      delivery.city,
-      delivery.province,
-      delivery.postalCode,
-      delivery.country,
-      delivery.lat === undefined ? "" : String(delivery.lat),
-      delivery.lng === undefined ? "" : String(delivery.lng),
-    ]
-      .map((value) => value.trim().toLowerCase())
-      .join("|")
-  );
-}
-
-function matchesCart(order: CustomerOrder, cart: CartFingerprintSource | undefined) {
-  const ordered = order.items
-    .map((item) => `${item.productId}:${item.quantity}`)
-    .sort()
-    .join("|");
-  return ordered === cartFingerprint(cart);
+  return getCheckoutIdempotencyKey(checkoutFingerprint(userId, addressId, cart));
 }
 
 function recoverableOrder(order: CustomerOrder) {
@@ -148,10 +90,10 @@ function recoverableOrder(order: CustomerOrder) {
       reason:
         "Payment confirmation or reconciliation is unresolved. Do not create another order; continue from My Orders.",
     };
-  if (order.stockReservationStatus !== "reserved")
+  if (order.stockReservationStatus !== "reserved" && order.stockReservationStatus !== "unreserved")
     return {
       eligible: false,
-      reason: "This order's stock reservation has expired or is no longer active.",
+      reason: "This order is no longer eligible for checkout.",
     };
   return {
     eligible: order.status === "pending_payment",
@@ -245,6 +187,23 @@ function DeliveryOptionList({
   );
 }
 
+async function getCheckoutCart() {
+  try {
+    const cart = await cartApi.getCart({ headers: checkoutTraceHeaders() });
+    logCheckoutDiagnostic("checkout.cart.validated", {
+      status:
+        cart.items.length === 0 ? "empty" : cart.hasUnavailableItems ? "unavailable" : "valid",
+    });
+    return cart;
+  } catch (error) {
+    logCheckoutDiagnostic("checkout.cart.validation.failed", {
+      status: "failed",
+      errorCode: "cart_validation_failed",
+    });
+    throw error;
+  }
+}
+
 export function CheckoutPage({
   user,
   onNavigate,
@@ -253,6 +212,10 @@ export function CheckoutPage({
   onNavigate: (view: string, returnTo?: string, orderId?: string) => void;
 }) {
   const queryClient = useQueryClient();
+  useEffect(() => {
+    getCheckoutTraceId();
+    logCheckoutDiagnostic("checkout.started");
+  }, []);
   const { cart, retryCart, removeItem, isBusy } = useCart();
   const [addressId, setAddressId] = useState(
     () => user.addresses.find((a: PublicAddress) => a.isDefault)?.id ?? user.addresses[0]?.id ?? "",
@@ -291,34 +254,86 @@ export function CheckoutPage({
     postalCode: "",
     country: "South Africa",
   });
-  const [recoveryState, setRecoveryState] = useState<"loading" | "eligible" | "stale" | "none">(
-    "none",
-  );
+  const [recoveryState, setRecoveryState] = useState<
+    "loading" | "eligible" | "stale" | "none" | "ambiguous" | "unavailable"
+  >("none");
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(ORDER_KEY);
-    if (!saved) return;
+    let active = true;
+    const saved = getSavedCheckoutOrderId();
     setRecoveryState("loading");
-    void ordersApi
-      .getCustomerOrder(saved)
-      .then((recovered) => {
-        setRecoveryState("eligible");
-        setOrder(recovered);
-        const quoteExpiresAt = recovered.shippingQuote?.expiresAt
-          ? Date.parse(recovered.shippingQuote.expiresAt)
-          : Date.parse(recovered.shippingQuote?.confirmedAt ?? "") + SHIPPING_RATE_LIFETIME_MS;
-        if (Number.isFinite(quoteExpiresAt)) setRatesExpireAt(quoteExpiresAt);
-        if (recovered.shippingQuote) setSelectedQuote(recovered.shippingQuote.quoteId ?? "");
-      })
-      .catch(() => {
-        sessionStorage.removeItem(ORDER_KEY);
-        setRecoveryState("stale");
-        setOrder(null);
+
+    const acceptOrder = (recovered: CustomerOrder) => {
+      if (!active) return;
+      setRecoveryState("eligible");
+      setOrder(recovered);
+      saveCheckoutOrderId(recovered.id);
+      const quoteExpiresAt = recovered.shippingQuote?.expiresAt
+        ? Date.parse(recovered.shippingQuote.expiresAt)
+        : Date.parse(recovered.shippingQuote?.confirmedAt ?? "") + SHIPPING_RATE_LIFETIME_MS;
+      if (Number.isFinite(quoteExpiresAt)) setRatesExpireAt(quoteExpiresAt);
+      if (recovered.shippingQuote) setSelectedQuote(recovered.shippingQuote.quoteId ?? "");
+    };
+
+    const discoverActiveOrder = async () => {
+      const currentCart = await getCheckoutCart();
+      if (!active) return;
+      queryClient.setQueryData(["cart", user.id], currentCart);
+      if (currentCart.items.length === 0) {
+        setRecoveryState("none");
+        return;
+      }
+
+      const matchingOrders: CustomerOrder[] = [];
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const result = await ordersApi.listCustomerOrders(page, 100, checkoutTraceHeaders());
+        matchingOrders.push(...result.orders);
+        totalPages = result.pagination.totalPages;
+        page += 1;
+      } while (active && page <= totalPages);
+
+      if (!active) return;
+      const selected = user.addresses.find((entry) => entry.id === addressId);
+      const activeCheckout = findActiveCheckoutOrder(matchingOrders, currentCart, selected);
+      if (activeCheckout.status === "found") {
+        acceptOrder(activeCheckout.order);
+      } else if (activeCheckout.status === "ambiguous") {
+        setRecoveryState("ambiguous");
         setMessage(
-          "We could not verify your saved order. It was not cancelled or changed; start checkout again when the order can be confirmed.",
+          "More than one active order matches this cart. No new order was created; review My Orders and continue the correct checkout.",
         );
-      });
-  }, []);
+      } else {
+        setRecoveryState("none");
+      }
+    };
+
+    const recover = async () => {
+      if (saved) {
+        try {
+          acceptOrder(await ordersApi.getCustomerOrder(saved, checkoutTraceHeaders()));
+          return;
+        } catch {
+          clearSavedCheckoutOrder();
+        }
+      }
+      try {
+        await discoverActiveOrder();
+      } catch {
+        if (!active) return;
+        setRecoveryState("unavailable");
+        setMessage(
+          "We could not check for an existing order. No new order can be created until checkout status is verified; refresh the page or review My Orders.",
+        );
+      }
+    };
+
+    void recover();
+    return () => {
+      active = false;
+    };
+  }, [addressId, queryClient, user.addresses, user.id]);
 
   useEffect(() => {
     if (ratesExpireAt === undefined) return;
@@ -341,12 +356,15 @@ export function CheckoutPage({
   const recoveredAddressMatches = Boolean(
     order && selectedAddress && matchesSelectedAddress(order, selectedAddress),
   );
-  const recoveredCartMatches = Boolean(order && matchesCart(order, cart));
+  const recoveredCartMatches = Boolean(order && matchesOrderCart(order, cart));
   const recoveryBlocked = Boolean(
-    order &&
-    (!recovery.eligible ||
-      !recoveredAddressMatches ||
-      (cart?.items.length !== 0 && !recoveredCartMatches)),
+    recoveryState === "loading" ||
+    recoveryState === "ambiguous" ||
+    recoveryState === "unavailable" ||
+    (order &&
+      (!recovery.eligible ||
+        !recoveredAddressMatches ||
+        (cart?.items.length !== 0 && !recoveredCartMatches))),
   );
 
   const deliveryCharge = order?.shippingQuote?.chargeCents ?? 0;
@@ -428,7 +446,11 @@ export function CheckoutPage({
 
   async function loadQuotes(existingOrder: CustomerOrder) {
     try {
-      const quoteResponse = await ordersApi.getShippingQuotes(existingOrder.id);
+      const quoteResponse = await ordersApi.getShippingQuotes(
+        existingOrder.id,
+        undefined,
+        checkoutTraceHeaders(),
+      );
       setRates(quoteResponse.rates ?? []);
       const expiryTimes = (quoteResponse.rates ?? [])
         .map((rate) => Date.parse(rate.retrievedAt ?? ""))
@@ -463,8 +485,10 @@ export function CheckoutPage({
     setSelectedQuote("");
     setCartQuoteId("");
     setRatesExpireAt(undefined);
+    const startedAt = performance.now();
+    logCheckoutDiagnostic("checkout.quote.requested");
     try {
-      const latestCart = await cartApi.getCart();
+      const latestCart = await getCheckoutCart();
       queryClient.setQueryData(["cart", user.id], latestCart);
       if (latestCart.hasUnavailableItems || cartFingerprint(latestCart) !== cartFingerprint(cart)) {
         setMessage(
@@ -472,13 +496,26 @@ export function CheckoutPage({
         );
         return;
       }
-      const response = await ordersApi.createCartShippingQuote(addressId);
+      const response = await ordersApi.createCartShippingQuote(
+        addressId,
+        undefined,
+        checkoutTraceHeaders(),
+      );
       setCartQuoteId(response.quoteId);
       setRatesExpireAt(Date.parse(response.expiresAt));
       setRates(response.rates);
+      logCheckoutDiagnostic("checkout.quote.succeeded", {
+        durationMs: performance.now() - startedAt,
+        status: response.rates.length === 0 ? "no_rates" : "rates_returned",
+      });
       if (response.rates.length === 0)
         setMessage("No delivery options are available for this address.");
     } catch (error) {
+      logCheckoutDiagnostic("checkout.quote.failed", {
+        durationMs: performance.now() - startedAt,
+        httpStatus: error instanceof ApiHttpError ? error.status : undefined,
+        errorCode: error instanceof ApiHttpError ? `http_${error.status}` : "request_failed",
+      });
       setMessage(
         error instanceof ApiHttpError && error.status === 400
           ? "Check that your delivery address has a street, suburb, city, supported province and four-digit postal code."
@@ -497,8 +534,10 @@ export function CheckoutPage({
     if (!canCreate || recoveryBlocked || !cartQuoteId || !selectedQuote) return;
     setBusy(true);
     setMessage(null);
+    const startedAt = performance.now();
+    logCheckoutDiagnostic("checkout.order.create.started");
     try {
-      const latestCart = await cartApi.getCart();
+      const latestCart = await getCheckoutCart();
       queryClient.setQueryData(["cart", user.id], latestCart);
       if (latestCart.hasUnavailableItems || cartFingerprint(latestCart) !== cartFingerprint(cart)) {
         setMessage(
@@ -510,10 +549,25 @@ export function CheckoutPage({
         addressId,
         cartQuoteId,
         idempotencyKey(user.id, addressId, latestCart),
+        checkoutTraceHeaders(),
       );
-      sessionStorage.setItem(ORDER_KEY, next.id);
       setOrder(next);
+      if (!saveCheckoutOrderId(next.id)) {
+        setMessage(
+          "Your order was created, but this browser cannot save checkout recovery. Keep this page open while completing payment.",
+        );
+      }
+      logCheckoutDiagnostic("checkout.order.create.succeeded", {
+        orderId: next.id,
+        status: next.status,
+        durationMs: performance.now() - startedAt,
+      });
     } catch (error) {
+      logCheckoutDiagnostic("checkout.order.create.failed", {
+        durationMs: performance.now() - startedAt,
+        httpStatus: error instanceof ApiHttpError ? error.status : undefined,
+        errorCode: error instanceof ApiHttpError ? `http_${error.status}` : "request_failed",
+      });
       if (error instanceof ApiHttpError && error.status === 409) {
         setMessage(
           "The delivery rate expired or your order/cart changed. Request fresh rates and retry; no order was created.",
@@ -534,11 +588,11 @@ export function CheckoutPage({
     try {
       if (!order) {
         if (!cartQuoteId) throw new Error("Missing delivery quote.");
-        await ordersApi.selectCartShippingRate(cartQuoteId, quoteId);
+        await ordersApi.selectCartShippingRate(cartQuoteId, quoteId, checkoutTraceHeaders());
         setSelectedQuote(quoteId);
         return;
       }
-      await ordersApi.selectShippingQuote(order.id, quoteId);
+      await ordersApi.selectShippingQuote(order.id, quoteId, checkoutTraceHeaders());
       setSelectedQuote(quoteId);
       const authoritative = await ordersApi.getCustomerOrder(order.id);
       setOrder(authoritative);
@@ -577,9 +631,17 @@ export function CheckoutPage({
     }
     setBusy(true);
     setMessage(null);
+    logCheckoutDiagnostic("checkout.payment.initiation.started", { orderId: order.id });
     try {
-      submitPayFast(await ordersApi.createPayFastCheckout(order.id));
+      const checkout = await ordersApi.createPayFastCheckout(order.id, checkoutTraceHeaders());
+      logCheckoutDiagnostic("checkout.payment.initiation.succeeded", { orderId: order.id });
+      submitPayFast(checkout);
     } catch (error) {
+      logCheckoutDiagnostic("checkout.payment.initiation.failed", {
+        orderId: order.id,
+        httpStatus: error instanceof ApiHttpError ? error.status : undefined,
+        errorCode: error instanceof ApiHttpError ? `http_${error.status}` : "request_failed",
+      });
       setMessage(
         error instanceof ApiHttpError && error.status === 409
           ? "Payment cannot be started yet. Wait for any reconciliation to finish or continue from My Orders."
@@ -640,8 +702,16 @@ export function CheckoutPage({
       ) : null}
       {recoveryState === "loading" ? (
         <p role="status" className="mt-5 text-sm">
-          Checking your saved order…
+          Checking for an existing order…
         </p>
+      ) : null}
+      {recoveryState === "ambiguous" || recoveryState === "unavailable" ? (
+        <div role="alert" className="mt-5 rounded-md border border-destructive/40 p-4 text-sm">
+          <p>{message}</p>
+          <Button variant="outline" className="mt-3" onClick={() => onNavigate("orders")}>
+            Review my orders
+          </Button>
+        </div>
       ) : null}
       {order && recoveryBlocked ? (
         <div role="alert" className="mt-5 rounded-md border border-destructive/40 p-4 text-sm">
@@ -656,7 +726,7 @@ export function CheckoutPage({
             variant="outline"
             className="mt-3"
             onClick={() => {
-              sessionStorage.removeItem(ORDER_KEY);
+              clearSavedCheckoutOrder();
               setOrder(null);
               setRates([]);
               setSelectedQuote("");
@@ -685,6 +755,9 @@ export function CheckoutPage({
                     checked={addressId === entry.id}
                     onChange={() => {
                       setAddressId(entry.id);
+                      logCheckoutDiagnostic("checkout.address.selected", {
+                        status: "selected",
+                      });
                       setRates([]);
                       setRatesExpireAt(undefined);
                       setSelectedQuote("");

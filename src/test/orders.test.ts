@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createApiClient } from "@/lib/api/client";
-import { canRetryCustomerPayment, createOrdersApi, type CustomerOrder } from "@/lib/api/orders";
+import { findActiveCheckoutOrder } from "@/lib/checkout-recovery";
+import {
+  canRetryCustomerPayment,
+  classifyCustomerPayment,
+  createOrdersApi,
+  type CustomerOrder,
+} from "@/lib/api/orders";
 
 const order = {
   id: "order-1",
@@ -46,6 +52,65 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("customer order history API", () => {
+  it("recovers the unique active order matching the server cart after browser storage loss", () => {
+    const activeOrder = {
+      ...order,
+      createdAt: new Date().toISOString(),
+      stockReservationStatus: "unreserved" as const,
+      paymentAttempts: [],
+    };
+    const cart = {
+      items: activeOrder.items.map(({ productId, quantity }) => ({ productId, quantity })),
+    };
+    const address = {
+      ...activeOrder.deliveryAddress,
+      addressType: "residential" as const,
+    };
+
+    expect(findActiveCheckoutOrder([activeOrder], cart, address)).toEqual({
+      status: "found",
+      order: activeOrder,
+    });
+    expect(findActiveCheckoutOrder([{ ...activeOrder, status: "paid" }], cart, address)).toEqual({
+      status: "none",
+    });
+  });
+
+  it("does not choose between multiple matching active orders without a unique address match", () => {
+    const activeOrder = {
+      ...order,
+      createdAt: new Date().toISOString(),
+      stockReservationStatus: "unreserved" as const,
+      paymentAttempts: [],
+    };
+    const cart = {
+      items: activeOrder.items.map(({ productId, quantity }) => ({ productId, quantity })),
+    };
+
+    expect(findActiveCheckoutOrder([activeOrder, activeOrder], cart)).toEqual({
+      status: "ambiguous",
+    });
+  });
+
+  it("shows success only when the persisted order is paid", () => {
+    const now = new Date().toISOString();
+    const attempt = {
+      id: "attempt-1",
+      status: "complete" as const,
+      amountCents: 2500,
+      currency: "ZAR" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(classifyCustomerPayment({ ...order, paymentAttempts: [attempt] })).toBe(
+      "confirmation-pending",
+    );
+    expect(classifyCustomerPayment({ ...order, status: "paid", paymentAttempts: [attempt] })).toBe(
+      "successful",
+    );
+  });
+
   it("does not allow payment retry with an expired five-minute shipping rate", () => {
     const now = Date.now();
     const retryableOrder = {
@@ -70,6 +135,33 @@ describe("customer order history API", () => {
     };
 
     expect(canRetryCustomerPayment(retryableOrder)).toBe(false);
+  });
+
+  it("allows retrying a definitively failed payment on an unreserved current order", () => {
+    const now = new Date().toISOString();
+    const retryableOrder = {
+      ...order,
+      createdAt: now,
+      stockReservationStatus: "unreserved" as const,
+      paymentAttempts: [
+        {
+          id: "attempt-1",
+          status: "failed" as const,
+          amountCents: 3300,
+          currency: "ZAR" as const,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      shippingQuote: {
+        chargeCents: 800,
+        serviceName: "Standard",
+        confirmedAt: now,
+        status: "confirmed" as const,
+      },
+    };
+
+    expect(canRetryCustomerPayment(retryableOrder)).toBe(true);
   });
 
   it("sends selected opt-in IDs with cart rate requests and keeps the provider rate as the full delivery amount", async () => {
@@ -176,12 +268,14 @@ describe("customer order history API", () => {
   });
 
   it("parses the quote-first order-creation envelope and rejects malformed order data", async () => {
+    const checkoutTraceId = "00000000-0000-4000-8000-000000000001";
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/auth/csrf-token")) return jsonResponse({ csrfToken: "csrf" });
       if (url.pathname.endsWith("/orders")) {
         expect(init?.method).toBe("POST");
         expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("order-submit-test-0001");
+        expect(new Headers(init?.headers).get("X-Checkout-Trace-ID")).toBe(checkoutTraceId);
         expect(JSON.parse(String(init?.body))).toEqual({
           addressId: "address-1",
           shippingQuoteId: "shipping-quote-1",
@@ -196,7 +290,9 @@ describe("customer order history API", () => {
     const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
 
     await expect(
-      api.createOrder("address-1", "shipping-quote-1", "order-submit-test-0001"),
+      api.createOrder("address-1", "shipping-quote-1", "order-submit-test-0001", {
+        "X-Checkout-Trace-ID": checkoutTraceId,
+      }),
     ).resolves.toEqual(order);
 
     const invalidFetcher = vi.fn<typeof fetch>(async (input) => {
@@ -228,11 +324,16 @@ describe("customer order history API", () => {
     );
     const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
 
-    const result = await api.listCustomerOrders();
+    const result = await api.listCustomerOrders(1, 20, {
+      "X-Checkout-Trace-ID": "00000000-0000-4000-8000-000000000001",
+    });
     expect(result.orders[0]?.status).toBe("pending_payment");
     expect(result.orders[0]?.totalCents).toBe(2500);
     expect(String(fetcher.mock.calls[0]?.[0])).toBe(
       "https://api.example.test/api/v1/orders?page=1&limit=20",
+    );
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("X-Checkout-Trace-ID")).toBe(
+      "00000000-0000-4000-8000-000000000001",
     );
     expect(fetcher.mock.calls[0]?.[1]?.credentials).toBe("include");
   });

@@ -1,4 +1,9 @@
-import { ApiResponseError, createConfiguredApiClient, type createApiClient } from "./client";
+import {
+  ApiResponseError,
+  createConfiguredApiClient,
+  type ApiRequestOptions,
+  type createApiClient,
+} from "./client";
 
 export interface CartProductSummary {
   name: string;
@@ -24,6 +29,7 @@ export interface Cart {
 }
 
 export type CartApiClient = Pick<ReturnType<typeof createApiClient>, "request">;
+type CartReadOptions = Pick<ApiRequestOptions, "headers">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -61,8 +67,7 @@ function parseCartLine(value: unknown): CartLine {
     quantity < 1 ||
     quantity > 99 ||
     typeof available !== "boolean" ||
-    (stockQuantity !== undefined &&
-      (!isSafeInteger(stockQuantity) || stockQuantity < 0))
+    (stockQuantity !== undefined && (!isSafeInteger(stockQuantity) || stockQuantity < 0))
   ) {
     invalidCartResponse();
   }
@@ -93,7 +98,8 @@ function parseCartLine(value: unknown): CartLine {
 
   const unavailableProduct = parseProductSummary(value["product"]);
   const hasNoPrice = unitPriceCents === null && lineSubtotalCents === null;
-  const hasValidPrice = isSafeInteger(unitPriceCents) &&
+  const hasValidPrice =
+    isSafeInteger(unitPriceCents) &&
     unitPriceCents > 0 &&
     isSafeInteger(lineSubtotalCents) &&
     lineSubtotalCents === unitPriceCents * quantity;
@@ -149,8 +155,8 @@ function parseCart(value: unknown): Cart {
 
 export function createCartApi(client: CartApiClient) {
   return {
-    async getCart() {
-      const response = await client.request<{ cart: unknown }>("/cart");
+    async getCart(options: CartReadOptions = {}) {
+      const response = await client.request<{ cart: unknown }>("/cart", options);
       if (!response || !isRecord(response) || !isRecord(response["cart"])) {
         invalidCartResponse();
       }
@@ -217,7 +223,7 @@ function getConfiguredCartApi() {
 }
 
 export const cartApi = {
-  getCart: () => getConfiguredCartApi().getCart(),
+  getCart: (options?: CartReadOptions) => getConfiguredCartApi().getCart(options),
   addItem: (productId: string, quantity = 1) => getConfiguredCartApi().addItem(productId, quantity),
   updateItem: (productId: string, quantity: number) =>
     getConfiguredCartApi().updateItem(productId, quantity),

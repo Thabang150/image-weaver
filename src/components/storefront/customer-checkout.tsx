@@ -442,9 +442,14 @@ export function CheckoutPage({
     ) ?? [];
   const collectionContactReady = Boolean(user.displayName?.trim() && user.phoneNumber?.trim());
   const collectionAvailable = fulfillmentOptions?.collection.available === true;
-  const collectionLocation = order?.collectionLocation ?? fulfillmentOptions?.collection.location;
+  const configuredCollectionLocation = fulfillmentOptions?.collection.location;
+  const collectionLocation = order?.collectionLocation
+    ? { ...configuredCollectionLocation, ...order.collectionLocation }
+    : configuredCollectionLocation;
   const collectionInstructions =
-    order?.collectionLocation?.instructions ?? fulfillmentOptions?.collection.instructions;
+    order?.collectionLocation?.instructions ??
+    configuredCollectionLocation?.instructions ??
+    fulfillmentOptions?.collection.instructions;
   const canCreate = Boolean(
     cart?.items.length &&
     !hasUnavailable &&
@@ -861,13 +866,18 @@ export function CheckoutPage({
                 <strong>Customer collection</strong>
                 <br />
                 {collectionAvailable
-                  ? "Collect from the configured Healthy Ways SA location."
+                  ? `Collect from ${collectionLocation?.name ?? "the configured location"}.`
                   : fulfillmentOptions === undefined && !fulfillmentOptionsError
                     ? "Checking collection availability…"
                     : "Not currently available."}
               </span>
             </label>
           </div>
+          {!collectionAvailable && fulfillmentOptions?.collection.reason ? (
+            <p role="status" className="mt-3 text-sm text-destructive">
+              {fulfillmentOptions.collection.reason}
+            </p>
+          ) : null}
           {fulfillmentOptionsError ? (
             <p role="status" className="mt-3 text-sm text-destructive">
               Collection availability could not be loaded. Delivery remains available; refresh
@@ -975,6 +985,25 @@ export function CheckoutPage({
                   <p>{collectionLocation.address}</p>
                   {collectionInstructions ? (
                     <p className="text-muted-foreground">{collectionInstructions}</p>
+                  ) : null}
+                  {collectionLocation.contactName ? (
+                    <p>Pickup contact: {collectionLocation.contactName}</p>
+                  ) : null}
+                  {collectionLocation.contactEmail ? (
+                    <p>
+                      Email:{" "}
+                      <a className="underline" href={`mailto:${collectionLocation.contactEmail}`}>
+                        {collectionLocation.contactEmail}
+                      </a>
+                    </p>
+                  ) : null}
+                  {collectionLocation.contactMobile ? (
+                    <p>
+                      Phone:{" "}
+                      <a className="underline" href={`tel:${collectionLocation.contactMobile}`}>
+                        {collectionLocation.contactMobile}
+                      </a>
+                    </p>
                   ) : null}
                   {order ? (
                     <p className="text-muted-foreground">
@@ -1160,6 +1189,33 @@ export function CheckoutPage({
               We will notify you when your paid order is ready for collection.
             </p>
           )}
+          {order.fulfillmentMethod === "collection" && collectionLocation ? (
+            <p className="mt-3 text-sm">
+              <strong>Collection location:</strong>
+              <br />
+              {collectionLocation.name}
+              <br />
+              {collectionLocation.address}
+              {collectionLocation.contactName ? (
+                <>
+                  <br />
+                  Pickup contact: {collectionLocation.contactName}
+                </>
+              ) : null}
+              {collectionLocation.contactEmail ? (
+                <>
+                  <br />
+                  Email: {collectionLocation.contactEmail}
+                </>
+              ) : null}
+              {collectionLocation.contactMobile ? (
+                <>
+                  <br />
+                  Phone: {collectionLocation.contactMobile}
+                </>
+              ) : null}
+            </p>
+          ) : null}
           {order.fulfillmentMethod === "delivery" && order.deliveryAddress ? (
             <p className="mt-3 text-sm">
               <strong>Selected delivery address:</strong>

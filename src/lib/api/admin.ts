@@ -102,7 +102,14 @@ export interface AdminOrderSummary {
   status: string;
   fulfillmentStatus: string;
   fulfillmentMethod: "delivery" | "collection";
-  collectionLocation?: { name: string; address: string; instructions?: string };
+  collectionLocation?: {
+    name: string;
+    address: string;
+    instructions?: string;
+    contactName?: string;
+    contactEmail?: string;
+    contactMobile?: string;
+  };
   totalCents: number;
   currency: "ZAR";
   createdAt: string;
@@ -603,7 +610,13 @@ export function createAdminApi(client: AdminApiClient) {
             typeof order["collectionLocation"]["name"] !== "string" ||
             typeof order["collectionLocation"]["address"] !== "string" ||
             (order["collectionLocation"]["instructions"] !== undefined &&
-              typeof order["collectionLocation"]["instructions"] !== "string")
+              typeof order["collectionLocation"]["instructions"] !== "string") ||
+            (order["collectionLocation"]["contactName"] !== undefined &&
+              typeof order["collectionLocation"]["contactName"] !== "string") ||
+            (order["collectionLocation"]["contactEmail"] !== undefined &&
+              typeof order["collectionLocation"]["contactEmail"] !== "string") ||
+            (order["collectionLocation"]["contactMobile"] !== undefined &&
+              typeof order["collectionLocation"]["contactMobile"] !== "string")
           )
             return invalidAdminResponse();
           collectionLocation = {
@@ -611,6 +624,15 @@ export function createAdminApi(client: AdminApiClient) {
             address: order["collectionLocation"]["address"],
             ...(typeof order["collectionLocation"]["instructions"] === "string"
               ? { instructions: order["collectionLocation"]["instructions"] }
+              : {}),
+            ...(typeof order["collectionLocation"]["contactName"] === "string"
+              ? { contactName: order["collectionLocation"]["contactName"] }
+              : {}),
+            ...(typeof order["collectionLocation"]["contactEmail"] === "string"
+              ? { contactEmail: order["collectionLocation"]["contactEmail"] }
+              : {}),
+            ...(typeof order["collectionLocation"]["contactMobile"] === "string"
+              ? { contactMobile: order["collectionLocation"]["contactMobile"] }
               : {}),
           };
         }

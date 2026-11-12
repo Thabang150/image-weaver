@@ -246,11 +246,26 @@ function OrderManagement() {
                   </div>
                 </div>
                 {order.fulfillmentMethod === "collection" ? (
-                  <p className="mt-2 text-sm">
-                    Customer collection
-                    {order.collectionLocation ? ` · ${order.collectionLocation.name}` : ""}
-                    {order.collectionLocation ? ` · ${order.collectionLocation.address}` : ""}
-                  </p>
+                  <>
+                    <p className="mt-2 text-sm">
+                      Customer collection
+                      {order.collectionLocation ? ` · ${order.collectionLocation.name}` : ""}
+                      {order.collectionLocation ? ` · ${order.collectionLocation.address}` : ""}
+                    </p>
+                    {order.collectionLocation?.contactName ||
+                    order.collectionLocation?.contactEmail ||
+                    order.collectionLocation?.contactMobile ? (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Pickup contact: {order.collectionLocation.contactName ?? "Not provided"}
+                        {order.collectionLocation.contactEmail
+                          ? ` · ${order.collectionLocation.contactEmail}`
+                          : ""}
+                        {order.collectionLocation.contactMobile
+                          ? ` · ${order.collectionLocation.contactMobile}`
+                          : ""}
+                      </p>
+                    ) : null}
+                  </>
                 ) : (
                   <p className="mt-2 text-sm">
                     ShipLogic: {booking?.status ?? "not booked"}

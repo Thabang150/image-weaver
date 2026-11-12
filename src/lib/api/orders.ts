@@ -80,7 +80,14 @@ export interface CustomerOrder {
     lng?: number;
     deliveryInstructions?: string;
   };
-  collectionLocation?: { name: string; address: string; instructions?: string };
+  collectionLocation?: {
+    name: string;
+    address: string;
+    instructions?: string;
+    contactName?: string;
+    contactEmail?: string;
+    contactMobile?: string;
+  };
   shipmentTracking?: {
     provider: "shiplogic" | "manual";
     reference?: string;
@@ -156,7 +163,15 @@ export interface FulfillmentOptions {
   delivery: { available: true };
   collection: {
     available: boolean;
-    location?: { name: string; address: string };
+    reason?: string;
+    location?: {
+      name: string;
+      address: string;
+      contactName: string;
+      contactEmail: string;
+      contactMobile: string;
+      instructions?: string;
+    };
     instructions?: string;
   };
 }
@@ -483,7 +498,13 @@ function parseOrder(value: unknown): CustomerOrder {
     typeof collectionLocation["name"] !== "string" ||
     typeof collectionLocation["address"] !== "string" ||
     (collectionLocation["instructions"] !== undefined &&
-      typeof collectionLocation["instructions"] !== "string")
+      typeof collectionLocation["instructions"] !== "string") ||
+    (collectionLocation["contactName"] !== undefined &&
+      typeof collectionLocation["contactName"] !== "string") ||
+    (collectionLocation["contactEmail"] !== undefined &&
+      typeof collectionLocation["contactEmail"] !== "string") ||
+    (collectionLocation["contactMobile"] !== undefined &&
+      typeof collectionLocation["contactMobile"] !== "string")
   ) {
     invalid();
   }
@@ -558,10 +579,12 @@ function parseFulfillmentOptions(value: unknown): FulfillmentOptions {
   if (delivery["available"] !== true || typeof collection["available"] !== "boolean") invalid();
   const rawLocation = collection["location"];
   const instructions = collection["instructions"];
+  const reason = collection["reason"];
   if (
     (collection["available"] && !record(rawLocation)) ||
     (!collection["available"] && rawLocation !== undefined) ||
-    (instructions !== undefined && typeof instructions !== "string")
+    (instructions !== undefined && typeof instructions !== "string") ||
+    (reason !== undefined && typeof reason !== "string")
   )
     invalid();
   let location: FulfillmentOptions["collection"]["location"];
@@ -569,15 +592,29 @@ function parseFulfillmentOptions(value: unknown): FulfillmentOptions {
     if (
       !record(rawLocation) ||
       typeof rawLocation["name"] !== "string" ||
-      typeof rawLocation["address"] !== "string"
+      typeof rawLocation["address"] !== "string" ||
+      typeof rawLocation["contactName"] !== "string" ||
+      typeof rawLocation["contactEmail"] !== "string" ||
+      typeof rawLocation["contactMobile"] !== "string" ||
+      (rawLocation["instructions"] !== undefined && typeof rawLocation["instructions"] !== "string")
     )
       invalid();
-    location = { name: rawLocation["name"], address: rawLocation["address"] };
+    location = {
+      name: rawLocation["name"],
+      address: rawLocation["address"],
+      contactName: rawLocation["contactName"],
+      contactEmail: rawLocation["contactEmail"],
+      contactMobile: rawLocation["contactMobile"],
+      ...(typeof rawLocation["instructions"] === "string"
+        ? { instructions: rawLocation["instructions"] }
+        : {}),
+    };
   }
   return {
     delivery: { available: true },
     collection: {
       available: collection["available"],
+      ...(typeof reason === "string" ? { reason } : {}),
       ...(location === undefined ? {} : { location }),
       ...(instructions === undefined ? {} : { instructions }),
     },

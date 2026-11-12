@@ -13,25 +13,29 @@ Set these values in the backend environment only:
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SHIPLOGIC_API_URL`                   | Explicit HTTPS API origin. Sandbox: `https://api.shiplogic.com`; production: `https://api.portal.thecourierguy.co.za`, as documented by ShipLogic. |
 | `SHIPLOGIC_BEARER_TOKEN`              | Ship Logic API key sent only in the backend `Authorization: Bearer ...` request header.                                                            |
-| `SHIPLOGIC_COLLECTION_COMPANY`        | Collection business name; defaults to `Healthy Ways SA`.                                                                                           |
+| `SHIPLOGIC_COLLECTION_COMPANY`        | Collection business name; required for customer collection.                                                                                       |
 | `SHIPLOGIC_COLLECTION_STREET_ADDRESS` | Actual collection street address; required when ShipLogic is enabled.                                                                              |
 | `SHIPLOGIC_COLLECTION_LOCAL_AREA`     | Actual collection suburb/local area; required when ShipLogic is enabled.                                                                           |
 | `SHIPLOGIC_COLLECTION_CITY`           | Actual collection city; required when ShipLogic is enabled.                                                                                        |
 | `SHIPLOGIC_COLLECTION_ZONE`           | Actual collection province/zone; required when ShipLogic is enabled.                                                                               |
-| `SHIPLOGIC_COLLECTION_POSTAL_CODE`    | Collection postal code.                                                                                                                            |
-| `SHIPLOGIC_COLLECTION_COUNTRY_CODE`   | Two-letter country code; currently `ZA`.                                                                                                           |
-| `SHIPLOGIC_COLLECTION_CONTACT_NAME`   | Collection contact name; required when ShipLogic is enabled.                                                                                       |
-| `SHIPLOGIC_COLLECTION_CONTACT_EMAIL`  | Collection contact email; required unless a mobile number is configured.                                                                           |
-| `SHIPLOGIC_COLLECTION_CONTACT_MOBILE` | Collection contact mobile number; required unless an email is configured.                                                                          |
+| `SHIPLOGIC_COLLECTION_CODE` or `SHIPLOGIC_COLLECTION_POSTAL_CODE` | Collection postal code; if both are set, values must match. |
+| `SHIPLOGIC_COLLECTION_COUNTRY` or `SHIPLOGIC_COLLECTION_COUNTRY_CODE` | Two-letter country code; currently `ZA`; if both are set, values must match. |
+| `SHIPLOGIC_COLLECTION_CONTACT_NAME`   | Collection contact name; required for customer collection.                                                                                         |
+| `SHIPLOGIC_COLLECTION_CONTACT_EMAIL`  | Collection contact email; required for customer collection.                                                                                        |
+| `SHIPLOGIC_COLLECTION_CONTACT_MOBILE` | Valid South African collection contact mobile number; required for customer collection.                                                           |
 | `SHIPLOGIC_PACKAGING_LENGTH_CM`       | Optional known courier-bag outer length; set with width and height.                                                                                |
 | `SHIPLOGIC_PACKAGING_WIDTH_CM`        | Optional known courier-bag outer width; set with length and height.                                                                                |
 | `SHIPLOGIC_PACKAGING_HEIGHT_CM`       | Optional known courier-bag outer height; set with length and width.                                                                                |
 | `SHIPLOGIC_PACKAGING_WEIGHT_GRAMS`    | Optional measured empty-bag weight, added to product weight.                                                                                       |
 
 If the URL or token is missing, other backend APIs still start but rate requests and booking are
-unavailable. When enabled, the actual collection street/locality/city/zone, postal code, country,
-and booking contact must also be configured; built-in address defaults are not accepted as
-ShipLogic configuration. The API URL is an origin. Credentials must remain server-side.
+unavailable. The existing `SHIPLOGIC_COLLECTION_*` values are the sole source for the ShipLogic
+origin and customer pickup location. Customer collection is available only when the company,
+complete address, postal/country codes, and all contact fields are present and valid; there are no
+built-in location defaults. The customer-authenticated fulfillment-options endpoint exposes only
+the public pickup name, formatted address, and contact details. Collection orders snapshot those
+details and do not request delivery quotes or book courier shipments. Credentials remain
+server-side.
 
 For Vercel, set `VITE_BACKEND_BASE_URL` to the Render backend's HTTPS origin (or its `/api/v1`
 base). This is a public URL, not a credential. The storefront uses a same-origin `/api/v1/**`

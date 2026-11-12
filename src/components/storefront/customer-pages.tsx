@@ -496,6 +496,30 @@ export function OrderDetailPage({
                 {order.collectionLocation.instructions}
               </>
             ) : null}
+            {order.collectionLocation.contactName ? (
+              <>
+                <br />
+                Pickup contact: {order.collectionLocation.contactName}
+              </>
+            ) : null}
+            {order.collectionLocation.contactEmail ? (
+              <>
+                <br />
+                Email:{" "}
+                <a className="underline" href={`mailto:${order.collectionLocation.contactEmail}`}>
+                  {order.collectionLocation.contactEmail}
+                </a>
+              </>
+            ) : null}
+            {order.collectionLocation.contactMobile ? (
+              <>
+                <br />
+                Phone:{" "}
+                <a className="underline" href={`tel:${order.collectionLocation.contactMobile}`}>
+                  {order.collectionLocation.contactMobile}
+                </a>
+              </>
+            ) : null}
           </p>
         </section>
       ) : order.deliveryAddress ? (

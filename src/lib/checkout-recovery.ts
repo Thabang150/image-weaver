@@ -20,6 +20,7 @@ type CheckoutAddress = {
 };
 
 export function matchesSelectedAddress(order: CustomerOrder, address: CheckoutAddress): boolean {
+  if (order.fulfillmentMethod !== "delivery" || order.deliveryAddress === undefined) return false;
   const selected = [
     address.recipientName,
     address.phoneNumber,
@@ -71,11 +72,13 @@ export function findActiveCheckoutOrder(
   orders: CustomerOrder[],
   cart: CheckoutCart,
   selectedAddress?: CheckoutAddress,
+  fulfillmentMethod: CustomerOrder["fulfillmentMethod"] = "delivery",
 ): { status: "found"; order: CustomerOrder } | { status: "none" | "ambiguous" } {
   if (cart.items.length === 0) return { status: "none" };
   const matchingOrders = orders.filter(
     (order) =>
       (order.status === "pending_payment" || order.status === "payment_reconciliation") &&
+      order.fulfillmentMethod === fulfillmentMethod &&
       matchesOrderCart(order, cart),
   );
   const addressMatches = selectedAddress

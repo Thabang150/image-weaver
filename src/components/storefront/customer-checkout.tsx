@@ -8,6 +8,7 @@ import {
   ordersApi,
   type CartShippingRate,
   type CustomerOrder,
+  type FulfillmentOptions,
   type PayFastCheckout,
 } from "@/lib/api/orders";
 import { cartApi } from "@/lib/api/cart";
@@ -56,18 +57,22 @@ function cartFingerprint(cart: CartFingerprintSource | undefined) {
 
 function checkoutFingerprint(
   userId: string,
+  fulfillmentMethod: CustomerOrder["fulfillmentMethod"],
   addressId: string,
   cart: CartFingerprintSource | undefined,
 ) {
-  return `${userId}:${addressId}:${cartFingerprint(cart)}`;
+  return fulfillmentMethod === "collection"
+    ? `${userId}:collection:${cartFingerprint(cart)}`
+    : `${userId}:${addressId}:${cartFingerprint(cart)}`;
 }
 
 function idempotencyKey(
   userId: string,
+  fulfillmentMethod: CustomerOrder["fulfillmentMethod"],
   addressId: string,
   cart: CartFingerprintSource | undefined,
 ) {
-  return getCheckoutIdempotencyKey(checkoutFingerprint(userId, addressId, cart));
+  return getCheckoutIdempotencyKey(checkoutFingerprint(userId, fulfillmentMethod, addressId, cart));
 }
 
 function recoverableOrder(order: CustomerOrder) {
@@ -217,6 +222,10 @@ export function CheckoutPage({
     logCheckoutDiagnostic("checkout.started");
   }, []);
   const { cart, retryCart, removeItem, isBusy } = useCart();
+  const [fulfillmentMethod, setFulfillmentMethod] =
+    useState<CustomerOrder["fulfillmentMethod"]>("delivery");
+  const [fulfillmentOptions, setFulfillmentOptions] = useState<FulfillmentOptions>();
+  const [fulfillmentOptionsError, setFulfillmentOptionsError] = useState(false);
   const [addressId, setAddressId] = useState(
     () => user.addresses.find((a: PublicAddress) => a.isDefault)?.id ?? user.addresses[0]?.id ?? "",
   );
@@ -260,6 +269,21 @@ export function CheckoutPage({
 
   useEffect(() => {
     let active = true;
+    void ordersApi
+      .getFulfillmentOptions()
+      .then((options) => {
+        if (active) setFulfillmentOptions(options);
+      })
+      .catch(() => {
+        if (active) setFulfillmentOptionsError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
     const saved = getSavedCheckoutOrderId();
     setRecoveryState("loading");
 
@@ -267,6 +291,7 @@ export function CheckoutPage({
       if (!active) return;
       setRecoveryState("eligible");
       setOrder(recovered);
+      setFulfillmentMethod(recovered.fulfillmentMethod);
       saveCheckoutOrderId(recovered.id);
       const quoteExpiresAt = recovered.shippingQuote?.expiresAt
         ? Date.parse(recovered.shippingQuote.expiresAt)
@@ -296,7 +321,12 @@ export function CheckoutPage({
 
       if (!active) return;
       const selected = user.addresses.find((entry) => entry.id === addressId);
-      const activeCheckout = findActiveCheckoutOrder(matchingOrders, currentCart, selected);
+      const activeCheckout = findActiveCheckoutOrder(
+        matchingOrders,
+        currentCart,
+        selected,
+        fulfillmentMethod,
+      );
       if (activeCheckout.status === "found") {
         acceptOrder(activeCheckout.order);
       } else if (activeCheckout.status === "ambiguous") {
@@ -333,7 +363,7 @@ export function CheckoutPage({
     return () => {
       active = false;
     };
-  }, [addressId, queryClient, user.addresses, user.id]);
+  }, [addressId, fulfillmentMethod, queryClient, user.addresses, user.id]);
 
   useEffect(() => {
     if (ratesExpireAt === undefined) return;
@@ -353,8 +383,11 @@ export function CheckoutPage({
 
   const selectedAddress = user.addresses.find((entry) => entry.id === addressId);
   const recovery = order ? recoverableOrder(order) : { eligible: false, reason: "" };
+  const recoveredMethodMatches = Boolean(order && order.fulfillmentMethod === fulfillmentMethod);
   const recoveredAddressMatches = Boolean(
-    order && selectedAddress && matchesSelectedAddress(order, selectedAddress),
+    order &&
+    (order.fulfillmentMethod === "collection" ||
+      (selectedAddress && matchesSelectedAddress(order, selectedAddress))),
   );
   const recoveredCartMatches = Boolean(order && matchesOrderCart(order, cart));
   const recoveryBlocked = Boolean(
@@ -363,6 +396,7 @@ export function CheckoutPage({
     recoveryState === "unavailable" ||
     (order &&
       (!recovery.eligible ||
+        !recoveredMethodMatches ||
         !recoveredAddressMatches ||
         (cart?.items.length !== 0 && !recoveredCartMatches))),
   );
@@ -371,14 +405,33 @@ export function CheckoutPage({
   const selectedCartRate = rates.find((rate) => rate.quoteId === selectedQuote);
   const selectedOrderRate = rates.find((rate) => rate.quoteId === selectedQuote);
   const cartTotalWithDelivery =
-    selectedCartRate && cart ? cart.totalCents + selectedCartRate.rateCents : undefined;
-  const currentOrderQuote = Boolean(order && currentShippingQuote(order));
-  const orderTotalWithDelivery =
-    order && currentOrderQuote
-      ? order.totalCents
-      : order && selectedOrderRate
-        ? order.subtotalCents + selectedOrderRate.rateCents
+    fulfillmentMethod === "collection"
+      ? cart?.totalCents
+      : selectedCartRate && cart
+        ? cart.totalCents + selectedCartRate.rateCents
         : undefined;
+  const currentOrderQuote = Boolean(order && currentShippingQuote(order));
+  const currentCollectionOrder = Boolean(
+    order &&
+    order.fulfillmentMethod === "collection" &&
+    !order.shippingQuote &&
+    order.totalCents === order.subtotalCents,
+  );
+  const orderReadyForPayment = Boolean(
+    order &&
+    recovery.eligible &&
+    (order.fulfillmentMethod === "collection"
+      ? currentCollectionOrder
+      : currentShippingQuote(order)),
+  );
+  const orderTotalWithDelivery =
+    order && currentCollectionOrder
+      ? order.totalCents
+      : order && currentOrderQuote
+        ? order.totalCents
+        : order && selectedOrderRate
+          ? order.subtotalCents + selectedOrderRate.rateCents
+          : undefined;
   const hasUnavailable = Boolean(cart?.hasUnavailableItems);
   const unavailableItems =
     cart?.items.filter(
@@ -387,7 +440,16 @@ export function CheckoutPage({
         (item.stockQuantity !== undefined &&
           (item.stockQuantity === 0 || item.quantity > item.stockQuantity)),
     ) ?? [];
-  const canCreate = Boolean(addressId && cart?.items.length && !hasUnavailable);
+  const collectionContactReady = Boolean(user.displayName?.trim() && user.phoneNumber?.trim());
+  const collectionAvailable = fulfillmentOptions?.collection.available === true;
+  const collectionLocation = order?.collectionLocation ?? fulfillmentOptions?.collection.location;
+  const collectionInstructions =
+    order?.collectionLocation?.instructions ?? fulfillmentOptions?.collection.instructions;
+  const canCreate = Boolean(
+    cart?.items.length &&
+    !hasUnavailable &&
+    (fulfillmentMethod === "delivery" ? addressId : collectionAvailable && collectionContactReady),
+  );
 
   async function saveAddress(event: FormEvent) {
     event.preventDefault();
@@ -531,7 +593,12 @@ export function CheckoutPage({
   }
 
   async function create() {
-    if (!canCreate || recoveryBlocked || !cartQuoteId || !selectedQuote) return;
+    if (
+      !canCreate ||
+      recoveryBlocked ||
+      (fulfillmentMethod === "delivery" && (!cartQuoteId || !selectedQuote))
+    )
+      return;
     setBusy(true);
     setMessage(null);
     const startedAt = performance.now();
@@ -541,17 +608,22 @@ export function CheckoutPage({
       queryClient.setQueryData(["cart", user.id], latestCart);
       if (latestCart.hasUnavailableItems || cartFingerprint(latestCart) !== cartFingerprint(cart)) {
         setMessage(
-          "Stock or cart contents changed after delivery rates were requested. Review the refreshed cart and request new rates.",
+          fulfillmentMethod === "delivery"
+            ? "Stock or cart contents changed after delivery rates were requested. Review the refreshed cart and request new rates."
+            : "Stock or cart contents changed. Review the refreshed cart before creating the collection order.",
         );
         return;
       }
       const next = await ordersApi.createOrder(
-        addressId,
-        cartQuoteId,
-        idempotencyKey(user.id, addressId, latestCart),
+        {
+          fulfillmentMethod,
+          ...(fulfillmentMethod === "delivery" ? { addressId, shippingQuoteId: cartQuoteId } : {}),
+        },
+        idempotencyKey(user.id, fulfillmentMethod, addressId, latestCart),
         checkoutTraceHeaders(),
       );
       setOrder(next);
+      setFulfillmentMethod(next.fulfillmentMethod);
       if (!saveCheckoutOrderId(next.id)) {
         setMessage(
           "Your order was created, but this browser cannot save checkout recovery. Keep this page open while completing payment.",
@@ -570,7 +642,9 @@ export function CheckoutPage({
       });
       if (error instanceof ApiHttpError && error.status === 409) {
         setMessage(
-          "The delivery rate expired or your order/cart changed. Request fresh rates and retry; no order was created.",
+          fulfillmentMethod === "delivery"
+            ? "The delivery rate expired or your order/cart changed. Request fresh rates and retry; no order was created."
+            : "Collection or your cart changed before the order was saved. Refresh checkout and retry; no order was created.",
         );
       } else {
         setMessage(
@@ -623,9 +697,9 @@ export function CheckoutPage({
   }
 
   async function pay() {
-    if (!order || !currentShippingQuote(order) || recoveryBlocked) {
+    if (!order || !orderReadyForPayment || recoveryBlocked) {
       setMessage(
-        "Payment is blocked until the saved checkout matches the current cart and address and the order is eligible for payment.",
+        "Payment is blocked until the saved checkout matches the current cart and fulfilment choice and the order is eligible for payment.",
       );
       return;
     }
@@ -654,7 +728,7 @@ export function CheckoutPage({
   return (
     <main className="mx-auto max-w-5xl px-5 py-10">
       <span className="eyebrow">Secure checkout</span>
-      <h1 className="section-title mt-3">Delivery and payment</h1>
+      <h1 className="section-title mt-3">Fulfilment and payment</h1>
       {message ? (
         <p role="status" className="mt-5 rounded-md border border-border bg-muted/40 p-3 text-sm">
           {message}
@@ -718,9 +792,11 @@ export function CheckoutPage({
           <p>
             {!recovery.eligible
               ? recovery.reason
-              : !recoveredAddressMatches
-                ? "The saved order used a different delivery address. It cannot be reused for the address currently selected."
-                : "Your cart has changed since this order was created. The saved order cannot be continued with the current cart."}
+              : !recoveredMethodMatches
+                ? "The saved order uses a different fulfilment method. It cannot be reused for this checkout."
+                : !recoveredAddressMatches
+                  ? "The saved order used a different delivery address. It cannot be reused for the address currently selected."
+                  : "Your cart has changed since this order was created. The saved order cannot be continued with the current cart."}
           </p>
           <Button
             variant="outline"
@@ -742,92 +818,193 @@ export function CheckoutPage({
       ) : null}
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_340px]">
         <section className="rounded-lg border border-border bg-card p-5">
-          <h2 className="text-xl font-medium">Delivery address</h2>
-          {user.addresses.length ? (
-            <div className="mt-4 space-y-3">
-              {user.addresses.map((entry: PublicAddress) => (
-                <label
-                  key={entry.id}
-                  className="flex gap-3 rounded-md border border-border p-3 text-sm"
-                >
-                  <input
-                    type="radio"
-                    checked={addressId === entry.id}
-                    onChange={() => {
-                      setAddressId(entry.id);
-                      logCheckoutDiagnostic("checkout.address.selected", {
-                        status: "selected",
-                      });
-                      setRates([]);
-                      setRatesExpireAt(undefined);
-                      setSelectedQuote("");
-                      setCartQuoteId("");
-                    }}
-                    disabled={Boolean(order)}
-                  />
-                  <span>
-                    <strong>{entry.label}</strong>
-                    {entry.isDefault ? " · Default" : null}
-                    <br />
-                    {entry.recipientName}
-                    <br />
-                    {entry.addressLine1}
-                    {entry.addressLine2 ? `, ${entry.addressLine2}` : ""}
-                    {entry.localArea ? `, ${entry.localArea}` : ""}, {entry.city}, {entry.province}
-                    <br />
-                    {entry.postalCode}
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm">Add a delivery address to continue.</p>
-          )}
-          {selectedAddress && !selectedAddress.localArea?.trim() ? (
-            <p className="mt-3 text-sm text-muted-foreground" role="status">
-              This saved address needs a suburb or local area before delivery rates can be
-              requested. Update it in My account or choose another address.
+          <h2 className="text-xl font-medium">Fulfilment method</h2>
+          <div className="mt-4 space-y-3">
+            <label className="flex items-start gap-3 rounded-md border border-border p-3 text-sm">
+              <input
+                type="radio"
+                name="fulfillment-method"
+                checked={fulfillmentMethod === "delivery"}
+                disabled={Boolean(order) || busy}
+                onChange={() => {
+                  setFulfillmentMethod("delivery");
+                  setRates([]);
+                  setSelectedQuote("");
+                  setCartQuoteId("");
+                  setRatesExpireAt(undefined);
+                  setMessage(null);
+                }}
+              />
+              <span>
+                <strong>Delivery</strong>
+                <br />
+                Ship to one of your saved addresses.
+              </span>
+            </label>
+            <label className="flex items-start gap-3 rounded-md border border-border p-3 text-sm">
+              <input
+                type="radio"
+                name="fulfillment-method"
+                checked={fulfillmentMethod === "collection"}
+                disabled={!collectionAvailable || Boolean(order) || busy}
+                onChange={() => {
+                  setFulfillmentMethod("collection");
+                  setRates([]);
+                  setSelectedQuote("");
+                  setCartQuoteId("");
+                  setRatesExpireAt(undefined);
+                  setShowAddressForm(false);
+                  setMessage(null);
+                }}
+              />
+              <span>
+                <strong>Customer collection</strong>
+                <br />
+                {collectionAvailable
+                  ? "Collect from the configured Healthy Ways SA location."
+                  : fulfillmentOptions === undefined && !fulfillmentOptionsError
+                    ? "Checking collection availability…"
+                    : "Not currently available."}
+              </span>
+            </label>
+          </div>
+          {fulfillmentOptionsError ? (
+            <p role="status" className="mt-3 text-sm text-destructive">
+              Collection availability could not be loaded. Delivery remains available; refresh
+              checkout before selecting collection.
             </p>
           ) : null}
-          {!order ? (
-            <Button
-              className="mt-4"
-              variant="outline"
-              onClick={() => setShowAddressForm(!showAddressForm)}
-            >
-              {showAddressForm ? "Cancel new address" : "Add a new address"}
-            </Button>
-          ) : null}
-          {showAddressForm ? (
-            <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={saveAddress}>
-              <AddressLocationFields
-                value={address}
-                onChange={setAddress}
-                disabled={busy}
-                provinceOptions={SOUTH_AFRICAN_PROVINCES}
-                onAddressSelected={() => setMessage(null)}
-              />
-              <label className="space-y-1 text-sm">
-                <span>Address type</span>
-                <select
-                  className={inputClass}
-                  value={addressType}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    if (value === "residential" || value === "business") {
-                      setAddressType(value);
-                    }
-                  }}
+          {fulfillmentMethod === "delivery" ? (
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="text-lg font-medium">Delivery address</h3>
+              {user.addresses.length ? (
+                <div className="mt-4 space-y-3">
+                  {user.addresses.map((entry: PublicAddress) => (
+                    <label
+                      key={entry.id}
+                      className="flex gap-3 rounded-md border border-border p-3 text-sm"
+                    >
+                      <input
+                        type="radio"
+                        checked={addressId === entry.id}
+                        onChange={() => {
+                          setAddressId(entry.id);
+                          logCheckoutDiagnostic("checkout.address.selected", {
+                            status: "selected",
+                          });
+                          setRates([]);
+                          setRatesExpireAt(undefined);
+                          setSelectedQuote("");
+                          setCartQuoteId("");
+                        }}
+                        disabled={Boolean(order)}
+                      />
+                      <span>
+                        <strong>{entry.label}</strong>
+                        {entry.isDefault ? " · Default" : null}
+                        <br />
+                        {entry.recipientName}
+                        <br />
+                        {entry.addressLine1}
+                        {entry.addressLine2 ? `, ${entry.addressLine2}` : ""}
+                        {entry.localArea ? `, ${entry.localArea}` : ""}, {entry.city},{" "}
+                        {entry.province}
+                        <br />
+                        {entry.postalCode}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm">Add a delivery address to continue.</p>
+              )}
+              {selectedAddress && !selectedAddress.localArea?.trim() ? (
+                <p className="mt-3 text-sm text-muted-foreground" role="status">
+                  This saved address needs a suburb or local area before delivery rates can be
+                  requested. Update it in My account or choose another address.
+                </p>
+              ) : null}
+              {!order ? (
+                <Button
+                  className="mt-4"
+                  variant="outline"
+                  onClick={() => setShowAddressForm(!showAddressForm)}
                 >
-                  <option value="residential">Residential</option>
-                  <option value="business">Business</option>
-                </select>
-              </label>
-              <div className="sm:col-span-2">
-                <Button disabled={busy}>{busy ? "Saving…" : "Save address"}</Button>
-              </div>
-            </form>
-          ) : null}
+                  {showAddressForm ? "Cancel new address" : "Add a new address"}
+                </Button>
+              ) : null}
+              {showAddressForm ? (
+                <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={saveAddress}>
+                  <AddressLocationFields
+                    value={address}
+                    onChange={setAddress}
+                    disabled={busy}
+                    provinceOptions={SOUTH_AFRICAN_PROVINCES}
+                    onAddressSelected={() => setMessage(null)}
+                  />
+                  <label className="space-y-1 text-sm">
+                    <span>Address type</span>
+                    <select
+                      className={inputClass}
+                      value={addressType}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        if (value === "residential" || value === "business") {
+                          setAddressType(value);
+                        }
+                      }}
+                    >
+                      <option value="residential">Residential</option>
+                      <option value="business">Business</option>
+                    </select>
+                  </label>
+                  <div className="sm:col-span-2">
+                    <Button disabled={busy}>{busy ? "Saving…" : "Save address"}</Button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="text-lg font-medium">Collection details</h3>
+              {collectionLocation ? (
+                <div className="mt-3 space-y-1 text-sm">
+                  <p>
+                    <strong>{collectionLocation.name}</strong>
+                  </p>
+                  <p>{collectionLocation.address}</p>
+                  {collectionInstructions ? (
+                    <p className="text-muted-foreground">{collectionInstructions}</p>
+                  ) : null}
+                  {order ? (
+                    <p className="text-muted-foreground">
+                      We will notify you when your paid order is ready for collection.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  A verified collection location has not been configured.
+                </p>
+              )}
+              {collectionAvailable && !collectionContactReady ? (
+                <div className="mt-3 text-sm">
+                  <p>
+                    Add your name and phone number to your account before creating a collection
+                    order.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => onNavigate("account")}
+                  >
+                    Update account details
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          )}
         </section>
         <aside className="rounded-lg border border-border bg-card p-5">
           <h2 className="text-xl font-medium">Order summary</h2>
@@ -837,15 +1014,17 @@ export function CheckoutPage({
               <dd>{formatZarCents(order?.subtotalCents ?? cart?.totalCents ?? 0)}</dd>
             </div>
             <div className="flex justify-between">
-              <dt>Delivery</dt>
+              <dt>{fulfillmentMethod === "collection" ? "Collection" : "Delivery"}</dt>
               <dd>
-                {currentOrderQuote
-                  ? formatZarCents(deliveryCharge)
-                  : selectedOrderRate
-                    ? formatZarCents(selectedOrderRate.rateCents)
-                    : selectedCartRate
-                      ? formatZarCents(selectedCartRate.rateCents)
-                      : "Select quote"}
+                {fulfillmentMethod === "collection"
+                  ? "No delivery charge"
+                  : currentOrderQuote
+                    ? formatZarCents(deliveryCharge)
+                    : selectedOrderRate
+                      ? formatZarCents(selectedOrderRate.rateCents)
+                      : selectedCartRate
+                        ? formatZarCents(selectedCartRate.rateCents)
+                        : "Select quote"}
               </dd>
             </div>
             <div className="flex justify-between border-t border-border pt-2 text-base">
@@ -856,10 +1035,14 @@ export function CheckoutPage({
                 <strong>
                   {order
                     ? orderTotalWithDelivery === undefined
-                      ? "Select delivery"
+                      ? fulfillmentMethod === "collection"
+                        ? "Unavailable"
+                        : "Select delivery"
                       : formatZarCents(orderTotalWithDelivery)
                     : cartTotalWithDelivery === undefined
-                      ? "Select delivery"
+                      ? fulfillmentMethod === "collection"
+                        ? "Unavailable"
+                        : "Select delivery"
                       : formatZarCents(cartTotalWithDelivery)}
                 </strong>
               </dd>
@@ -867,7 +1050,7 @@ export function CheckoutPage({
           </dl>
         </aside>
       </div>
-      {!order && !cartQuoteId ? (
+      {!order && fulfillmentMethod === "delivery" && !cartQuoteId ? (
         <Button
           className="mt-6"
           disabled={!canCreate || !selectedAddress?.localArea?.trim() || busy || recoveryBlocked}
@@ -876,7 +1059,7 @@ export function CheckoutPage({
           {busy ? "Requesting delivery rates…" : "Request delivery rates"}
         </Button>
       ) : null}
-      {!order && cartQuoteId ? (
+      {!order && fulfillmentMethod === "delivery" && cartQuoteId ? (
         rates.length === 0 ? (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3" role="status">
             <p className="text-sm text-muted-foreground">
@@ -893,7 +1076,7 @@ export function CheckoutPage({
           </div>
         ) : null
       ) : null}
-      {!order && cartQuoteId && rates.length > 0 ? (
+      {!order && fulfillmentMethod === "delivery" && cartQuoteId && rates.length > 0 ? (
         <Button
           className="mt-6"
           disabled={!canCreate || busy || recoveryBlocked || !selectedQuote}
@@ -902,7 +1085,16 @@ export function CheckoutPage({
           {busy ? "Creating order…" : "Confirm delivery and create order"}
         </Button>
       ) : null}
-      {!order && rates.length ? (
+      {!order && fulfillmentMethod === "collection" ? (
+        <Button
+          className="mt-6"
+          disabled={!canCreate || busy || recoveryBlocked}
+          onClick={() => void create()}
+        >
+          {busy ? "Creating order…" : "Confirm collection and create order"}
+        </Button>
+      ) : null}
+      {!order && fulfillmentMethod === "delivery" && rates.length ? (
         <section className="mt-6 rounded-lg border border-border p-5">
           <h2 className="text-xl font-medium">Choose delivery</h2>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -917,7 +1109,7 @@ export function CheckoutPage({
           />
         </section>
       ) : null}
-      {order && !currentShippingQuote(order) ? (
+      {order && order.fulfillmentMethod === "delivery" && !currentShippingQuote(order) ? (
         <section className="mt-6 rounded-lg border border-border p-5">
           <h2 className="text-xl font-medium">Choose delivery</h2>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -946,32 +1138,42 @@ export function CheckoutPage({
           </Button>
         </section>
       ) : null}
-      {order && currentShippingQuote(order) ? (
+      {order && orderReadyForPayment ? (
         <section className="mt-6 rounded-lg border border-border bg-card p-5">
-          <p className="text-sm">
-            <strong>
-              {customerDeliveryName(order.shippingQuote.serviceName)} ·{" "}
-              {formatZarCents(order.shippingQuote.chargeCents)}
-            </strong>
-            <br />
-            {estimateForConfirmedDelivery(
-              order.shippingQuote.serviceName,
-              order.shippingQuote.deliveryDateFrom,
-              order.shippingQuote.deliveryDateTo,
-            )}
-          </p>
-          <p className="mt-3 text-sm">
-            <strong>Selected delivery address:</strong>
-            <br />
-            {order.deliveryAddress.recipientName}
-            <br />
-            {order.deliveryAddress.addressLine1}
-            {order.deliveryAddress.addressLine2 ? `, ${order.deliveryAddress.addressLine2}` : ""}
-            {order.deliveryAddress.localArea ? `, ${order.deliveryAddress.localArea}` : ""}
-            <br />
-            {order.deliveryAddress.city}, {order.deliveryAddress.province},{" "}
-            {order.deliveryAddress.postalCode}
-          </p>
+          {order.fulfillmentMethod === "delivery" && order.shippingQuote ? (
+            <p className="text-sm">
+              <strong>
+                {customerDeliveryName(order.shippingQuote.serviceName)} ·{" "}
+                {formatZarCents(order.shippingQuote.chargeCents)}
+              </strong>
+              <br />
+              {estimateForConfirmedDelivery(
+                order.shippingQuote.serviceName,
+                order.shippingQuote.deliveryDateFrom,
+                order.shippingQuote.deliveryDateTo,
+              )}
+            </p>
+          ) : (
+            <p className="text-sm">
+              <strong>Customer collection · No delivery charge</strong>
+              <br />
+              We will notify you when your paid order is ready for collection.
+            </p>
+          )}
+          {order.fulfillmentMethod === "delivery" && order.deliveryAddress ? (
+            <p className="mt-3 text-sm">
+              <strong>Selected delivery address:</strong>
+              <br />
+              {order.deliveryAddress.recipientName}
+              <br />
+              {order.deliveryAddress.addressLine1}
+              {order.deliveryAddress.addressLine2 ? `, ${order.deliveryAddress.addressLine2}` : ""}
+              {order.deliveryAddress.localArea ? `, ${order.deliveryAddress.localArea}` : ""}
+              <br />
+              {order.deliveryAddress.city}, {order.deliveryAddress.province},{" "}
+              {order.deliveryAddress.postalCode}
+            </p>
+          ) : null}
           {recoveryBlocked ? (
             <p role="status" className="mt-4 text-sm text-destructive">
               Payment is blocked until the checkout issue shown above is resolved.

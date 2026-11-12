@@ -101,6 +101,8 @@ export interface AdminOrderSummary {
   customerEmail: string;
   status: string;
   fulfillmentStatus: string;
+  fulfillmentMethod: "delivery" | "collection";
+  collectionLocation?: { name: string; address: string; instructions?: string };
   totalCents: number;
   currency: "ZAR";
   createdAt: string;
@@ -125,12 +127,7 @@ function isSafeInteger(value: unknown): value is number {
 }
 
 function isAdminStatus(value: unknown): value is AdminInventoryItem["status"] {
-  return (
-    value === "draft" ||
-    value === "active" ||
-    value === "inactive" ||
-    value === "archived"
-  );
+  return value === "draft" || value === "active" || value === "inactive" || value === "archived";
 }
 
 function isInventoryMovementType(
@@ -193,8 +190,7 @@ function parseCategories(value: unknown): AdminCategory[] {
       typeof category["updatedAt"] !== "string" ||
       (category["description"] !== undefined && typeof category["description"] !== "string") ||
       (category["displayOrder"] !== undefined && !isSafeInteger(category["displayOrder"])) ||
-      (category["imageReference"] !== undefined &&
-        typeof category["imageReference"] !== "string")
+      (category["imageReference"] !== undefined && typeof category["imageReference"] !== "string")
     ) {
       invalidAdminResponse();
     }
@@ -289,8 +285,7 @@ function parseAdminProduct(value: unknown): AdminProduct {
       (!isSafeInteger(product["salePriceCents"]) || product["salePriceCents"] <= 0)) ||
     (product["costCents"] !== undefined &&
       (!isSafeInteger(product["costCents"]) || product["costCents"] < 0)) ||
-    (product["priceConfirmed"] !== undefined &&
-      typeof product["priceConfirmed"] !== "boolean") ||
+    (product["priceConfirmed"] !== undefined && typeof product["priceConfirmed"] !== "boolean") ||
     (product["primaryImageReference"] !== undefined &&
       typeof product["primaryImageReference"] !== "string") ||
     (product["lowStockThreshold"] !== undefined &&
@@ -372,9 +367,7 @@ function parseAdminProduct(value: unknown): AdminProduct {
     ...(isSafeInteger(product["lowStockThreshold"])
       ? { lowStockThreshold: product["lowStockThreshold"] }
       : {}),
-    ...(typeof product["isMockData"] === "boolean"
-      ? { isMockData: product["isMockData"] }
-      : {}),
+    ...(typeof product["isMockData"] === "boolean" ? { isMockData: product["isMockData"] } : {}),
     ...(Array.isArray(product["requiresConfirmation"])
       ? {
           requiresConfirmation: product["requiresConfirmation"].filter(
@@ -568,49 +561,136 @@ export function createAdminApi(client: AdminApiClient) {
         })}`,
       );
     },
-    async getOrders(page = 1, limit = 20): Promise<{ orders: AdminOrderSummary[]; pagination: InventoryList["pagination"] }> {
+    async getOrders(
+      page = 1,
+      limit = 20,
+    ): Promise<{ orders: AdminOrderSummary[]; pagination: InventoryList["pagination"] }> {
       const response = await client.request<unknown>(`/admin/orders${buildQuery({ page, limit })}`);
-      if (!isRecord(response) || !Array.isArray(response.orders) || !isRecord(response.pagination)) return invalidAdminResponse();
-      const pagination = response.pagination;
-      if (!isSafeInteger(pagination.page) || !isSafeInteger(pagination.limit) || !isSafeInteger(pagination.total) || !isSafeInteger(pagination.totalPages)) return invalidAdminResponse();
-      const orders = response.orders.map((order): AdminOrderSummary => {
-        if (!isRecord(order) || typeof order.id !== "string" || typeof order.orderNumber !== "string" || typeof order.customerEmail !== "string" || typeof order.status !== "string" || typeof order.fulfillmentStatus !== "string" || !isSafeInteger(order.totalCents) || order.currency !== "ZAR" || typeof order.createdAt !== "string") return invalidAdminResponse();
+      if (
+        !isRecord(response) ||
+        !Array.isArray(response["orders"]) ||
+        !isRecord(response["pagination"])
+      )
+        return invalidAdminResponse();
+      const pagination = response["pagination"];
+      if (
+        !isSafeInteger(pagination["page"]) ||
+        !isSafeInteger(pagination["limit"]) ||
+        !isSafeInteger(pagination["total"]) ||
+        !isSafeInteger(pagination["totalPages"])
+      )
+        return invalidAdminResponse();
+      const orders = response["orders"].map((order): AdminOrderSummary => {
+        if (
+          !isRecord(order) ||
+          typeof order["id"] !== "string" ||
+          typeof order["orderNumber"] !== "string" ||
+          typeof order["customerEmail"] !== "string" ||
+          typeof order["status"] !== "string" ||
+          typeof order["fulfillmentStatus"] !== "string" ||
+          !isSafeInteger(order["totalCents"]) ||
+          order["currency"] !== "ZAR" ||
+          typeof order["createdAt"] !== "string"
+        )
+          return invalidAdminResponse();
+        const fulfillmentMethod = order["fulfillmentMethod"] ?? "delivery";
+        if (fulfillmentMethod !== "delivery" && fulfillmentMethod !== "collection")
+          return invalidAdminResponse();
+        let collectionLocation: AdminOrderSummary["collectionLocation"];
+        if (order["collectionLocation"] !== undefined) {
+          if (
+            !isRecord(order["collectionLocation"]) ||
+            typeof order["collectionLocation"]["name"] !== "string" ||
+            typeof order["collectionLocation"]["address"] !== "string" ||
+            (order["collectionLocation"]["instructions"] !== undefined &&
+              typeof order["collectionLocation"]["instructions"] !== "string")
+          )
+            return invalidAdminResponse();
+          collectionLocation = {
+            name: order["collectionLocation"]["name"],
+            address: order["collectionLocation"]["address"],
+            ...(typeof order["collectionLocation"]["instructions"] === "string"
+              ? { instructions: order["collectionLocation"]["instructions"] }
+              : {}),
+          };
+        }
         let shipmentBooking: AdminOrderSummary["shipmentBooking"] = null;
-        if (order.shipmentBooking !== undefined && order.shipmentBooking !== null) {
-          if (!isRecord(order.shipmentBooking) || typeof order.shipmentBooking.status !== "string" || !isSafeInteger(order.shipmentBooking.attempts)) return invalidAdminResponse();
+        if (order["shipmentBooking"] !== undefined && order["shipmentBooking"] !== null) {
+          if (
+            !isRecord(order["shipmentBooking"]) ||
+            typeof order["shipmentBooking"]["status"] !== "string" ||
+            !isSafeInteger(order["shipmentBooking"]["attempts"])
+          )
+            return invalidAdminResponse();
           shipmentBooking = {
-            status: order.shipmentBooking.status,
-            attempts: order.shipmentBooking.attempts,
-            ...(typeof order.shipmentBooking.providerShipmentId === "string" ? { providerShipmentId: order.shipmentBooking.providerShipmentId } : {}),
-            ...(typeof order.shipmentBooking.trackingReference === "string" ? { trackingReference: order.shipmentBooking.trackingReference } : {}),
-            ...(typeof order.shipmentBooking.lastErrorCode === "string" ? { lastErrorCode: order.shipmentBooking.lastErrorCode } : {}),
-            ...(typeof order.shipmentBooking.bookedAt === "string" ? { bookedAt: order.shipmentBooking.bookedAt } : {}),
+            status: order["shipmentBooking"]["status"],
+            attempts: order["shipmentBooking"]["attempts"],
+            ...(typeof order["shipmentBooking"]["providerShipmentId"] === "string"
+              ? { providerShipmentId: order["shipmentBooking"]["providerShipmentId"] }
+              : {}),
+            ...(typeof order["shipmentBooking"]["trackingReference"] === "string"
+              ? { trackingReference: order["shipmentBooking"]["trackingReference"] }
+              : {}),
+            ...(typeof order["shipmentBooking"]["lastErrorCode"] === "string"
+              ? { lastErrorCode: order["shipmentBooking"]["lastErrorCode"] }
+              : {}),
+            ...(typeof order["shipmentBooking"]["bookedAt"] === "string"
+              ? { bookedAt: order["shipmentBooking"]["bookedAt"] }
+              : {}),
           };
         }
         return {
-          id: order.id,
-          orderNumber: order.orderNumber,
-          customerEmail: order.customerEmail,
-          status: order.status,
-          fulfillmentStatus: order.fulfillmentStatus,
-          totalCents: order.totalCents,
+          id: order["id"],
+          orderNumber: order["orderNumber"],
+          customerEmail: order["customerEmail"],
+          status: order["status"],
+          fulfillmentStatus: order["fulfillmentStatus"],
+          fulfillmentMethod,
+          ...(collectionLocation === undefined ? {} : { collectionLocation }),
+          totalCents: order["totalCents"],
           currency: "ZAR",
-          createdAt: order.createdAt,
+          createdAt: order["createdAt"],
           shipmentBooking,
         };
       });
-      return { orders, pagination: pagination as InventoryList["pagination"] };
+      return {
+        orders,
+        pagination: {
+          page: pagination["page"],
+          limit: pagination["limit"],
+          total: pagination["total"],
+          totalPages: pagination["totalPages"],
+        },
+      };
     },
     async retryShipmentBooking(orderId: string): Promise<void> {
-      await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/shipment/retry`, { method: "POST", json: {} });
+      await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/shipment/retry`, {
+        method: "POST",
+        json: {},
+      });
     },
     async cancelShipment(orderId: string): Promise<void> {
-      await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/shipment/cancel`, { method: "POST", json: {} });
+      await client.request<unknown>(
+        `/admin/orders/${encodeURIComponent(orderId)}/shipment/cancel`,
+        { method: "POST", json: {} },
+      );
     },
     async getShipmentWaybill(orderId: string): Promise<string> {
-      const response = await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/shipment/waybill`);
-      if (!isRecord(response) || typeof response.url !== "string" || !isHttpsUrl(response.url)) return invalidAdminResponse();
+      const response = await client.request<unknown>(
+        `/admin/orders/${encodeURIComponent(orderId)}/shipment/waybill`,
+      );
+      if (!isRecord(response) || typeof response.url !== "string" || !isHttpsUrl(response.url))
+        return invalidAdminResponse();
       return response.url;
+    },
+    async updateOrderFulfillment(
+      orderId: string,
+      fulfillmentStatus: "ready_for_collection" | "collected",
+    ): Promise<void> {
+      await client.request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/fulfillment`, {
+        method: "PATCH",
+        json: { fulfillmentStatus },
+      });
     },
     async createProduct(payload: Record<string, unknown>) {
       return parseAdminProduct(
@@ -694,6 +774,10 @@ export const adminApi = {
   retryShipmentBooking: (orderId: string) => getConfiguredAdminApi().retryShipmentBooking(orderId),
   cancelShipment: (orderId: string) => getConfiguredAdminApi().cancelShipment(orderId),
   getShipmentWaybill: (orderId: string) => getConfiguredAdminApi().getShipmentWaybill(orderId),
+  updateOrderFulfillment: (
+    orderId: string,
+    fulfillmentStatus: "ready_for_collection" | "collected",
+  ) => getConfiguredAdminApi().updateOrderFulfillment(orderId, fulfillmentStatus),
   createProduct: (payload: Record<string, unknown>) =>
     getConfiguredAdminApi().createProduct(payload),
   updateProduct: (productId: string, payload: Record<string, unknown>) =>

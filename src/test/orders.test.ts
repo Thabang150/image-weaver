@@ -29,6 +29,7 @@ const order = {
   currency: "ZAR",
   status: "pending_payment",
   fulfillmentStatus: "awaiting_payment",
+  fulfillmentMethod: "delivery",
   stockReservationStatus: "reserved",
   paymentAttempts: [],
   deliveryAddress: {
@@ -277,6 +278,7 @@ describe("customer order history API", () => {
         expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("order-submit-test-0001");
         expect(new Headers(init?.headers).get("X-Checkout-Trace-ID")).toBe(checkoutTraceId);
         expect(JSON.parse(String(init?.body))).toEqual({
+          fulfillmentMethod: "delivery",
           addressId: "address-1",
           shippingQuoteId: "shipping-quote-1",
         });
@@ -290,9 +292,15 @@ describe("customer order history API", () => {
     const api = createOrdersApi(createApiClient({ baseUrl: "https://api.example.test", fetcher }));
 
     await expect(
-      api.createOrder("address-1", "shipping-quote-1", "order-submit-test-0001", {
-        "X-Checkout-Trace-ID": checkoutTraceId,
-      }),
+      api.createOrder(
+        {
+          fulfillmentMethod: "delivery",
+          addressId: "address-1",
+          shippingQuoteId: "shipping-quote-1",
+        },
+        "order-submit-test-0001",
+        { "X-Checkout-Trace-ID": checkoutTraceId },
+      ),
     ).resolves.toEqual(order);
 
     const invalidFetcher = vi.fn<typeof fetch>(async (input) => {
@@ -308,7 +316,14 @@ describe("customer order history API", () => {
     );
 
     await expect(
-      invalidApi.createOrder("address-1", "shipping-quote-1", "order-submit-test-0001"),
+      invalidApi.createOrder(
+        {
+          fulfillmentMethod: "delivery",
+          addressId: "address-1",
+          shippingQuoteId: "shipping-quote-1",
+        },
+        "order-submit-test-0001",
+      ),
     ).rejects.toMatchObject({
       name: "ApiResponseError",
       status: 200,

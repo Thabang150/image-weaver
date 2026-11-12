@@ -177,6 +177,13 @@ function OrderManagement() {
     mutationFn: (orderId: string) => adminApi.cancelShipment(orderId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "orders"] }),
   });
+  const collectionMutation = useMutation({
+    mutationFn: (input: {
+      orderId: string;
+      fulfillmentStatus: "ready_for_collection" | "collected";
+    }) => adminApi.updateOrderFulfillment(input.orderId, input.fulfillmentStatus),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "orders"] }),
+  });
   const [waybills, setWaybills] = useState<Record<string, string>>({});
   const [waybillError, setWaybillError] = useState<string | null>(null);
   if (query.isPending)
@@ -209,6 +216,9 @@ function OrderManagement() {
       {cancelMutation.isError ? (
         <QueryError error={cancelMutation.error} action="Carrier shipment cancellation" />
       ) : null}
+      {collectionMutation.isError ? (
+        <QueryError error={collectionMutation.error} action="Collection status update" />
+      ) : null}
       {waybillError ? <Feedback error>{waybillError}</Feedback> : null}
       {!query.data.orders.length ? (
         <p>No orders found.</p>
@@ -235,13 +245,51 @@ function OrderManagement() {
                     </p>
                   </div>
                 </div>
-                <p className="mt-2 text-sm">
-                  ShipLogic: {booking?.status ?? "not booked"}
-                  {booking?.trackingReference ? ` · ${booking.trackingReference}` : ""}
-                  {booking?.lastErrorCode ? ` · ${booking.lastErrorCode}` : ""}
-                </p>
+                {order.fulfillmentMethod === "collection" ? (
+                  <p className="mt-2 text-sm">
+                    Customer collection
+                    {order.collectionLocation ? ` · ${order.collectionLocation.name}` : ""}
+                    {order.collectionLocation ? ` · ${order.collectionLocation.address}` : ""}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm">
+                    ShipLogic: {booking?.status ?? "not booked"}
+                    {booking?.trackingReference ? ` · ${booking.trackingReference}` : ""}
+                    {booking?.lastErrorCode ? ` · ${booking.lastErrorCode}` : ""}
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {booking?.status === "failed" ? (
+                  {order.fulfillmentMethod === "collection" &&
+                  order.fulfillmentStatus === "processing" ? (
+                    <Button
+                      variant="outline"
+                      disabled={collectionMutation.isPending}
+                      onClick={() =>
+                        collectionMutation.mutate({
+                          orderId: order.id,
+                          fulfillmentStatus: "ready_for_collection",
+                        })
+                      }
+                    >
+                      Mark ready for collection
+                    </Button>
+                  ) : null}
+                  {order.fulfillmentMethod === "collection" &&
+                  order.fulfillmentStatus === "ready_for_collection" ? (
+                    <Button
+                      variant="outline"
+                      disabled={collectionMutation.isPending}
+                      onClick={() =>
+                        collectionMutation.mutate({
+                          orderId: order.id,
+                          fulfillmentStatus: "collected",
+                        })
+                      }
+                    >
+                      Mark collected
+                    </Button>
+                  ) : null}
+                  {order.fulfillmentMethod === "delivery" && booking?.status === "failed" ? (
                     <Button
                       variant="outline"
                       disabled={retryMutation.isPending}
@@ -250,7 +298,9 @@ function OrderManagement() {
                       Retry rejected booking
                     </Button>
                   ) : null}
-                  {booking?.status === "booked" && order.fulfillmentStatus === "processing" ? (
+                  {order.fulfillmentMethod === "delivery" &&
+                  booking?.status === "booked" &&
+                  order.fulfillmentStatus === "processing" ? (
                     <Button
                       variant="outline"
                       disabled={cancelMutation.isPending}
@@ -266,7 +316,7 @@ function OrderManagement() {
                       Cancel carrier shipment
                     </Button>
                   ) : null}
-                  {booking?.status === "booked" ? (
+                  {order.fulfillmentMethod === "delivery" && booking?.status === "booked" ? (
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -296,7 +346,8 @@ function OrderManagement() {
                       Open waybill
                     </a>
                   ) : null}
-                  {booking?.status === "unknown" || booking?.status === "cancellation_unknown" ? (
+                  {order.fulfillmentMethod === "delivery" &&
+                  (booking?.status === "unknown" || booking?.status === "cancellation_unknown") ? (
                     <span className="text-sm text-destructive">
                       Check the provider before retrying; the request may have completed.
                     </span>

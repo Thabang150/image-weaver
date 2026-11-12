@@ -1,13 +1,8 @@
 import type { CartShippingRate } from "@/lib/api/orders";
 
 export function customerDeliveryName(serviceName: string | undefined, index = 0): string {
-  const normalized = serviceName?.toLowerCase() ?? "";
-  if (/\b(express|overnight|next[\s-]?day|same[\s-]?day)\b/.test(normalized)) {
-    return "Express delivery";
-  }
-  if (/\b(standard|economy|regular)\b/.test(normalized)) {
-    return "Standard delivery";
-  }
+  const providerName = serviceName?.trim();
+  if (providerName) return providerName;
   return `Delivery option ${index + 1}`;
 }
 

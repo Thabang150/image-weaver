@@ -28,12 +28,23 @@ function fulfillmentLabel(value: CustomerOrder["fulfillmentStatus"]): string {
     processing: "Preparing order",
     shipped: "Dispatched",
     delivered: "Delivered",
+    ready_for_collection: "Ready for collection",
+    collected: "Collected",
     cancelled: "Cancelled",
   } as const;
   return labels[value];
 }
 
 function currentQuote(order: CustomerOrder) {
+  if (order.fulfillmentMethod === "collection") {
+    const orderCreatedAt = Date.parse(order.createdAt);
+    return (
+      !order.shippingQuote &&
+      Number.isFinite(orderCreatedAt) &&
+      orderCreatedAt + CUSTOMER_ORDER_LIFETIME_MS > Date.now() &&
+      order.totalCents === order.subtotalCents
+    );
+  }
   const quote = order.shippingQuote;
   if (!quote || quote.status !== "confirmed") return false;
   const orderCreatedAt = Date.parse(order.createdAt);
@@ -112,7 +123,10 @@ export function OrdersPage({ userId, onNavigate }: { userId: string; onNavigate:
               </div>
               <div className="mt-3 flex flex-wrap gap-2" aria-label="Order statuses">
                 <StatusPill>Payment: {latestPayment(order)}</StatusPill>
-                <StatusPill>Delivery: {fulfillmentLabel(order.fulfillmentStatus)}</StatusPill>
+                <StatusPill>
+                  {order.fulfillmentMethod === "collection" ? "Collection" : "Delivery"}:{" "}
+                  {fulfillmentLabel(order.fulfillmentStatus)}
+                </StatusPill>
               </div>
               <ul className="mt-4 space-y-2 text-sm">
                 {order.items.map((item) => (
@@ -130,19 +144,27 @@ export function OrdersPage({ userId, onNavigate }: { userId: string; onNavigate:
                   <dd>{formatZarCents(order.subtotalCents)}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Delivery</dt>
+                  <dt className="text-muted-foreground">
+                    {order.fulfillmentMethod === "collection" ? "Collection" : "Delivery"}
+                  </dt>
                   <dd>
-                    {deliveryCharge === undefined ? "Not selected" : formatZarCents(deliveryCharge)}
+                    {order.fulfillmentMethod === "collection"
+                      ? "No delivery charge"
+                      : deliveryCharge === undefined
+                        ? "Not selected"
+                        : formatZarCents(deliveryCharge)}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Delivery method</dt>
+                  <dt className="text-muted-foreground">Fulfilment method</dt>
                   <dd>
-                    {order.shippingQuote
-                      ? customerDeliveryName(order.shippingQuote.serviceName)
-                      : "Not selected"}
+                    {order.fulfillmentMethod === "collection"
+                      ? "Customer collection"
+                      : order.shippingQuote
+                        ? customerDeliveryName(order.shippingQuote.serviceName)
+                        : "Not selected"}
                   </dd>
-                  {order.shippingQuote ? (
+                  {order.fulfillmentMethod === "delivery" && order.shippingQuote ? (
                     <dd className="text-muted-foreground">
                       {estimateForConfirmedDelivery(
                         order.shippingQuote.serviceName,
@@ -380,6 +402,7 @@ export function OrderDetailPage({
   const latestAttempt = order.paymentAttempts.at(-1);
   const trackable = order.fulfillmentStatus === "shipped" && trackingAvailable(order);
   const shipmentCancellationAvailable =
+    order.fulfillmentMethod === "delivery" &&
     order.status === "paid" &&
     order.fulfillmentStatus === "processing" &&
     order.shipmentBooking?.status === "booked";
@@ -407,7 +430,7 @@ export function OrderDetailPage({
           </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Delivery status</dt>
+          <dt className="text-muted-foreground">Fulfilment status</dt>
           <dd className="mt-1">
             <StatusPill>{fulfillmentLabel(order.fulfillmentStatus)}</StatusPill>
           </dd>
@@ -437,13 +460,17 @@ export function OrderDetailPage({
           </div>
           <div className="flex justify-between">
             <dt>
-              Shipping
-              {order.shippingQuote?.serviceName
+              {order.fulfillmentMethod === "collection" ? "Collection" : "Shipping"}
+              {order.fulfillmentMethod === "delivery" && order.shippingQuote?.serviceName
                 ? ` · ${customerDeliveryName(order.shippingQuote.serviceName)}`
                 : ""}
             </dt>
             <dd>
-              {deliveryCharge === undefined ? "Not selected" : formatZarCents(deliveryCharge)}
+              {order.fulfillmentMethod === "collection"
+                ? "No delivery charge"
+                : deliveryCharge === undefined
+                  ? "Not selected"
+                  : formatZarCents(deliveryCharge)}
             </dd>
           </div>
           <div className="flex justify-between text-base">
@@ -456,23 +483,40 @@ export function OrderDetailPage({
           </div>
         </dl>
       </section>
-      <section className="mt-5 rounded-lg border border-border p-5">
-        <h2 className="text-xl font-medium">Delivery address</h2>
-        <address className="mt-3 text-sm not-italic">
-          {order.deliveryAddress.recipientName}
-          <br />
-          {order.deliveryAddress.phoneNumber}
-          <br />
-          {order.deliveryAddress.addressLine1}
-          {order.deliveryAddress.addressLine2 ? `, ${order.deliveryAddress.addressLine2}` : ""}
-          <br />
-          {order.deliveryAddress.localArea ? `${order.deliveryAddress.localArea}, ` : ""}
-          {order.deliveryAddress.city}, {order.deliveryAddress.province},{" "}
-          {order.deliveryAddress.postalCode}
-          <br />
-          {order.deliveryAddress.country}
-        </address>
-      </section>
+      {order.fulfillmentMethod === "collection" && order.collectionLocation ? (
+        <section className="mt-5 rounded-lg border border-border p-5">
+          <h2 className="text-xl font-medium">Collection location</h2>
+          <p className="mt-3 text-sm">
+            <strong>{order.collectionLocation.name}</strong>
+            <br />
+            {order.collectionLocation.address}
+            {order.collectionLocation.instructions ? (
+              <>
+                <br />
+                {order.collectionLocation.instructions}
+              </>
+            ) : null}
+          </p>
+        </section>
+      ) : order.deliveryAddress ? (
+        <section className="mt-5 rounded-lg border border-border p-5">
+          <h2 className="text-xl font-medium">Delivery address</h2>
+          <address className="mt-3 text-sm not-italic">
+            {order.deliveryAddress.recipientName}
+            <br />
+            {order.deliveryAddress.phoneNumber}
+            <br />
+            {order.deliveryAddress.addressLine1}
+            {order.deliveryAddress.addressLine2 ? `, ${order.deliveryAddress.addressLine2}` : ""}
+            <br />
+            {order.deliveryAddress.localArea ? `${order.deliveryAddress.localArea}, ` : ""}
+            {order.deliveryAddress.city}, {order.deliveryAddress.province},{" "}
+            {order.deliveryAddress.postalCode}
+            <br />
+            {order.deliveryAddress.country}
+          </address>
+        </section>
+      ) : null}
       {order.cancellation ? (
         <p className="mt-4 rounded-md border border-border p-3 text-sm">
           Cancellation reason: {order.cancellation.reason}
@@ -507,8 +551,9 @@ export function OrderDetailPage({
       order.fulfillmentStatus === "processing" &&
       !shipmentCancellationAvailable ? (
         <p className="mt-4 text-sm text-muted-foreground">
-          This paid order is being prepared or its shipment status is being reconciled. Contact
-          support if you need help cancelling it. A refund is not automatic.
+          {order.fulfillmentMethod === "collection"
+            ? "This paid order is being prepared for collection. We will notify you when it is ready."
+            : "This paid order is being prepared or its shipment status is being reconciled. Contact support if you need help cancelling it. A refund is not automatic."}
         </p>
       ) : null}
       {order.shipmentBooking?.status === "cancellation_unknown" ? (

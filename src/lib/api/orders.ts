@@ -29,7 +29,15 @@ export interface CustomerOrder {
   totalCents: number;
   currency: "ZAR";
   status: "pending_payment" | "paid" | "cancelled" | "payment_reconciliation";
-  fulfillmentStatus: "awaiting_payment" | "processing" | "shipped" | "delivered" | "cancelled";
+  fulfillmentStatus:
+    | "awaiting_payment"
+    | "processing"
+    | "shipped"
+    | "delivered"
+    | "ready_for_collection"
+    | "collected"
+    | "cancelled";
+  fulfillmentMethod: "delivery" | "collection";
   stockReservationStatus: "unreserved" | "reserved" | "committed" | "released";
   shippingQuote?: {
     quoteId?: string;
@@ -57,7 +65,7 @@ export interface CustomerOrder {
       | "cancellation_unknown";
   };
   paymentAttempts: PaymentAttempt[];
-  deliveryAddress: {
+  deliveryAddress?: {
     recipientName: string;
     phoneNumber: string;
     addressLine1: string;
@@ -72,6 +80,7 @@ export interface CustomerOrder {
     lng?: number;
     deliveryInstructions?: string;
   };
+  collectionLocation?: { name: string; address: string; instructions?: string };
   shipmentTracking?: {
     provider: "shiplogic" | "manual";
     reference?: string;
@@ -143,6 +152,15 @@ export interface CartShippingQuoteSelections {
   optInTimeBasedRateIds?: number[];
 }
 
+export interface FulfillmentOptions {
+  delivery: { available: true };
+  collection: {
+    available: boolean;
+    location?: { name: string; address: string };
+    instructions?: string;
+  };
+}
+
 export interface CartShippingQuote {
   quoteId: string;
   expiresAt: string;
@@ -206,12 +224,17 @@ export function canRetryCustomerPayment(order: CustomerOrder): boolean {
   const confirmedAt = quote ? Date.parse(quote.confirmedAt) : Number.NaN;
   const orderCreatedAt = Date.parse(order.createdAt);
   const quoteIsCurrent =
-    quote?.status === "confirmed" &&
-    Number.isFinite(orderCreatedAt) &&
-    orderCreatedAt + CUSTOMER_ORDER_LIFETIME_MS > Date.now() &&
-    Number.isFinite(confirmedAt) &&
-    confirmedAt + SHIPPING_RATE_LIFETIME_MS > Date.now() &&
-    (!quote.expiresAt || Date.parse(quote.expiresAt) > Date.now());
+    order.fulfillmentMethod === "collection"
+      ? !quote &&
+        Number.isFinite(orderCreatedAt) &&
+        orderCreatedAt + CUSTOMER_ORDER_LIFETIME_MS > Date.now() &&
+        order.totalCents === order.subtotalCents
+      : quote?.status === "confirmed" &&
+        Number.isFinite(orderCreatedAt) &&
+        orderCreatedAt + CUSTOMER_ORDER_LIFETIME_MS > Date.now() &&
+        Number.isFinite(confirmedAt) &&
+        confirmedAt + SHIPPING_RATE_LIFETIME_MS > Date.now() &&
+        (!quote.expiresAt || Date.parse(quote.expiresAt) > Date.now());
   return (
     order.status === "pending_payment" &&
     (order.stockReservationStatus === "reserved" ||
@@ -384,6 +407,8 @@ function parseOrder(value: unknown): CustomerOrder {
   const orderNumber = value["orderNumber"];
   const items = value["items"];
   const address = value["deliveryAddress"];
+  const fulfillmentMethod = value["fulfillmentMethod"] ?? "delivery";
+  const collectionLocation = value["collectionLocation"];
   const subtotalCents = value["subtotalCents"];
   const totalCents = value["totalCents"];
   const currency = value["currency"];
@@ -397,7 +422,9 @@ function parseOrder(value: unknown): CustomerOrder {
     typeof id !== "string" ||
     typeof orderNumber !== "string" ||
     !Array.isArray(items) ||
-    !record(address)
+    (fulfillmentMethod !== "delivery" && fulfillmentMethod !== "collection") ||
+    (fulfillmentMethod === "delivery" && !record(address)) ||
+    (fulfillmentMethod === "collection" && address !== undefined)
   )
     invalid();
   const statuses = ["pending_payment", "paid", "cancelled", "payment_reconciliation"] as string[];
@@ -406,6 +433,8 @@ function parseOrder(value: unknown): CustomerOrder {
     "processing",
     "shipped",
     "delivered",
+    "ready_for_collection",
+    "collected",
     "cancelled",
   ] as string[];
   const stock = ["unreserved", "reserved", "committed", "released"] as string[];
@@ -421,31 +450,43 @@ function parseOrder(value: unknown): CustomerOrder {
     typeof updatedAt !== "string"
   )
     invalid();
-  if (
-    typeof address["recipientName"] !== "string" ||
-    typeof address["phoneNumber"] !== "string" ||
-    typeof address["addressLine1"] !== "string" ||
-    (address["addressType"] !== undefined &&
-      address["addressType"] !== "residential" &&
-      address["addressType"] !== "business") ||
-    typeof address["city"] !== "string" ||
-    typeof address["province"] !== "string" ||
-    typeof address["postalCode"] !== "string" ||
-    typeof address["country"] !== "string" ||
-    (address["lat"] !== undefined &&
-      (typeof address["lat"] !== "number" ||
-        !Number.isFinite(address["lat"]) ||
-        address["lat"] < -90 ||
-        address["lat"] > 90)) ||
-    (address["lng"] !== undefined &&
-      (typeof address["lng"] !== "number" ||
-        !Number.isFinite(address["lng"]) ||
-        address["lng"] < -180 ||
-        address["lng"] > 180)) ||
-    (address["lat"] === undefined) !== (address["lng"] === undefined) ||
-    (address["lat"] === 0 && address["lng"] === 0)
-  )
+  if (fulfillmentMethod === "delivery") {
+    if (
+      !record(address) ||
+      typeof address["recipientName"] !== "string" ||
+      typeof address["phoneNumber"] !== "string" ||
+      typeof address["addressLine1"] !== "string" ||
+      (address["addressType"] !== undefined &&
+        address["addressType"] !== "residential" &&
+        address["addressType"] !== "business") ||
+      typeof address["city"] !== "string" ||
+      typeof address["province"] !== "string" ||
+      typeof address["postalCode"] !== "string" ||
+      typeof address["country"] !== "string" ||
+      (address["lat"] !== undefined &&
+        (typeof address["lat"] !== "number" ||
+          !Number.isFinite(address["lat"]) ||
+          address["lat"] < -90 ||
+          address["lat"] > 90)) ||
+      (address["lng"] !== undefined &&
+        (typeof address["lng"] !== "number" ||
+          !Number.isFinite(address["lng"]) ||
+          address["lng"] < -180 ||
+          address["lng"] > 180)) ||
+      (address["lat"] === undefined) !== (address["lng"] === undefined) ||
+      (address["lat"] === 0 && address["lng"] === 0)
+    )
+      invalid();
+    if (collectionLocation !== undefined) invalid();
+  } else if (
+    !record(collectionLocation) ||
+    typeof collectionLocation["name"] !== "string" ||
+    typeof collectionLocation["address"] !== "string" ||
+    (collectionLocation["instructions"] !== undefined &&
+      typeof collectionLocation["instructions"] !== "string")
+  ) {
     invalid();
+  }
   let itemSubtotalCents = 0;
   for (const item of items) {
     if (!record(item)) invalid();
@@ -497,8 +538,50 @@ function parseOrder(value: unknown): CustomerOrder {
       invalid();
     shippingCents = chargeCents;
   }
+  const shippingQuoteOptions = value["shippingQuoteOptions"];
+  if (
+    fulfillmentMethod === "collection" &&
+    (shippingQuote !== undefined ||
+      totalCents !== subtotalCents ||
+      (shippingQuoteOptions !== undefined &&
+        (!Array.isArray(shippingQuoteOptions) || shippingQuoteOptions.length > 0)))
+  )
+    invalid();
   if (totalCents !== subtotalCents + shippingCents) invalid();
-  return value as unknown as CustomerOrder;
+  return { ...value, fulfillmentMethod } as unknown as CustomerOrder;
+}
+
+function parseFulfillmentOptions(value: unknown): FulfillmentOptions {
+  if (!record(value) || !record(value["delivery"]) || !record(value["collection"])) invalid();
+  const delivery = value["delivery"];
+  const collection = value["collection"];
+  if (delivery["available"] !== true || typeof collection["available"] !== "boolean") invalid();
+  const rawLocation = collection["location"];
+  const instructions = collection["instructions"];
+  if (
+    (collection["available"] && !record(rawLocation)) ||
+    (!collection["available"] && rawLocation !== undefined) ||
+    (instructions !== undefined && typeof instructions !== "string")
+  )
+    invalid();
+  let location: FulfillmentOptions["collection"]["location"];
+  if (rawLocation !== undefined) {
+    if (
+      !record(rawLocation) ||
+      typeof rawLocation["name"] !== "string" ||
+      typeof rawLocation["address"] !== "string"
+    )
+      invalid();
+    location = { name: rawLocation["name"], address: rawLocation["address"] };
+  }
+  return {
+    delivery: { available: true },
+    collection: {
+      available: collection["available"],
+      ...(location === undefined ? {} : { location }),
+      ...(instructions === undefined ? {} : { instructions }),
+    },
+  };
 }
 
 function parseCartShippingRate(value: unknown): CartShippingRate {
@@ -543,6 +626,9 @@ function parseCartShippingRate(value: unknown): CartShippingRate {
 
 export function createOrdersApi(client: OrdersApiClient) {
   return {
+    async getFulfillmentOptions(): Promise<FulfillmentOptions> {
+      return parseFulfillmentOptions(await client.request<unknown>("/fulfillment-options"));
+    },
     async listCustomerOrders(
       page = 1,
       limit = 20,
@@ -627,8 +713,11 @@ export function createOrdersApi(client: OrdersApiClient) {
       });
     },
     async createOrder(
-      addressId: string,
-      shippingQuoteId: string,
+      input: {
+        fulfillmentMethod: "delivery" | "collection";
+        addressId?: string;
+        shippingQuoteId?: string;
+      },
       idempotencyKey: string,
       headers?: HeadersInit,
     ): Promise<CustomerOrder> {
@@ -637,7 +726,7 @@ export function createOrdersApi(client: OrdersApiClient) {
       const response = await client.request<{ order?: unknown }>("/orders", {
         method: "POST",
         headers: requestHeaders,
-        json: { addressId, shippingQuoteId },
+        json: input,
       });
       if (!record(response) || !record(response.order)) invalid();
       return parseOrder(response.order);
@@ -729,6 +818,8 @@ export function createOrdersApi(client: OrdersApiClient) {
 
 let configuredOrdersApi: ReturnType<typeof createOrdersApi> | undefined;
 export const ordersApi = {
+  getFulfillmentOptions: () =>
+    (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).getFulfillmentOptions(),
   listCustomerOrders: (page?: number, limit?: number, headers?: HeadersInit) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).listCustomerOrders(
       page,
@@ -761,14 +852,16 @@ export const ordersApi = {
       headers,
     ),
   createOrder: (
-    addressId: string,
-    shippingQuoteId: string,
+    input: {
+      fulfillmentMethod: "delivery" | "collection";
+      addressId?: string;
+      shippingQuoteId?: string;
+    },
     idempotencyKey: string,
     headers?: HeadersInit,
   ) =>
     (configuredOrdersApi ??= createOrdersApi(createConfiguredApiClient())).createOrder(
-      addressId,
-      shippingQuoteId,
+      input,
       idempotencyKey,
       headers,
     ),

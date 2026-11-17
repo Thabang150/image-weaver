@@ -26,7 +26,7 @@ The supplied [FRONTEND_HANDOFF.md](./FRONTEND_HANDOFF.md) is the contract source
 - `src/routes/__root.tsx` supplies document metadata, the shared stylesheet, not-found/error views, `QueryClientProvider`, and the route outlet. Cart state is mounted by `/preview`, not the root shell.
 - `src/components/wellness.tsx` contains reusable brand and botanical `<img>` elements, a browser-hydrated countdown, contact actions, and footer. Its image sources use static `/images/...` paths under `public/`, as required by the repository guidance.
 - `src/components/ui/` contains a broad set of shadcn/Radix primitives suitable for forms, dialogs, tables, alerts, navigation, and skeleton states. `src/hooks/use-mobile.tsx` and `src/lib/utils.ts` provide existing utilities.
-- `src/styles.css` defines the Tailwind theme and the current launch/preview styling. `src/lib/countdown.ts` computes the Johannesburg launch time from the explicit offset `2026-11-01T00:00:00+02:00`.
+- `src/styles.css` defines the Tailwind theme and the current launch/preview styling. `src/lib/countdown.ts` computes the Johannesburg launch time from the explicit offset `2026-11-20T00:00:00+02:00`.
 - The catalogue, product details, and backend-backed cart are implemented under `/preview`. Customer registration, email verification, login/2FA, password reset, account/profile, saved-address management, and read-only order history are also available as in-page views under `/preview`. Admin tools use the existing authenticated session. Checkout/order creation and payment/delivery flows remain unimplemented.
 
 ### API, authentication, tests, and build state
